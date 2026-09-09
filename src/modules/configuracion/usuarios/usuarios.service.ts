@@ -43,12 +43,15 @@ export class UsuariosService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.contraseña, 10);
-    return this.usuarioModel.create({
+    const created = await this.usuarioModel.create({
       ...dto,
       departamento: departamentoId,
       cargo: cargoId,
       contraseña: hashedPassword,
     });
+    const obj = created.toObject() as unknown as Record<string, unknown>;
+    delete obj.contraseña;
+    return obj as unknown as UsuarioDocument;
   }
 
   async remove(id: string): Promise<void> {
