@@ -53,7 +53,7 @@ export class AuthService {
   }
 
   async validateUser(correo_empleado: string, contraseña: string): Promise<any> {
-    const user = await this.userModel.findOne({ correo_empleado });
+    const user = await this.userModel.findOne({ correo_empleado }).select('+contraseña');
     if (user && (await bcrypt.compare(contraseña, user.contraseña))) {
       const { contraseña, ...result } = user.toObject();
       return result;
