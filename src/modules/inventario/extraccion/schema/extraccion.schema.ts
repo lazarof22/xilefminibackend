@@ -17,7 +17,7 @@ export class Extraccion {
   @Prop()
   responsable?: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Empleado' })
+  @Prop({ type: Types.ObjectId, ref: 'Usuario' })
   empleadoId?: Types.ObjectId;
 }
 
