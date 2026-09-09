@@ -39,6 +39,9 @@ export class Usuario {
   @Prop({ enum: UsuarioRol, default: UsuarioRol.EMPLEADO})
   rol!: UsuarioRol;
 
+  @Prop({ type: Types.ObjectId, ref: 'Empresa', required: false })
+  empresa_id?: Types.ObjectId;
+
   @Prop({ default: Date.now })
   createdAt!: Date;
 }

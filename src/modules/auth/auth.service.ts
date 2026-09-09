@@ -27,7 +27,7 @@ export class AuthService {
   }
 
   async register(createAuthDto: CreateAuthDto): Promise<{ access_token: string }> {
-    const { ci_empleado, nombre_empleado, correo_empleado, contraseña, departamento, cargo, salario, rol } = createAuthDto;
+    const { ci_empleado, nombre_empleado, correo_empleado, contraseña, departamento, cargo, salario, rol, empresa_id } = createAuthDto;
     const hashedPassword = await bcrypt.hash(contraseña, 10);
     const user = new this.userModel({
       ci_empleado,
@@ -38,11 +38,12 @@ export class AuthService {
       cargo,
       salario,
       rol: rol || 'empleado',
+      ...(empresa_id ? { empresa_id } : {}),
     });
     const savedUser = await user.save();
 
     // Genera el token igual que en login
-    const payload = { correo_empleado: savedUser.correo_empleado, sub: savedUser._id, rol: savedUser.rol, nombre_empleado: savedUser.nombre_empleado };
+    const payload = { correo_empleado: savedUser.correo_empleado, sub: savedUser._id, rol: savedUser.rol, nombre_empleado: savedUser.nombre_empleado, empresa_id: (savedUser as any).empresa_id?.toString() ?? undefined };
     const access_token = this.jwtService.sign(payload, {
       secret: JWT_SECRET,
       expiresIn: JWT_EXPIRES_IN,
@@ -61,7 +62,7 @@ export class AuthService {
   }
 
   async login(usuario: any) {
-    const payload = { correo_empleado: usuario.correo_empleado, sub: usuario._id, rol: usuario.rol, nombre_empleado: usuario.nombre_empleado };
+    const payload = { correo_empleado: usuario.correo_empleado, sub: usuario._id, rol: usuario.rol, nombre_empleado: usuario.nombre_empleado, empresa_id: usuario.empresa_id?.toString() ?? undefined };
     return {
       access_token: this.jwtService.sign(payload, {
         secret: JWT_SECRET,

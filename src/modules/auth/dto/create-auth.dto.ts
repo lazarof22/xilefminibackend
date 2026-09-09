@@ -32,4 +32,8 @@ export class CreateAuthDto {
   @IsOptional()
   @IsEnum(UsuarioRol)
   rol?: UsuarioRol;
+
+  @IsOptional()
+  @IsMongoId()
+  empresa_id?: Types.ObjectId;
 }
