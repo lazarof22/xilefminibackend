@@ -95,12 +95,12 @@ export class KardexService {
 
     const kardexExistente = await this.kardexModel.findById(id);
     if (!kardexExistente) {
-      return { message: 'El kardex no existe' };
+      throw new NotFoundException('El kardex no existe');
     }
 
     const producto = await this.productoModel.findById(kardexExistente.productoId);
     if (!producto) {
-      return { message: 'Producto no encontrado' };
+      throw new NotFoundException('Producto no encontrado');
     }
 
     const nuevoStock = kardexExistente.tipo === KardexTipo.ENTRADA ? producto.stock_inicial + nuevaCantidad : producto.stock_inicial - nuevaCantidad;
@@ -128,7 +128,7 @@ export class KardexService {
     const deletekar = await this.kardexModel.findByIdAndDelete(id);
 
     if (!deletekar) {
-      return { message: "El kardex no existe" }
+      throw new NotFoundException('El kardex no existe');
     }
     return { message: "El kardex se elimino correctamente" };
   }

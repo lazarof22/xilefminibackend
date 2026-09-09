@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsString, IsNotEmpty, IsNumber, ValidateNested, IsDate, IsEnum, IsMongoId, IsPositive } from "class-validator";
+import { IsString, IsNotEmpty, IsNumber, ValidateNested, IsDate, IsEnum, IsMongoId, IsPositive, IsOptional } from "class-validator";
 import { KardexTipo } from "../schema/kardex.schema";
 
 
@@ -11,6 +11,8 @@ export class CreateKardexDto {
     @IsNotEmpty()
     productoId!: string;
 
+    @IsOptional()
+    @Type(() => Date)
     @IsDate()
     fecha?: Date;
 

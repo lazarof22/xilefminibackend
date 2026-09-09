@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsString } from "class-validator";
+import { IsEmail, IsEnum, IsMongoId, IsNotEmpty, IsOptional, IsString } from "class-validator";
 import { tipoEmpresa } from "../schema/empresa.schema";
 
 export class CreateEmpresaDto {
@@ -25,4 +25,20 @@ export class CreateEmpresaDto {
 
     @IsEnum(tipoEmpresa)
     tipoEmpresa!: tipoEmpresa;
+
+    @IsOptional()
+    @IsEmail()
+    emailEmpresa?: string;
+
+    @IsOptional()
+    @IsString()
+    sloganEmpresa?: string;
+
+    @IsOptional()
+    @IsString()
+    ciudadEmpresa?: string;
+
+    @IsOptional()
+    @IsMongoId()
+    paisEmpresa?: string;
 }
