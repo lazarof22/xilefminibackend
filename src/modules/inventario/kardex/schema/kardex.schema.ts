@@ -1,0 +1,36 @@
+import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import {HydratedDocument, Types } from "mongoose";
+
+export type KardexDocument = HydratedDocument<Kardex>;
+
+export enum KardexTipo {
+    ENTRADA = 'entrada',
+    SALIDA = 'salida',
+    VENTA = 'venta',
+    COMPRA = 'compra'
+}
+
+@Schema({ timestamps: true })
+
+export class Kardex {
+
+    @Prop({ type: Date, default: Date.now })
+    fecha!: Date;
+
+    @Prop({ type: Types.ObjectId, ref: 'Producto', required: true })
+    productoId!: Types.ObjectId;
+
+    @Prop({ required: true, enum: KardexTipo })
+    tipo!: KardexTipo;
+
+    @Prop({ required: true, min: 1 })
+    cantidad!: number;
+
+    @Prop({ required: true, min: 0 })
+    stock!: number;
+
+    @Prop({ required: true })
+    motivo!: string;
+}
+
+export const KardexSchema = SchemaFactory.createForClass(Kardex);
