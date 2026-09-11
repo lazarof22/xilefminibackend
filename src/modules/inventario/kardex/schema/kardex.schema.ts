@@ -7,7 +7,10 @@ export enum KardexTipo {
     ENTRADA = 'entrada',
     SALIDA = 'salida',
     VENTA = 'venta',
-    COMPRA = 'compra'
+    COMPRA = 'compra',
+    TRANSFERENCIA_SALIDA = 'transferencia_salida',
+    TRANSFERENCIA_ENTRADA = 'transferencia_entrada',
+    DEVOLUCION = 'devolucion'
 }
 
 @Schema({ timestamps: true })

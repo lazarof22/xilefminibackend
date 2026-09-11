@@ -5,12 +5,50 @@ import { Kardex, KardexTipo } from './schema/kardex.schema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Producto } from '../producto/schemas/producto.schema';
+import { NomencladorHelper } from '../../configuracion/nomenclador-helper/nomenclador-helper.service';
+
+export interface KardexResultadoMensaje {
+  message: string;
+}
 
 @Injectable()
 export class KardexService {
-  constructor(@InjectModel(Kardex.name) private kardexModel: Model<Kardex>, @InjectModel(Producto.name)
-  private productoModel: Model<Producto>,) {
+  constructor(
+    @InjectModel(Kardex.name) private kardexModel: Model<Kardex>,
+    @InjectModel(Producto.name) private productoModel: Model<Producto>,
+    private readonly nomencladorHelper: NomencladorHelper,
+  ) {}
 
+  /**
+   * Si el nuevo stock del producto llega a 0, cambia su estado al nomenclador
+   * "Inactivo" (creándolo si no existe). Decisión conservadora: NO vuelve a
+   * "Activo" automáticamente aunque el stock vuelva a ser positivo.
+   *
+   * Esta lógica evita inyección circular: KardexService accede directo al
+   * productoModel + NomencladorHelper, sin pasar por ProductoService.
+   */
+  private async inactivarProductoSiStockCero(
+    productoId: Types.ObjectId,
+    nuevoStock: number,
+  ): Promise<void> {
+    if (nuevoStock > 0) return;
+    try {
+      const estadoInactivo = await this.nomencladorHelper.findOrCreateEstado(
+        'Inactivo',
+      );
+      const producto = await this.productoModel.findById(productoId);
+      if (!producto) return;
+      if (producto.estado?.toString() === estadoInactivo.toString()) return;
+      await this.productoModel.findByIdAndUpdate(productoId, {
+        estado: estadoInactivo,
+      });
+    } catch (err) {
+      // No romper la operación principal si falla el auto-estado.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Kardex: no se pudo actualizar estado del producto ${productoId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   //Crear un kardex y actualizar el stock del producto
@@ -48,6 +86,11 @@ export class KardexService {
         motivo
       })
     ]);
+
+    await this.inactivarProductoSiStockCero(
+      new Types.ObjectId(productoId),
+      nuevoStock,
+    );
 
     return kardexCreado;
   }
@@ -89,7 +132,7 @@ export class KardexService {
 
 
   //Actualizar un kardex
-  async update(id: string, updateKardexDto: UpdateKardexDto): Promise<Kardex | { message: string }> {
+  async update(id: string, updateKardexDto: UpdateKardexDto): Promise<Kardex | KardexResultadoMensaje> {
     const { cantidad: nuevaCantidad } = updateKardexDto;
 
 
@@ -117,6 +160,11 @@ export class KardexService {
       return { message: 'Error al actualizar el kardex' };
     }
 
+    await this.inactivarProductoSiStockCero(
+      new Types.ObjectId(kardexExistente.productoId.toString()),
+      nuevoStock,
+    );
+
     return kardexActualizado;
   }
 
@@ -124,7 +172,7 @@ export class KardexService {
 
   //Eliminar un kardex
 
-  async remove(id: string): Promise<Kardex | { message: string }> {
+  async remove(id: string): Promise<KardexResultadoMensaje> {
     const deletekar = await this.kardexModel.findByIdAndDelete(id);
 
     if (!deletekar) {

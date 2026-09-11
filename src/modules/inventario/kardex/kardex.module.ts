@@ -4,6 +4,7 @@ import { KardexController } from './kardex.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Kardex, KardexSchema } from './schema/kardex.schema';
 import { Producto, ProductoSchema } from '../producto/schemas/producto.schema';
+import { NomencladorHelperModule } from '../../configuracion/nomenclador-helper/nomenclador-helper.module';
 
 @Module({
   controllers: [KardexController],
@@ -16,7 +17,9 @@ import { Producto, ProductoSchema } from '../producto/schemas/producto.schema';
   {
     name: Producto.name,
     schema: ProductoSchema,
-  },]),],
+  },]),
+  NomencladorHelperModule,
+],
   exports: [MongooseModule],
 })
 export class KardexModule { }
