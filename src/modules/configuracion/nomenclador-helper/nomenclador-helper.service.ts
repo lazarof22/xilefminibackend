@@ -5,6 +5,9 @@ import { CategoriaService } from '../../nomencladores/categoria/categoria.servic
 import { EstadoService } from '../../nomencladores/estado/estado.service';
 import { DepartamentoService } from '../../nomencladores/departamento/departamento.service';
 import { CargoEmpleadoService } from '../../nomencladores/cargo_empleado/cargo_empleado.service';
+import { NaturalezaCuentaService } from '../../nomencladores/naturaleza-cuenta/naturaleza-cuenta.service';
+import { ElementoGastoService } from '../../nomencladores/elemento-gasto/elemento-gasto.service';
+import { ComprobanteTipoService } from '../../nomencladores/comprobante-tipo/comprobante-tipo.service';
 
 @Injectable()
 export class NomencladorHelper {
@@ -14,6 +17,9 @@ export class NomencladorHelper {
     private readonly estadoService: EstadoService,
     private readonly departamentoService: DepartamentoService,
     private readonly cargoEmpleadoService: CargoEmpleadoService,
+    private readonly naturalezaCuentaService: NaturalezaCuentaService,
+    private readonly elementoGastoService: ElementoGastoService,
+    private readonly comprobanteTipoService: ComprobanteTipoService,
   ) {}
 
   async findOrCreatePais(nombre: string): Promise<Types.ObjectId> {
@@ -36,7 +42,19 @@ export class NomencladorHelper {
     return this.cargoEmpleadoService.findOrCreate(nombre);
   }
 
-  isObjectId(value: any): boolean {
+  async findOrCreateNaturalezaCuenta(nombre: string): Promise<Types.ObjectId> {
+    return this.naturalezaCuentaService.findOrCreate(nombre);
+  }
+
+  async findOrCreateElementoGasto(codigo: string): Promise<Types.ObjectId> {
+    return this.elementoGastoService.findOrCreate(codigo);
+  }
+
+  async findOrCreateComprobanteTipo(codigo: string): Promise<Types.ObjectId> {
+    return this.comprobanteTipoService.findOrCreate(codigo);
+  }
+
+  isObjectId(value: unknown): boolean {
     if (value instanceof Types.ObjectId) return true;
     if (typeof value === 'string' && /^[0-9a-fA-F]{24}$/.test(value)) return true;
     return false;

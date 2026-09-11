@@ -16,17 +16,25 @@ import { KardexModule } from './modules/inventario/kardex/kardex.module';
 import { ProductoModule } from './modules/inventario/producto/producto.module';
 import { AlmacenModule } from './modules/inventario/almacen/almacen.module';
 import { ContenedorModule } from './modules/inventario/contenedor/contenedor.module';
+import { TransferenciaModule } from './modules/inventario/transferencia/transferencia.module';
 import { CompraModule } from './modules/compra/compra/compra.module';
 import { ClienteModule } from './modules/clientes y provedores/cliente/cliente.module';
 import { EmpresaModule } from './modules/clientes y provedores/empresa/empresa.module';
+import { ComprobanteModule } from './modules/contabilidad/comprobante/comprobante.module';
+import { CuentaModule } from './modules/contabilidad/cuenta/cuenta.module';
+import { CuentaPagarModule } from './modules/finanzas/cuenta-pagar/cuenta-pagar.module';
 import { MonedaModule } from './modules/nomencladores/moneda/moneda.module';
 import { EstadoModule } from './modules/nomencladores/estado/estado.module';
 import { CategoriaModule } from './modules/nomencladores/categoria/categoria.module';
 import { CargoEmpleadoModule } from './modules/nomencladores/cargo_empleado/cargo_empleado.module';
 import { DepartamentoModule } from './modules/nomencladores/departamento/departamento.module';
+import { NaturalezaCuentaModule } from './modules/nomencladores/naturaleza-cuenta/naturaleza-cuenta.module';
+import { ElementoGastoModule } from './modules/nomencladores/elemento-gasto/elemento-gasto.module';
+import { ComprobanteTipoModule } from './modules/nomencladores/comprobante-tipo/comprobante-tipo.module';
 import { PaisModule } from './modules/nomencladores/pais/pais.module';
 import { UsuariosModule } from './modules/configuracion/usuarios/usuarios.module';
 import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empresa-datos.module';
+import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
 
 @Module({
   imports: [
@@ -56,17 +64,25 @@ import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empres
     ProductoModule,
     AlmacenModule,
     ContenedorModule,
+    TransferenciaModule,
     CompraModule,
     ClienteModule,
     EmpresaModule,
+    ComprobanteModule,
+    CuentaModule,
+    CuentaPagarModule,
     MonedaModule,
     EstadoModule,
     CategoriaModule,
     CargoEmpleadoModule,
     DepartamentoModule,
+    NaturalezaCuentaModule,
+    ElementoGastoModule,
+    ComprobanteTipoModule,
     PaisModule,
     UsuariosModule,
     EmpresaDatosModule,
+    ImportExportModule,
   ],
   controllers: [AppController],
   providers: [AppService],
