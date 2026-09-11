@@ -7,6 +7,7 @@ import { Estado, EstadoSchema } from 'src/modules/nomencladores/estado/schema/es
 import { Categoria, CategoriaSchema } from 'src/modules/nomencladores/categoria/schema/categoria.schema';
 import { Almacen, AlmacenSchema } from '../almacen/schema/almacen.schema';
 import { Contenedor, ContenedorSchema } from '../contenedor/schema/contenedor.schema';
+import { NomencladorHelperModule } from '../../configuracion/nomenclador-helper/nomenclador-helper.module';
 
 @Module({
   controllers: [ProductoController],
@@ -18,7 +19,9 @@ import { Contenedor, ContenedorSchema } from '../contenedor/schema/contenedor.sc
     { name: Categoria.name, schema: CategoriaSchema },
     { name: Almacen.name, schema: AlmacenSchema },
     { name: Contenedor.name, schema: ContenedorSchema },
-  ])],
+  ]),
+  NomencladorHelperModule,
+],
   exports: [MongooseModule],
 })
 export class ProductoModule { }

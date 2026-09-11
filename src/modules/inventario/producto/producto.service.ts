@@ -8,6 +8,7 @@ import { Estado } from '../../nomencladores/estado/schema/estado.schema';
 import { Categoria } from '../../nomencladores/categoria/schema/categoria.schema';
 import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
+import { NomencladorHelper } from '../../configuracion/nomenclador-helper/nomenclador-helper.service';
 
 
 @Injectable()
@@ -18,7 +19,34 @@ export class ProductoService {
     @InjectModel(Categoria.name) private categoriaModel: Model<Categoria>,
     @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
     @InjectModel(Contenedor.name) private contenedorModel: Model<Contenedor>,
+    private readonly nomencladorHelper: NomencladorHelper,
   ) { }
+
+  /**
+   * Si el nuevo stock llega a 0, marca el producto como "Inactivo"
+   * (creando el nomenclador de estado si no existe). Si ya estaba
+   * Inactivo, no hace nada. NO vuelve a "Activo" automáticamente: el
+   * regreso a estado activo debe ser manual (decisión conservadora).
+   *
+   * El KardexService (PASO 9) es el responsable de invocar este hook
+   * después de cada movimiento. Este método queda expuesto para uso
+   * futuro (e.g. scripts de migración).
+   */
+  async actualizarEstadoSegunStock(
+    productoId: Types.ObjectId,
+    nuevoStock: number,
+  ): Promise<void> {
+    if (nuevoStock > 0) return;
+    const estadoInactivo = await this.nomencladorHelper.findOrCreateEstado(
+      'Inactivo',
+    );
+    const producto = await this.productoModel.findById(productoId);
+    if (!producto) return;
+    if (producto.estado?.toString() === estadoInactivo.toString()) return;
+    await this.productoModel.findByIdAndUpdate(productoId, {
+      estado: estadoInactivo,
+    });
+  }
 
 
   //Crear un producto
