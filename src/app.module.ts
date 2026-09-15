@@ -35,6 +35,7 @@ import { PaisModule } from './modules/nomencladores/pais/pais.module';
 import { UsuariosModule } from './modules/configuracion/usuarios/usuarios.module';
 import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empresa-datos.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
+import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 
 @Module({
   imports: [
@@ -83,6 +84,7 @@ import { ImportExportModule } from './modules/configuracion/import-export/import
     UsuariosModule,
     EmpresaDatosModule,
     ImportExportModule,
+    NomencladoresModule,
   ],
   controllers: [AppController],
   providers: [AppService],
