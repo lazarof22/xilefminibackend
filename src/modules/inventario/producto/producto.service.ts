@@ -64,22 +64,6 @@ export class ProductoService {
       throw new BadRequestException('Ya existe el producto');
     }
 
-    if (!Types.ObjectId.isValid(estado)) {
-      throw new BadRequestException('El ID del estado no es válido');
-    }
-    const estadoExist = await this.estadoModel.findById(estado);
-    if (!estadoExist) {
-      throw new NotFoundException('El estado no existe');
-    }
-
-    if (!Types.ObjectId.isValid(categoria_producto)) {
-      throw new BadRequestException('El ID de la categoría no es válido');
-    }
-    const categoriaExist = await this.categoriaModel.findById(categoria_producto);
-    if (!categoriaExist) {
-      throw new NotFoundException('La categoría no existe');
-    }
-
     if (almacen) {
       if (!Types.ObjectId.isValid(almacen)) {
         throw new BadRequestException('El ID del almacén no es válido');
@@ -111,8 +95,6 @@ export class ProductoService {
   async findAll(): Promise<Producto[]> {
     return this.productoModel
       .find()
-      .populate({ path: 'estado', select: 'estado' })
-      .populate({ path: 'categoria_producto', select: 'nombre_categoria' })
       .populate({ path: 'almacen', select: 'nombreAlmacen' })
       .populate({ path: 'contenedor', select: 'nombreContenedor' })
       .sort({ createdAt: -1 })
@@ -125,8 +107,6 @@ export class ProductoService {
   async findOne(id: string): Promise<Producto> {
     const pro = await this.productoModel
       .findById(id)
-      .populate({ path: 'estado', select: 'estado' })
-      .populate({ path: 'categoria_producto', select: 'nombre_categoria' })
       .populate({ path: 'almacen', select: 'nombreAlmacen' })
       .populate({ path: 'contenedor', select: 'nombreContenedor' })
       .exec();
@@ -169,6 +149,8 @@ export class ProductoService {
     return producto.save();
   }
 
+  
+  
   //Eliminar un producto
 
   async remove(id: string): Promise<void> {

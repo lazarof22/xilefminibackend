@@ -12,8 +12,8 @@ export class Producto {
     @Prop({ required: true })
     nombre_producto!: string;
 
-    @Prop({ required: true, type: Types.ObjectId, ref: 'Categoria', })
-    categoria_producto!: Types.ObjectId;
+    @Prop({ required: true, unique:true })
+    categoria_producto!: string;
 
     @Prop({ required: true })
     precio_compra!: number;
@@ -27,8 +27,8 @@ export class Producto {
     @Prop({ required: true })
     stock_minimo!: number; // cantidad minima que debe haber
 
-    @Prop({ required: true,type:Types.ObjectId, ref: 'Estado' })
-    estado!: Types.ObjectId;
+    @Prop({ required: true,unique:true })
+    estado!: string;
 
     @Prop({ type: Types.ObjectId, ref: 'Almacen' })
     almacen?: Types.ObjectId;

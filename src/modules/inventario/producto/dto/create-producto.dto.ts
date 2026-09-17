@@ -11,9 +11,9 @@ export class CreateProductoDto {
     @IsNotEmpty()
     nombre_producto!: string;
 
-    @IsMongoId()
+    @IsString()
     @IsNotEmpty()
-    categoria_producto!: Types.ObjectId;
+    categoria_producto!: string;
 
 
     @IsNotEmpty()
@@ -35,9 +35,9 @@ export class CreateProductoDto {
     @IsNumber()
     stock_minimo!: number;
 
-    @IsMongoId()
+    @IsString()
     @IsNotEmpty()
-    estado!: Types.ObjectId;
+    estado!: string;
 
     @IsOptional()
     @IsMongoId()
