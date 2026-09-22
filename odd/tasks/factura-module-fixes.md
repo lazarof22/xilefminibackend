@@ -34,7 +34,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 ### Review follow-ups (native review review-1bfec93a25e1e19a, approved with advisories; user authorized fixing them)
 - [x] T7 Always-bounded `findAll`: default limit 50, max 500, response stays `Factura[]` — R1-002, R4-findall-unbounded-default
 - [x] T8 Issuer (`emisor`) always taken from EmpresaDatos; removed from create DTO — R1-003
-- [ ] T9 No burned invoice numbers: run every fallible step (emisor, client, date, totals, `validate()`) before allocating; on save failure roll the counter back conditionally, otherwise log the gap with the lost `numero` — R3/R4 numero-gap
+- [x] T9 No burned invoice numbers: run every fallible step (emisor, client, date, totals, `validate()`) before allocating; on save failure roll the counter back conditionally, otherwise log the gap with the lost `numero` — R3/R4 numero-gap
 - [ ] T10 Hardening: validate `FACTURA_TIMEZONE` at startup (fail fast); log when E11000 re-query finds nothing; clamp line discount so `subtotal - descuentoTotal + recargoTotal == base`; strict rounding test; Swagger 409 responses; readability cleanups (merge duplicate impuesto interfaces, rename `asegurarEditable`, name the placeholder constants, drop dead guard) — R3/R2 advisories
 - [ ] T11 Runtime smoke test against local MongoDB with the server running (create, list, get, patch, anular, 409 paths, concurrent creates)
 
@@ -105,8 +105,14 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - `npm run build` → clean.
   - Commit: (recorded after commit below)
 
+- T9 done. `FacturaService.create` no longer allocates `numero` first. It now: computes `fecha`/totals/`emisor`/client, builds the `Factura` document WITHOUT `numero`/`id`, then runs `await factura.validate({ pathsToSkip: ['numero', 'id'] })` — a failed validation throws before the counter is ever touched. Only after that does it call `siguienteNumero()`, assign `factura.numero`/`factura.id` on the already-validated document, and `save()`. If `save()` throws (e.g. a lost race on the unique `numero` index), a new `compensarNumeroTrasFalloDeGuardado(numero, err)` runs `findOneAndUpdate({ _id: 'factura', seq: numero }, { $inc: { seq: -1 } })`: if it matches (no later invoice has allocated a number since), the number is released and `logger.warn` records it; if it doesn't match, the number is a permanent gap and `logger.error` records it naming the `numero` and the original error. The original error is always rethrown either way. Extended the shared test harness (`factura.service.spec.ts`) with a `validate` mock on the constructed instance and a `Logger.prototype.error` spy (needed by every existing test, not just T9's).
+  - RED: `npx jest src/modules/factura/factura.service.spec.ts` → 4 failed (validate never called; counter allocated before validation; no rollback attempt or logging on save failure).
+  - GREEN: `npx jest src/modules/factura` → 68 passed (had to update one T1 assertion that read `numero`/`id` off the constructor call args — they're now assigned after construction, so it reads `facturaModelMock.mock.instances[0]` instead).
+  - `npm run build` → clean. `npx eslint "src/modules/factura/**/*.ts"` → clean (after `--fix` for prettier formatting only). `rg -n ":\s*any\b|as any|<any>|any\[\]" src/modules/factura` → empty.
+  - Commit: (recorded after commit below)
+
 ## Next step
-T9–T11 (review follow-ups), delegated to one writer.
+T10–T11 (review follow-ups), delegated to one writer.
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.

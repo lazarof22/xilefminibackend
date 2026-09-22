@@ -71,7 +71,10 @@ describe('FacturaService', () => {
   let facturaModelMock: FacturaModelMock;
   let facturaContadorModelMock: FacturaContadorModelMock;
   let clienteModelMock: ClienteModelMock;
-  let savedFactura: Partial<Factura> & { save: jest.Mock };
+  let savedFactura: Partial<Factura> & {
+    save: jest.Mock;
+    validate: jest.Mock<Promise<void>, [unknown?]>;
+  };
   let savedCliente: Record<string, unknown> & { save: jest.Mock };
 
   const empresaDatosServiceMock: Partial<
@@ -93,16 +96,23 @@ describe('FacturaService', () => {
   };
 
   beforeEach(async () => {
-    savedFactura = { save: jest.fn() };
+    savedFactura = {
+      save: jest.fn(),
+      validate: jest.fn<Promise<void>, [unknown?]>(),
+    };
     savedFactura.save.mockImplementation(() =>
       Promise.resolve(savedFactura as unknown as Factura),
     );
+    savedFactura.validate.mockResolvedValue(undefined);
 
     facturaModelMock = jest.fn().mockImplementation(function (
       this: FacturaConstructorData,
       data: FacturaConstructorData,
     ) {
-      Object.assign(this, data, { save: savedFactura.save });
+      Object.assign(this, data, {
+        save: savedFactura.save,
+        validate: savedFactura.validate,
+      });
     }) as unknown as FacturaModelMock;
     facturaModelMock.find = jest.fn<QueryMock<Factura | null>, unknown[]>();
     facturaModelMock.findOne = jest.fn<QueryMock<Factura | null>, unknown[]>();
@@ -146,6 +156,7 @@ describe('FacturaService', () => {
 
     service = module.get<FacturaService>(FacturaService);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    jest.spyOn(Logger.prototype, 'error').mockImplementation();
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -185,9 +196,12 @@ describe('FacturaService', () => {
 
       await service.create(dto);
 
-      const construidoCon = facturaModelMock.mock.calls[0][0];
-      expect(construidoCon.numero).toBe(7);
-      expect(construidoCon.id).toBe('FAC-000007');
+      // numero/id are assigned directly on the constructed instance after
+      // validation (T9), not passed to the constructor, so they are read
+      // from the tracked instance rather than from the constructor args.
+      const instancia = comoRegistro(facturaModelMock.mock.instances[0]);
+      expect(instancia.numero).toBe(7);
+      expect(instancia.id).toBe('FAC-000007');
     });
   });
 
@@ -280,6 +294,77 @@ describe('FacturaService', () => {
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.emisor).toBeUndefined();
+    });
+  });
+
+  describe('no burned invoice numbers (T9)', () => {
+    it('validates the document, skipping numero/id, before allocating a number', async () => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+
+      await service.create(baseDto());
+
+      expect(savedFactura.validate).toHaveBeenCalledWith({
+        pathsToSkip: ['numero', 'id'],
+      });
+      const ordenValidate = savedFactura.validate.mock.invocationCallOrder[0];
+      const ordenAsignacion =
+        facturaContadorModelMock.findOneAndUpdate.mock.invocationCallOrder[0];
+      expect(ordenValidate).toBeLessThan(ordenAsignacion);
+    });
+
+    it('never allocates a number when document validation fails', async () => {
+      savedFactura.validate.mockRejectedValueOnce(new Error('datos invalidos'));
+
+      await expect(service.create(baseDto())).rejects.toThrow(
+        'datos invalidos',
+      );
+
+      expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(savedFactura.save).not.toHaveBeenCalled();
+    });
+
+    it('rolls back the counter when save fails and the rollback matches (number is released)', async () => {
+      facturaContadorModelMock.findOneAndUpdate
+        .mockReturnValueOnce(
+          crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 5 }),
+        )
+        .mockReturnValueOnce(
+          crearQueryMock<FacturaContador | null>({
+            _id: FACTURA_CONTADOR_ID,
+            seq: 4,
+          }),
+        );
+      savedFactura.save.mockRejectedValueOnce(new Error('fallo al guardar'));
+      const advertir = jest.spyOn(Logger.prototype, 'warn');
+
+      await expect(service.create(baseDto())).rejects.toThrow(
+        'fallo al guardar',
+      );
+
+      expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
+        2,
+        { _id: FACTURA_CONTADOR_ID, seq: 5 },
+        { $inc: { seq: -1 } },
+      );
+      expect(advertir).toHaveBeenCalledWith(expect.stringContaining('5'));
+    });
+
+    it('logs an error naming the burned numero when the rollback does not match', async () => {
+      facturaContadorModelMock.findOneAndUpdate
+        .mockReturnValueOnce(
+          crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 5 }),
+        )
+        .mockReturnValueOnce(crearQueryMock<FacturaContador | null>(null));
+      savedFactura.save.mockRejectedValueOnce(new Error('fallo al guardar'));
+      const errorLog = jest.spyOn(Logger.prototype, 'error');
+
+      await expect(service.create(baseDto())).rejects.toThrow(
+        'fallo al guardar',
+      );
+
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('5'));
     });
   });
 
@@ -528,9 +613,7 @@ describe('FacturaService', () => {
       expect(facturaModelMock.find).toHaveBeenCalledWith();
       expect(query.sort).toHaveBeenCalledWith({ numero: -1 });
       expect(query.skip).toHaveBeenCalledWith(0);
-      expect(query.limit).toHaveBeenCalledWith(
-        FACTURA_LISTADO_LIMITE_DEFECTO,
-      );
+      expect(query.limit).toHaveBeenCalledWith(FACTURA_LISTADO_LIMITE_DEFECTO);
     });
 
     it('defaults to page 1 when only limit is provided', async () => {
@@ -562,9 +645,7 @@ describe('FacturaService', () => {
       expect(query.skip).toHaveBeenCalledWith(
         2 * FACTURA_LISTADO_LIMITE_DEFECTO,
       );
-      expect(query.limit).toHaveBeenCalledWith(
-        FACTURA_LISTADO_LIMITE_DEFECTO,
-      );
+      expect(query.limit).toHaveBeenCalledWith(FACTURA_LISTADO_LIMITE_DEFECTO);
     });
 
     it('calling findAll with no argument at all still bounds the query (safety net if a caller bypasses the controller)', async () => {
@@ -574,9 +655,7 @@ describe('FacturaService', () => {
       await service.findAll();
 
       expect(query.skip).toHaveBeenCalledWith(0);
-      expect(query.limit).toHaveBeenCalledWith(
-        FACTURA_LISTADO_LIMITE_DEFECTO,
-      );
+      expect(query.limit).toHaveBeenCalledWith(FACTURA_LISTADO_LIMITE_DEFECTO);
     });
   });
 

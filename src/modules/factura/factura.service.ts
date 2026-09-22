@@ -59,9 +59,16 @@ export class FacturaService implements OnModuleInit {
       .exec();
   }
 
+  /**
+   * Runs every fallible step (emisor, client lookup, date, totals, and
+   * full document validation) BEFORE allocating a correlative `numero`,
+   * so an invalid request never burns a number. Only after the document
+   * validates does it allocate `numero`/`id` and save; if `save()` still
+   * fails (e.g. a lost race on the unique `numero` index), it attempts to
+   * release the allocated number back to the counter (see
+   * `compensarNumeroTrasFalloDeGuardado`).
+   */
   async create(createFacturaDto: CreateFacturaDto): Promise<Factura> {
-    const numero = await this.siguienteNumero();
-    const id = this.generarId(numero);
     const fecha =
       createFacturaDto.fecha ?? obtenerFechaEnZona(FACTURA_TIMEZONE);
 
@@ -96,8 +103,6 @@ export class FacturaService implements OnModuleInit {
     }
 
     const factura = new this.facturaModel({
-      id,
-      numero,
       fecha,
       cliente: clienteNombre,
       nit,
@@ -119,7 +124,51 @@ export class FacturaService implements OnModuleInit {
       tipo: createFacturaDto.tipo ?? 'factura_normal',
       impreso: createFacturaDto.impreso ?? false,
     });
-    return factura.save();
+
+    // numero/id are not set yet (allocated below), so they are excluded
+    // from this validation pass.
+    await factura.validate({ pathsToSkip: ['numero', 'id'] });
+
+    const numero = await this.siguienteNumero();
+    factura.numero = numero;
+    factura.id = this.generarId(numero);
+
+    try {
+      return await factura.save();
+    } catch (err) {
+      await this.compensarNumeroTrasFalloDeGuardado(numero, err);
+      throw err;
+    }
+  }
+
+  /**
+   * After `save()` fails for an already-numbered invoice, tries to release
+   * the allocated `numero` back to the counter so the next invoice can
+   * reuse it. The conditional `{ seq: numero }` filter only matches (and
+   * decrements) when no other invoice has allocated a later number since;
+   * otherwise the number is permanently lost (a gap) and only logged.
+   */
+  private async compensarNumeroTrasFalloDeGuardado(
+    numero: number,
+    err: unknown,
+  ): Promise<void> {
+    const liberado = await this.facturaContadorModel
+      .findOneAndUpdate(
+        { _id: FACTURA_CONTADOR_ID, seq: numero },
+        { $inc: { seq: -1 } },
+      )
+      .exec();
+
+    if (liberado) {
+      this.logger.warn(
+        `Se libero el numero de factura ${numero} tras un fallo al guardar: ${String(err)}`,
+      );
+      return;
+    }
+
+    this.logger.error(
+      `No se pudo recuperar el numero de factura ${numero}; quedo perdido (gap permanente en la numeracion) tras un fallo al guardar: ${String(err)}`,
+    );
   }
 
   /**
