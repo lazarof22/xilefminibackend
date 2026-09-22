@@ -28,7 +28,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 - [x] T2 Server-side totals, tax calculation, stricter DTO validation, server-controlled fields removed from create — fixes #2, #6, #7, #8
 - [x] T3 Restricted update DTO (only mutable fields), reject edits on annulled invoices, swagger mapped types — fixes #3, #9
 - [x] T4 Local-timezone default date (America/Havana) + `YYYY-MM-DD` validation — fixes #4
-- [ ] T5 Deterministic client matching (nit > email > phone), duplicate-key recovery, logged failures — fixes #5
+- [x] T5 Deterministic client matching (nit > email > phone), duplicate-key recovery, logged failures — fixes #5
 - [ ] T6 Optional pagination on `findAll` (`page`, `limit`) — fixes #10
 
 ## Route
@@ -67,7 +67,17 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED (`create-factura.dto.spec.ts` fecha block + `factura.service.spec.ts` T4 block): 3 failed (malformed/impossible dates accepted; default fecha used UTC, off by one day near midnight).
   - GREEN: `npx jest src/modules/factura` -> 41 passed (5 suites).
   - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
+  - Commit: `5d0038b` fix(factura): default invoice date to America/Havana, validate format
+
+- T5 done. Added `factura-mongo-errors.ts` (`isDuplicateKeyError(err: unknown): boolean`, typed guard for Mongo E11000). `buscarOCrearCliente` now looks up via a new `buscarCliente()` that runs three separate `findOne` queries in priority order (nit -> email_cliente -> telefono_cliente, first hit wins) instead of a single `$or`, so a phone number can no longer accidentally match another client's nit. On `nuevoCliente.save()` throwing an E11000 duplicate key (lost a create race), it re-queries by the same priority and returns that client instead of failing. On any other save error, it calls `this.logger.warn(...)` (Nest `Logger`, injected as `private readonly logger`) and returns `null` — no more empty `catch {}`. Found a mongoose typing note: this project's mongoose (9.9.5) renamed `FilterQuery<T>` to `QueryFilter<T>`; `npm run build` initially failed with `TS2614: Module "mongoose" has no exported member 'FilterQuery'` and was fixed by importing `QueryFilter` instead.
+  - RED (`factura-mongo-errors.spec.ts`): module-not-found (file didn't exist).
+  - GREEN (`factura-mongo-errors.spec.ts`): 4 passed.
+  - RED (`factura.service.spec.ts` T5 describe block): 5 failed (single `$or` query instead of 3 priority queries, no duplicate-key retry, no logging on generic errors).
+  - GREEN: `npx jest src/modules/factura` -> 50 passed (6 suites).
+  - `npm run build` -> initially failed on `FilterQuery` (see above); clean after switching to `QueryFilter`.
+  - `npx eslint "src/modules/factura/**/*.ts"` -> clean (an intermediate `no-unsafe-argument` warning on the untyped filter argument went away once `QueryFilter<Cliente>` was applied).
+  - `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
   - Commit: (recorded after commit below)
 
 ## Next step
-Continue with T5 (deterministic client matching + duplicate-key recovery).
+Continue with T6 (optional pagination on findAll).

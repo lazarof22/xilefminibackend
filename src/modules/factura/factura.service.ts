@@ -6,7 +6,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, QueryFilter, Types } from 'mongoose';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import { Factura } from './schema/factura.schema';
@@ -19,6 +19,7 @@ import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-dato
 import { FACTURA_CONTADOR_ID, FACTURA_TIMEZONE } from './factura.constants';
 import { calcularTotales } from './factura-totales';
 import { obtenerFechaEnZona } from './factura-fecha';
+import { isDuplicateKeyError } from './factura-mongo-errors';
 
 @Injectable()
 export class FacturaService implements OnModuleInit {
@@ -150,6 +151,48 @@ export class FacturaService implements OnModuleInit {
     };
   }
 
+  /**
+   * Looks up an existing client by nit, then email, then telefono — three
+   * separate queries, first hit wins — instead of a single `$or`, which
+   * could otherwise match a client on the wrong field (e.g. a phone
+   * number that coincidentally equals another client's nit).
+   */
+  private async buscarCliente(criterios: {
+    nit?: string;
+    email?: string;
+    telefono?: string;
+  }): Promise<ClienteDocument | null> {
+    const { nit, email, telefono } = criterios;
+
+    if (nit) {
+      const porNit = await this.buscarPorFiltro({ nit });
+      if (porNit) {
+        return porNit;
+      }
+    }
+    if (email) {
+      const porEmail = await this.buscarPorFiltro({ email_cliente: email });
+      if (porEmail) {
+        return porEmail;
+      }
+    }
+    if (telefono) {
+      const porTelefono = await this.buscarPorFiltro({
+        telefono_cliente: telefono,
+      });
+      if (porTelefono) {
+        return porTelefono;
+      }
+    }
+    return null;
+  }
+
+  private async buscarPorFiltro(
+    filtro: QueryFilter<Cliente>,
+  ): Promise<ClienteDocument | null> {
+    return this.clienteModel.findOne(filtro).exec();
+  }
+
   private async buscarOCrearCliente(datos: {
     nombre: string;
     nit?: string;
@@ -159,19 +202,11 @@ export class FacturaService implements OnModuleInit {
   }): Promise<ClienteDocument | null> {
     const { nombre, nit, telefono, email, direccion } = datos;
 
-    const condiciones = [
-      nit ? { nit } : {},
-      telefono ? { telefono_cliente: telefono } : {},
-      email ? { email_cliente: email } : {},
-    ].filter((q) => Object.keys(q).length > 0);
-
-    if (condiciones.length === 0) {
+    if (!nit && !telefono && !email) {
       return null;
     }
 
-    const existente = await this.clienteModel
-      .findOne({ $or: condiciones })
-      .exec();
+    const existente = await this.buscarCliente({ nit, email, telefono });
     if (existente) {
       return existente;
     }
@@ -188,7 +223,15 @@ export class FacturaService implements OnModuleInit {
 
     try {
       return await nuevoCliente.save();
-    } catch {
+    } catch (err) {
+      if (isDuplicateKeyError(err)) {
+        // Lost a race with a concurrent create: the client now exists,
+        // re-query it by the same priority instead of failing.
+        return this.buscarCliente({ nit, email, telefono });
+      }
+      this.logger.warn(
+        `No se pudo crear el cliente para la factura: ${String(err)}`,
+      );
       return null;
     }
   }

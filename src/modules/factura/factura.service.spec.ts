@@ -69,6 +69,7 @@ describe('FacturaService', () => {
   let facturaContadorModelMock: FacturaContadorModelMock;
   let clienteModelMock: ClienteModelMock;
   let savedFactura: Partial<Factura> & { save: jest.Mock };
+  let savedCliente: Record<string, unknown> & { save: jest.Mock };
 
   const empresaDatosServiceMock: Partial<
     Record<keyof EmpresaDatosService, jest.Mock>
@@ -112,7 +113,17 @@ describe('FacturaService', () => {
       updateOne: jest.fn<QueryMock<unknown>, unknown[]>(),
     };
 
-    clienteModelMock = jest.fn() as unknown as ClienteModelMock;
+    savedCliente = { save: jest.fn() };
+    savedCliente.save.mockImplementation(() =>
+      Promise.resolve(savedCliente as unknown as ClienteDocument),
+    );
+
+    clienteModelMock = jest.fn().mockImplementation(function (
+      this: Record<string, unknown>,
+      data: Record<string, unknown>,
+    ) {
+      Object.assign(this, data, { save: savedCliente.save });
+    }) as unknown as ClienteModelMock;
     clienteModelMock.findOne = jest
       .fn<QueryMock<ClienteDocument | null>, unknown[]>()
       .mockReturnValue(crearQueryMock<ClienteDocument | null>(null));
@@ -348,6 +359,118 @@ describe('FacturaService', () => {
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.fecha).toBe('2020-01-01');
+    });
+  });
+
+  describe('client matching priority: nit > email > telefono (T5)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it('matches by nit first, without a single $or query', async () => {
+      clienteModelMock.findOne.mockReturnValueOnce(
+        crearQueryMock<ClienteDocument | null>({
+          _id: 'cliente-1',
+        } as unknown as ClienteDocument),
+      );
+
+      const dto = {
+        ...baseDto(),
+        nit: '111',
+        email: 'a@b.com',
+        telefono: '555',
+      } as CreateFacturaDto;
+      await service.create(dto);
+
+      expect(clienteModelMock.findOne).toHaveBeenCalledTimes(1);
+      expect(clienteModelMock.findOne).toHaveBeenCalledWith({ nit: '111' });
+    });
+
+    it('falls back to email when nit does not match', async () => {
+      clienteModelMock.findOne
+        .mockReturnValueOnce(crearQueryMock<ClienteDocument | null>(null))
+        .mockReturnValueOnce(
+          crearQueryMock<ClienteDocument | null>({
+            _id: 'cliente-2',
+          } as unknown as ClienteDocument),
+        );
+
+      const dto = {
+        ...baseDto(),
+        nit: '111',
+        email: 'a@b.com',
+        telefono: '555',
+      } as CreateFacturaDto;
+      await service.create(dto);
+
+      expect(clienteModelMock.findOne).toHaveBeenCalledTimes(2);
+      expect(clienteModelMock.findOne).toHaveBeenNthCalledWith(1, {
+        nit: '111',
+      });
+      expect(clienteModelMock.findOne).toHaveBeenNthCalledWith(2, {
+        email_cliente: 'a@b.com',
+      });
+    });
+
+    it('falls back to telefono when nit and email do not match', async () => {
+      clienteModelMock.findOne
+        .mockReturnValueOnce(crearQueryMock<ClienteDocument | null>(null))
+        .mockReturnValueOnce(crearQueryMock<ClienteDocument | null>(null))
+        .mockReturnValueOnce(
+          crearQueryMock<ClienteDocument | null>({
+            _id: 'cliente-3',
+          } as unknown as ClienteDocument),
+        );
+
+      const dto = {
+        ...baseDto(),
+        nit: '111',
+        email: 'a@b.com',
+        telefono: '555',
+      } as CreateFacturaDto;
+      await service.create(dto);
+
+      expect(clienteModelMock.findOne).toHaveBeenCalledTimes(3);
+      expect(clienteModelMock.findOne).toHaveBeenNthCalledWith(3, {
+        telefono_cliente: '555',
+      });
+    });
+
+    it('on a duplicate key error while creating, re-queries by the same priority and returns that client', async () => {
+      // No match on the initial lookup, so the service tries to create one.
+      clienteModelMock.findOne
+        .mockReturnValueOnce(crearQueryMock<ClienteDocument | null>(null))
+        .mockReturnValueOnce(
+          crearQueryMock<ClienteDocument | null>({
+            _id: 'cliente-recuperado',
+          } as unknown as ClienteDocument),
+        );
+      savedCliente.save.mockRejectedValueOnce({ code: 11000 });
+
+      const dto = { ...baseDto(), nit: '111' } as CreateFacturaDto;
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.clienteId).toBe('cliente-recuperado');
+      expect(clienteModelMock.findOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('logs and returns null (no clienteId, no throw) on a non-duplicate-key error', async () => {
+      clienteModelMock.findOne.mockReturnValue(
+        crearQueryMock<ClienteDocument | null>(null),
+      );
+      savedCliente.save.mockRejectedValueOnce(new Error('conexion perdida'));
+      const advertir = jest.spyOn(Logger.prototype, 'warn');
+
+      const dto = { ...baseDto(), nit: '111' } as CreateFacturaDto;
+      const resultado = await service.create(dto);
+
+      expect(resultado).toBeDefined();
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.clienteId).toBeUndefined();
+      expect(advertir).toHaveBeenCalled();
     });
   });
 
