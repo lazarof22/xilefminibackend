@@ -34,6 +34,7 @@ import { ComprobanteTipoModule } from './modules/nomencladores/comprobante-tipo/
 import { PaisModule } from './modules/nomencladores/pais/pais.module';
 import { UsuariosModule } from './modules/configuracion/usuarios/usuarios.module';
 import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empresa-datos.module';
+import { FacturaModule } from './modules/factura/factura.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
 import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 
@@ -83,6 +84,7 @@ import { NomencladoresModule } from './modules/nomencladore generales/nomenclado
     PaisModule,
     UsuariosModule,
     EmpresaDatosModule,
+    FacturaModule,
     ImportExportModule,
     NomencladoresModule,
   ],
