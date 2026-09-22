@@ -6,8 +6,12 @@ import {
   IsBoolean,
   IsOptional,
   IsArray,
+  ArrayMinSize,
   ValidateNested,
   IsEnum,
+  IsPositive,
+  Min,
+  Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -34,31 +38,38 @@ export class ItemFacturaDto {
 
   @ApiProperty({ description: 'Cantidad vendida' })
   @IsNumber()
+  @IsPositive()
   cantidad!: number;
 
   @ApiProperty({ description: 'Precio unitario' })
   @IsNumber()
+  @Min(0)
   precio!: number;
 
   @ApiProperty({ description: 'Costo unitario' })
   @IsNumber()
+  @Min(0)
   costo!: number;
 
   @ApiProperty({ description: 'Descuento porcentual' })
   @IsNumber()
+  @Min(0)
+  @Max(100)
   descuentoPct!: number;
 
   @ApiProperty({ description: 'Descuento en monto' })
   @IsNumber()
+  @Min(0)
   descuentoMonto!: number;
 
   @ApiProperty({ description: 'Recargo' })
   @IsNumber()
+  @Min(0)
   recargo!: number;
 
-  @ApiProperty({ description: 'Total del item' })
-  @IsNumber()
-  total!: number;
+  // `total` is intentionally not accepted here: it is always recomputed
+  // server-side from precio/cantidad/descuentos/recargo (see
+  // factura-totales.ts) so a client can never inflate or understate it.
 }
 
 export class ImpuestoDto {
@@ -69,11 +80,17 @@ export class ImpuestoDto {
 
   @ApiPropertyOptional({ description: 'Porciento del impuesto' })
   @IsNumber()
+  @Min(0)
+  @Max(100)
   @IsOptional()
   porciento?: number;
 
-  @ApiPropertyOptional({ description: 'Importe del impuesto' })
+  @ApiPropertyOptional({
+    description:
+      'Importe del impuesto. Ignorado si porciento esta definido (se recalcula server-side)',
+  })
   @IsNumber()
+  @Min(0)
   @IsOptional()
   importe?: number;
 }
@@ -126,21 +143,6 @@ export class EmisorDatosDto {
 }
 
 export class CreateFacturaDto {
-  @ApiPropertyOptional({
-    description:
-      'Identificador de la factura (ej: FAC-000001). Si no se envia, el servidor lo genera',
-  })
-  @IsString()
-  @IsOptional()
-  id?: string;
-
-  @ApiPropertyOptional({
-    description: 'Numero correlativo. Si no se envia, el servidor lo genera',
-  })
-  @IsNumber()
-  @IsOptional()
-  numero?: number;
-
   @ApiPropertyOptional({ description: 'Fecha de emision' })
   @IsString()
   @IsOptional()
@@ -210,34 +212,16 @@ export class CreateFacturaDto {
 
   @ApiProperty({ description: 'Items de la factura', type: [ItemFacturaDto] })
   @IsArray()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => ItemFacturaDto)
   items!: ItemFacturaDto[];
 
-  @ApiPropertyOptional({ description: 'Subtotal' })
-  @IsNumber()
-  @IsOptional()
-  subtotal?: number;
-
-  @ApiPropertyOptional({ description: 'Descuento total' })
-  @IsNumber()
-  @IsOptional()
-  descuentoTotal?: number;
-
-  @ApiPropertyOptional({ description: 'Recargo total' })
-  @IsNumber()
-  @IsOptional()
-  recargoTotal?: number;
-
-  @ApiPropertyOptional({ description: 'Total de la factura' })
-  @IsNumber()
-  @IsOptional()
-  total?: number;
-
-  @ApiPropertyOptional({ enum: ['confirmada', 'ajustada', 'anulada'] })
-  @IsEnum(['confirmada', 'ajustada', 'anulada'])
-  @IsOptional()
-  estado?: string;
+  // id, numero, estado, total, subtotal, descuentoTotal and recargoTotal
+  // are intentionally absent: they are always server-computed
+  // (FacturaService.create) so a client can never forge them. The global
+  // ValidationPipe (whitelist + forbidNonWhitelisted, see src/main.ts)
+  // rejects any request that still sends them.
 
   @ApiPropertyOptional({ enum: ['factura_normal', 'ajuste'] })
   @IsEnum(['factura_normal', 'ajuste'])

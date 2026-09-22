@@ -18,41 +18,49 @@ import { FACTURA_CONTADOR_ID } from './factura.constants';
  * `exec` resolves to the configured result.
  */
 interface QueryMock<T> {
-  sort: jest.Mock<QueryMock<T>, [Record<string, number>]>;
-  skip: jest.Mock<QueryMock<T>, [number]>;
-  limit: jest.Mock<QueryMock<T>, [number]>;
-  orFail: jest.Mock<QueryMock<T>, []>;
+  sort: jest.Mock<QueryMock<T>, unknown[]>;
+  skip: jest.Mock<QueryMock<T>, unknown[]>;
+  limit: jest.Mock<QueryMock<T>, unknown[]>;
+  orFail: jest.Mock<QueryMock<T>, unknown[]>;
   exec: jest.Mock<Promise<T>, []>;
 }
 
 function crearQueryMock<T>(resultado: T): QueryMock<T> {
   const query = {} as QueryMock<T>;
-  query.sort = jest.fn().mockReturnValue(query);
-  query.skip = jest.fn().mockReturnValue(query);
-  query.limit = jest.fn().mockReturnValue(query);
-  query.orFail = jest.fn().mockReturnValue(query);
-  query.exec = jest.fn().mockResolvedValue(resultado);
+  query.sort = jest.fn<QueryMock<T>, unknown[]>().mockReturnValue(query);
+  query.skip = jest.fn<QueryMock<T>, unknown[]>().mockReturnValue(query);
+  query.limit = jest.fn<QueryMock<T>, unknown[]>().mockReturnValue(query);
+  query.orFail = jest.fn<QueryMock<T>, unknown[]>().mockReturnValue(query);
+  query.exec = jest.fn<Promise<T>, []>().mockResolvedValue(resultado);
   return query;
 }
 
-// Mongoose models are constructor functions with static query methods.
-// A plain object cannot satisfy `Model<T>`'s call signature, so the mock
-// is built as a jest constructor mock and cast through `unknown`; this is
-// the standard way to mock a Mongoose Model in Nest unit tests.
-type FacturaModelMock = jest.Mock & {
-  find: jest.Mock;
-  findOne: jest.Mock;
-  findOneAndUpdate: jest.Mock;
+/** Data passed to `new this.facturaModel(data)` inside `FacturaService.create`. */
+type FacturaConstructorData = Record<string, unknown>;
+
+// Mongoose models are constructor functions with static query methods. A
+// plain object cannot satisfy `Model<T>`'s call signature, so the mock is
+// built as a jest constructor mock and cast through `unknown`; this is the
+// standard way to mock a Mongoose Model in Nest unit tests.
+type FacturaModelMock = jest.Mock<unknown, [FacturaConstructorData]> & {
+  find: jest.Mock<QueryMock<Factura | null>, unknown[]>;
+  findOne: jest.Mock<QueryMock<Factura | null>, unknown[]>;
+  findOneAndUpdate: jest.Mock<QueryMock<Factura | null>, unknown[]>;
 };
 
 type FacturaContadorModelMock = {
-  findOneAndUpdate: jest.Mock;
-  updateOne: jest.Mock;
+  findOneAndUpdate: jest.Mock<QueryMock<FacturaContador>, unknown[]>;
+  updateOne: jest.Mock<QueryMock<unknown>, unknown[]>;
 };
 
-type ClienteModelMock = jest.Mock & {
-  findOne: jest.Mock;
+type ClienteModelMock = jest.Mock<unknown, [Record<string, unknown>]> & {
+  findOne: jest.Mock<QueryMock<ClienteDocument | null>, unknown[]>;
 };
+
+/** Narrows an unknown record field, for the rare assertion that needs a nested shape. */
+function comoRegistro(valor: unknown): Record<string, unknown> {
+  return valor as Record<string, unknown>;
+}
 
 describe('FacturaService', () => {
   let service: FacturaService;
@@ -86,24 +94,27 @@ describe('FacturaService', () => {
     );
 
     facturaModelMock = jest.fn().mockImplementation(function (
-      this: Record<string, unknown>,
-      data: Partial<Factura>,
+      this: FacturaConstructorData,
+      data: FacturaConstructorData,
     ) {
       Object.assign(this, data, { save: savedFactura.save });
     }) as unknown as FacturaModelMock;
-    facturaModelMock.find = jest.fn();
-    facturaModelMock.findOne = jest.fn();
-    facturaModelMock.findOneAndUpdate = jest.fn();
+    facturaModelMock.find = jest.fn<QueryMock<Factura | null>, unknown[]>();
+    facturaModelMock.findOne = jest.fn<QueryMock<Factura | null>, unknown[]>();
+    facturaModelMock.findOneAndUpdate = jest.fn<
+      QueryMock<Factura | null>,
+      unknown[]
+    >();
 
     facturaContadorModelMock = {
-      findOneAndUpdate: jest.fn(),
-      updateOne: jest.fn(),
+      findOneAndUpdate: jest.fn<QueryMock<FacturaContador>, unknown[]>(),
+      updateOne: jest.fn<QueryMock<unknown>, unknown[]>(),
     };
 
     clienteModelMock = jest.fn() as unknown as ClienteModelMock;
-    clienteModelMock.findOne = jest.fn().mockReturnValue(
-      crearQueryMock<ClienteDocument | null>(null),
-    );
+    clienteModelMock.findOne = jest
+      .fn<QueryMock<ClienteDocument | null>, unknown[]>()
+      .mockReturnValue(crearQueryMock<ClienteDocument | null>(null));
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -128,7 +139,7 @@ describe('FacturaService', () => {
     return {
       metodoPago: 'efectivo',
       items: [{ ...itemBase }],
-    } as CreateFacturaDto;
+    };
   }
 
   describe('numeracion atomica (T1)', () => {
@@ -159,12 +170,60 @@ describe('FacturaService', () => {
 
       await service.create(dto);
 
-      const construidoCon = facturaModelMock.mock.calls[0][0] as {
-        id: string;
-        numero: number;
-      };
+      const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.numero).toBe(7);
       expect(construidoCon.id).toBe('FAC-000007');
+    });
+  });
+
+  describe('server-side totals (T2)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it('ignores client-sent totals and recomputes them from the items', async () => {
+      const dto = {
+        ...baseDto(),
+        items: [{ ...itemBase, cantidad: 2, precio: 100 }],
+        subtotal: 999999,
+        descuentoTotal: 999999,
+        recargoTotal: 999999,
+        total: 999999,
+      } as unknown as CreateFacturaDto;
+
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.subtotal).toBe(200);
+      expect(construidoCon.total).toBe(200);
+    });
+
+    it('always sets estado to confirmada for a new invoice, ignoring any client-sent estado', async () => {
+      const dto = {
+        ...baseDto(),
+        estado: 'anulada',
+      } as unknown as CreateFacturaDto;
+
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.estado).toBe('confirmada');
+    });
+
+    it('computes tax importe from porciento server-side', async () => {
+      const dto = {
+        ...baseDto(),
+        items: [{ ...itemBase, cantidad: 1, precio: 100 }],
+        impuesto: { tipo: 'ISV', porciento: 10, importe: 1 },
+      } as unknown as CreateFacturaDto;
+
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.impuesto).importe).toBe(10);
+      expect(construidoCon.total).toBe(110);
     });
   });
 

@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { CreateFacturaDto } from './dto/create-factura.dto';
@@ -11,6 +16,7 @@ import {
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { FACTURA_CONTADOR_ID } from './factura.constants';
+import { calcularTotales } from './factura-totales';
 
 @Injectable()
 export class FacturaService implements OnModuleInit {
@@ -62,19 +68,8 @@ export class FacturaService implements OnModuleInit {
     const telefono = limpiar(createFacturaDto.telefono);
     const email = limpiar(createFacturaDto.email);
 
-    const subtotal = createFacturaDto.subtotal ?? 0;
-    const descuentoTotal = createFacturaDto.descuentoTotal ?? 0;
-    const recargoTotal = createFacturaDto.recargoTotal ?? 0;
-    const base = subtotal - descuentoTotal + recargoTotal;
-
-    let impuesto = createFacturaDto.impuesto;
-    if (impuesto && impuesto.porciento && !impuesto.importe) {
-      impuesto = {
-        ...impuesto,
-        importe: this.redondear((base * impuesto.porciento) / 100),
-      };
-    }
-    const total = this.redondear(base + (impuesto?.importe ?? 0));
+    const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
+      calcularTotales(createFacturaDto.items, createFacturaDto.impuesto);
 
     const emisor = createFacturaDto.emisor ?? (await this.obtenerEmisor());
 
@@ -106,12 +101,12 @@ export class FacturaService implements OnModuleInit {
       emisor,
       impuesto,
       metodoPago: createFacturaDto.metodoPago,
-      items: createFacturaDto.items,
+      items,
       subtotal,
       descuentoTotal,
       recargoTotal,
       total,
-      estado: createFacturaDto.estado ?? 'confirmada',
+      estado: 'confirmada',
       tipo: createFacturaDto.tipo ?? 'factura_normal',
       impreso: createFacturaDto.impreso ?? false,
     });
@@ -151,10 +146,6 @@ export class FacturaService implements OnModuleInit {
       telefono: empresa.telefono,
       email: empresa.email,
     };
-  }
-
-  private redondear(n: number): number {
-    return Math.round((n + Number.EPSILON) * 100) / 100;
   }
 
   private async buscarOCrearCliente(datos: {

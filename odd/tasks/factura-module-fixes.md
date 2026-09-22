@@ -25,7 +25,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 
 ## Tasks
 - [x] T1 Atomic correlative numbering (counter collection with `$inc`, seeded from max existing `numero`) — fixes #1, part of #8
-- [ ] T2 Server-side totals, tax calculation, stricter DTO validation, server-controlled fields removed from create — fixes #2, #6, #7, #8
+- [x] T2 Server-side totals, tax calculation, stricter DTO validation, server-controlled fields removed from create — fixes #2, #6, #7, #8
 - [ ] T3 Restricted update DTO (only mutable fields), reject edits on annulled invoices, swagger mapped types — fixes #3, #9
 - [ ] T4 Local-timezone default date (America/Havana) + `YYYY-MM-DD` validation — fixes #4
 - [ ] T5 Deterministic client matching (nit > email > phone), duplicate-key recovery, logged failures — fixes #5
@@ -42,7 +42,17 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED: `npx jest src/modules/factura` → 4 failed (`Cannot read properties of undefined (reading 'sort')`, `numero` not 7, `onModuleInit is not a function` x2).
   - GREEN: `npx jest src/modules/factura` → 4 passed.
   - `npm run build` → clean.
+  - Commit: `eb95549` fix(factura): allocate invoice numbers atomically
+
+- T2 done. Added pure `factura-totales.ts` (`calcularTotales`, `redondear`) implementing the formula from Scope; `FacturaService.create` now always recomputes items/subtotal/descuentoTotal/recargoTotal/impuesto/total server-side and always sets `estado: 'confirmada'`. `CreateFacturaDto`/`ItemFacturaDto` tightened: removed `id`, `numero`, `estado`, `total` (invoice), `subtotal`, `descuentoTotal`, `recargoTotal`, and item `total` (never accepted, recomputed); added `@ArrayMinSize(1)` on items, `@IsPositive()` on `cantidad`, `@Min(0)` on `precio`/`costo`/`descuentoMonto`/`recargo`, `@Min(0)/@Max(100)` on `descuentoPct` and `impuesto.porciento`, `@Min(0)` on `impuesto.importe`. Tax rule: `porciento` set -> importe recomputed (client importe ignored); else client `importe` used if defined (0 valid); else no tax.
+  - RED (`factura-totales.spec.ts`): module-not-found (file didn't exist yet).
+  - GREEN (`factura-totales.spec.ts`): 8 passed.
+  - RED (`create-factura.dto.spec.ts`): 5 failed (server-controlled fields still whitelisted, empty items accepted, impuesto bounds not enforced, item.total still required).
+  - GREEN (`create-factura.dto.spec.ts`): 8 passed.
+  - RED (`factura.service.spec.ts` T2 describe block): 3 failed (client totals/estado trusted, tax importe not recomputed).
+  - GREEN: `npx jest src/modules/factura` -> 23 passed (3 suites).
+  - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean (fixed unsafe-mock-typing/prettier issues in the spec files with typed `jest.Mock<T, unknown[]>` generics instead of `any`).
   - Commit: (recorded after commit below)
 
 ## Next step
-Continue with T2 (server-side totals + DTO tightening).
+Continue with T3 (restricted update DTO + anular/update conflict handling).
