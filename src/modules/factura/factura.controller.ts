@@ -6,11 +6,13 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { FacturaService } from './factura.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
+import { ListarFacturasQueryDto } from './dto/listar-facturas-query.dto';
 
 @ApiTags('Facturas')
 @Controller('facturas')
@@ -28,8 +30,8 @@ export class FacturaController {
   @Get()
   @ApiOperation({ summary: 'Obtener todas las facturas' })
   @ApiResponse({ status: 200, description: 'Facturas obtenidas con exito' })
-  findAll() {
-    return this.facturaService.findAll();
+  findAll(@Query() query: ListarFacturasQueryDto) {
+    return this.facturaService.findAll(query);
   }
 
   @Get(':id')

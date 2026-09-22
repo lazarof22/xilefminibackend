@@ -474,6 +474,50 @@ describe('FacturaService', () => {
     });
   });
 
+  describe('findAll pagination (T6)', () => {
+    it('sorts by numero desc and does not paginate when page/limit are absent', async () => {
+      const query = crearQueryMock<Factura[]>([]);
+      facturaModelMock.find.mockReturnValue(query);
+
+      await service.findAll({});
+
+      expect(facturaModelMock.find).toHaveBeenCalledWith();
+      expect(query.sort).toHaveBeenCalledWith({ numero: -1 });
+      expect(query.skip).not.toHaveBeenCalled();
+      expect(query.limit).not.toHaveBeenCalled();
+    });
+
+    it('applies skip/limit when limit is provided (page defaults to 1)', async () => {
+      const query = crearQueryMock<Factura[]>([]);
+      facturaModelMock.find.mockReturnValue(query);
+
+      await service.findAll({ limit: 20 });
+
+      expect(query.skip).toHaveBeenCalledWith(0);
+      expect(query.limit).toHaveBeenCalledWith(20);
+    });
+
+    it('applies skip based on the requested page', async () => {
+      const query = crearQueryMock<Factura[]>([]);
+      facturaModelMock.find.mockReturnValue(query);
+
+      await service.findAll({ page: 3, limit: 20 });
+
+      expect(query.skip).toHaveBeenCalledWith(40);
+      expect(query.limit).toHaveBeenCalledWith(20);
+    });
+
+    it('does not paginate when only page is provided without limit', async () => {
+      const query = crearQueryMock<Factura[]>([]);
+      facturaModelMock.find.mockReturnValue(query);
+
+      await service.findAll({ page: 3 });
+
+      expect(query.skip).not.toHaveBeenCalled();
+      expect(query.limit).not.toHaveBeenCalled();
+    });
+  });
+
   describe('seed on module init (T1)', () => {
     it('seeds the counter from the max existing numero using $max', async () => {
       facturaModelMock.findOne.mockReturnValue(

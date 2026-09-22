@@ -9,6 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types } from 'mongoose';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
+import { ListarFacturasQueryDto } from './dto/listar-facturas-query.dto';
 import { Factura } from './schema/factura.schema';
 import { FacturaContador } from './schema/factura-contador.schema';
 import {
@@ -236,8 +237,14 @@ export class FacturaService implements OnModuleInit {
     }
   }
 
-  async findAll(): Promise<Factura[]> {
-    return this.facturaModel.find().sort({ createdAt: -1 }).exec();
+  async findAll(query: ListarFacturasQueryDto = {}): Promise<Factura[]> {
+    const { page, limit } = query;
+    const consulta = this.facturaModel.find().sort({ numero: -1 });
+    if (limit !== undefined) {
+      const paginaActual = page ?? 1;
+      consulta.skip((paginaActual - 1) * limit).limit(limit);
+    }
+    return consulta.exec();
   }
 
   async findOne(id: string): Promise<Factura> {

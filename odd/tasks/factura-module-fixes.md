@@ -29,7 +29,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 - [x] T3 Restricted update DTO (only mutable fields), reject edits on annulled invoices, swagger mapped types — fixes #3, #9
 - [x] T4 Local-timezone default date (America/Havana) + `YYYY-MM-DD` validation — fixes #4
 - [x] T5 Deterministic client matching (nit > email > phone), duplicate-key recovery, logged failures — fixes #5
-- [ ] T6 Optional pagination on `findAll` (`page`, `limit`) — fixes #10
+- [x] T6 Optional pagination on `findAll` (`page`, `limit`) — fixes #10
 
 ## Route
 Delegated direct: one writer (writer trigger: 2+ non-trivial files).
@@ -77,7 +77,14 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - `npm run build` -> initially failed on `FilterQuery` (see above); clean after switching to `QueryFilter`.
   - `npx eslint "src/modules/factura/**/*.ts"` -> clean (an intermediate `no-unsafe-argument` warning on the untyped filter argument went away once `QueryFilter<Cliente>` was applied).
   - `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
+  - Commit: `cfb4c3a` fix(factura): deterministic client matching with duplicate-key recovery
+
+- T6 done. Added `dto/listar-facturas-query.dto.ts` (`ListarFacturasQueryDto`: `page`/`limit` optional, `@Type(() => Number)` + `@IsInt` + `@Min(1)`, `limit` also `@Max(500)`). `FacturaService.findAll(query: ListarFacturasQueryDto = {})` still returns `Factura[]` (non-breaking); now sorts by `numero` desc (was `createdAt`, which doesn't reflect the correlative order) and applies `skip((page-1)*limit).limit(limit)` only when `limit` is provided (page defaults to 1 when only limit is sent; page alone without limit is a no-op, since skip without limit is meaningless for pagination). Controller `GET /facturas` now takes `@Query() query: ListarFacturasQueryDto`.
+  - RED (`listar-facturas-query.dto.spec.ts`): module-not-found (file didn't exist).
+  - RED (`factura.service.spec.ts` T6 describe block): 3 failed (`findAll()` took no params, sorted by `createdAt`, never paginated).
+  - GREEN: `npx jest src/modules/factura` -> 60 passed (7 suites).
+  - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
   - Commit: (recorded after commit below)
 
 ## Next step
-Continue with T6 (optional pagination on findAll).
+All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.
