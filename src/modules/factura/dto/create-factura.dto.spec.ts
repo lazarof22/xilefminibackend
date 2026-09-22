@@ -115,4 +115,39 @@ describe('CreateFacturaDto (T2)', () => {
     const errores = await validate(instancia);
     expect(errores).toHaveLength(0);
   });
+
+  describe('fecha (T4)', () => {
+    it('accepts a well-formed YYYY-MM-DD date', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ fecha: '2026-09-22' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores).toHaveLength(0);
+    });
+
+    it('is optional (server computes a default when absent)', async () => {
+      const instancia = plainToInstance(CreateFacturaDto, dtoValido());
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'fecha')).toBe(false);
+    });
+
+    it('rejects a malformed date string', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ fecha: '22-09-2026' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'fecha')).toBe(true);
+    });
+
+    it('rejects a syntactically valid but non-existent calendar date', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ fecha: '2026-02-30' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'fecha')).toBe(true);
+    });
+  });
 });

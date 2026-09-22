@@ -12,6 +12,8 @@ import {
   IsPositive,
   Min,
   Max,
+  Matches,
+  IsDateString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -143,9 +145,18 @@ export class EmisorDatosDto {
 }
 
 export class CreateFacturaDto {
-  @ApiPropertyOptional({ description: 'Fecha de emision' })
-  @IsString()
+  @ApiPropertyOptional({
+    description:
+      'Fecha de emision (YYYY-MM-DD). Si no se envia, el servidor calcula la fecha actual en America/Havana',
+  })
   @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'fecha debe tener el formato YYYY-MM-DD',
+  })
+  @IsDateString(
+    { strict: true },
+    { message: 'fecha debe ser una fecha de calendario valida' },
+  )
   fecha?: string;
 
   @ApiPropertyOptional({ description: 'Nombre del cliente / comprador' })

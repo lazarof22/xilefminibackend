@@ -16,8 +16,9 @@ import {
   ClienteDocument,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
-import { FACTURA_CONTADOR_ID } from './factura.constants';
+import { FACTURA_CONTADOR_ID, FACTURA_TIMEZONE } from './factura.constants';
 import { calcularTotales } from './factura-totales';
+import { obtenerFechaEnZona } from './factura-fecha';
 
 @Injectable()
 export class FacturaService implements OnModuleInit {
@@ -55,7 +56,7 @@ export class FacturaService implements OnModuleInit {
     const numero = await this.siguienteNumero();
     const id = this.generarId(numero);
     const fecha =
-      createFacturaDto.fecha ?? new Date().toISOString().split('T')[0];
+      createFacturaDto.fecha ?? obtenerFechaEnZona(FACTURA_TIMEZONE);
 
     const limpiar = (v?: string) => {
       const t = (v ?? '').trim();

@@ -321,6 +321,36 @@ describe('FacturaService', () => {
     });
   });
 
+  describe('default fecha in America/Havana (T4)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it('defaults fecha to the local Havana date when not sent by the client', async () => {
+      // 2026-09-23T02:00:00Z is 2026-09-22 local (Havana, UTC-4 in Sept).
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-23T02:00:00Z'));
+
+      await service.create(baseDto());
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.fecha).toBe('2026-09-22');
+    });
+
+    it('uses the client-sent fecha as-is when provided', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-23T02:00:00Z'));
+
+      const dto = { ...baseDto(), fecha: '2020-01-01' } as CreateFacturaDto;
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.fecha).toBe('2020-01-01');
+    });
+  });
+
   describe('seed on module init (T1)', () => {
     it('seeds the counter from the max existing numero using $max', async () => {
       facturaModelMock.findOne.mockReturnValue(

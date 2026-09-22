@@ -27,7 +27,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 - [x] T1 Atomic correlative numbering (counter collection with `$inc`, seeded from max existing `numero`) — fixes #1, part of #8
 - [x] T2 Server-side totals, tax calculation, stricter DTO validation, server-controlled fields removed from create — fixes #2, #6, #7, #8
 - [x] T3 Restricted update DTO (only mutable fields), reject edits on annulled invoices, swagger mapped types — fixes #3, #9
-- [ ] T4 Local-timezone default date (America/Havana) + `YYYY-MM-DD` validation — fixes #4
+- [x] T4 Local-timezone default date (America/Havana) + `YYYY-MM-DD` validation — fixes #4
 - [ ] T5 Deterministic client matching (nit > email > phone), duplicate-key recovery, logged failures — fixes #5
 - [ ] T6 Optional pagination on `findAll` (`page`, `limit`) — fixes #10
 
@@ -59,7 +59,15 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED (`factura.service.spec.ts` T3 describe block): 4 failed (no conditional `estado` filter, no `runValidators`, `anular` on an already-anulada invoice returned 404 instead of 409).
   - GREEN: `npx jest src/modules/factura` -> 32 passed (4 suites).
   - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose in `it(...)` descriptions/comments, no type usages.
+  - Commit: `6e14446` fix(factura): restrict update DTO and reject edits on annulled invoices
+
+- T4 done. Added `factura-fecha.ts` (`obtenerFechaEnZona(timezone, fecha?)`) using `Intl.DateTimeFormat('en-CA', {timeZone,...})` to compute `YYYY-MM-DD` in a given IANA timezone instead of UTC. `FACTURA_TIMEZONE` constant in `factura.constants.ts` (`America/Havana`, overridable via `FACTURA_TIMEZONE` env var). `FacturaService.create` now defaults `fecha` via `obtenerFechaEnZona(FACTURA_TIMEZONE)` instead of `new Date().toISOString().split('T')[0]`. `CreateFacturaDto.fecha` now validated with `@Matches(/^\d{4}-\d{2}-\d{2}$/)` plus `@IsDateString({strict:true})` (rejects e.g. `2026-02-30`).
+  - RED (`factura-fecha.spec.ts`): module-not-found (file didn't exist).
+  - GREEN (`factura-fecha.spec.ts`): 3 passed, including the UTC-day-boundary case from the task brief (`2026-09-23T02:00:00Z` -> `2026-09-22` in Havana, UTC-4 in September).
+  - RED (`create-factura.dto.spec.ts` fecha block + `factura.service.spec.ts` T4 block): 3 failed (malformed/impossible dates accepted; default fecha used UTC, off by one day near midnight).
+  - GREEN: `npx jest src/modules/factura` -> 41 passed (5 suites).
+  - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
   - Commit: (recorded after commit below)
 
 ## Next step
-Continue with T4 (local-timezone default date + validation).
+Continue with T5 (deterministic client matching + duplicate-key recovery).
