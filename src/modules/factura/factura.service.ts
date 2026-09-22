@@ -1,26 +1,52 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import { Factura } from './schema/factura.schema';
+import { FacturaContador } from './schema/factura-contador.schema';
 import {
   Cliente,
   ClienteDocument,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
+import { FACTURA_CONTADOR_ID } from './factura.constants';
 
 @Injectable()
-export class FacturaService {
+export class FacturaService implements OnModuleInit {
+  private readonly logger = new Logger(FacturaService.name);
+
   constructor(
     @InjectModel(Factura.name) private facturaModel: Model<Factura>,
+    @InjectModel(FacturaContador.name)
+    private facturaContadorModel: Model<FacturaContador>,
     @InjectModel(Cliente.name) private clienteModel: Model<Cliente>,
     private readonly empresaDatosService: EmpresaDatosService,
   ) {}
 
+  /**
+   * Seeds the invoice counter from the highest existing `numero` so
+   * previously imported invoices (created before this counter existed)
+   * never collide with newly allocated numbers.
+   */
+  async onModuleInit(): Promise<void> {
+    const ultima = await this.facturaModel
+      .findOne()
+      .sort({ numero: -1 })
+      .exec();
+    const maxNumero = ultima?.numero ?? 0;
+    await this.facturaContadorModel
+      .updateOne(
+        { _id: FACTURA_CONTADOR_ID },
+        { $max: { seq: maxNumero } },
+        { upsert: true },
+      )
+      .exec();
+  }
+
   async create(createFacturaDto: CreateFacturaDto): Promise<Factura> {
-    const numero = createFacturaDto.numero ?? (await this.siguienteNumero());
-    const id = createFacturaDto.id ?? `FAC-${String(numero).padStart(6, '0')}`;
+    const numero = await this.siguienteNumero();
+    const id = this.generarId(numero);
     const fecha =
       createFacturaDto.fecha ?? new Date().toISOString().split('T')[0];
 
@@ -92,12 +118,25 @@ export class FacturaService {
     return factura.save();
   }
 
+  /**
+   * Atomically allocates the next correlative invoice number using
+   * `$inc` on a dedicated counter document, avoiding the race condition
+   * of reading the max `numero` and incrementing it in application code.
+   */
   private async siguienteNumero(): Promise<number> {
-    const ultima = await this.facturaModel
-      .findOne()
-      .sort({ numero: -1 })
+    const contador = await this.facturaContadorModel
+      .findOneAndUpdate(
+        { _id: FACTURA_CONTADOR_ID },
+        { $inc: { seq: 1 } },
+        { upsert: true, new: true },
+      )
+      .orFail()
       .exec();
-    return (ultima?.numero ?? 0) + 1;
+    return contador.seq;
+  }
+
+  private generarId(numero: number): string {
+    return `FAC-${String(numero).padStart(6, '0')}`;
   }
 
   private async obtenerEmisor() {

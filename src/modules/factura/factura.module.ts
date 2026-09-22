@@ -4,6 +4,10 @@ import { FacturaService } from './factura.service';
 import { FacturaController } from './factura.controller';
 import { Factura, FacturaSchema } from './schema/factura.schema';
 import {
+  FacturaContador,
+  FacturaContadorSchema,
+} from './schema/factura-contador.schema';
+import {
   Cliente,
   ClienteSchema,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
@@ -13,6 +17,7 @@ import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos
   imports: [
     MongooseModule.forFeature([
       { name: Factura.name, schema: FacturaSchema },
+      { name: FacturaContador.name, schema: FacturaContadorSchema },
       { name: Cliente.name, schema: ClienteSchema },
     ]),
     EmpresaDatosModule,
