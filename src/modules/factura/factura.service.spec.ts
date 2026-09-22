@@ -11,7 +11,10 @@ import {
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
-import { FACTURA_CONTADOR_ID } from './factura.constants';
+import {
+  FACTURA_CONTADOR_ID,
+  FACTURA_LISTADO_LIMITE_DEFECTO,
+} from './factura.constants';
 
 /**
  * Minimal chainable Mongoose query mock. Every method returns the same
@@ -474,8 +477,8 @@ describe('FacturaService', () => {
     });
   });
 
-  describe('findAll pagination (T6)', () => {
-    it('sorts by numero desc and does not paginate when page/limit are absent', async () => {
+  describe('findAll bounded listing (T7)', () => {
+    it('sorts by numero desc and applies the default page/limit when both are absent', async () => {
       const query = crearQueryMock<Factura[]>([]);
       facturaModelMock.find.mockReturnValue(query);
 
@@ -483,11 +486,13 @@ describe('FacturaService', () => {
 
       expect(facturaModelMock.find).toHaveBeenCalledWith();
       expect(query.sort).toHaveBeenCalledWith({ numero: -1 });
-      expect(query.skip).not.toHaveBeenCalled();
-      expect(query.limit).not.toHaveBeenCalled();
+      expect(query.skip).toHaveBeenCalledWith(0);
+      expect(query.limit).toHaveBeenCalledWith(
+        FACTURA_LISTADO_LIMITE_DEFECTO,
+      );
     });
 
-    it('applies skip/limit when limit is provided (page defaults to 1)', async () => {
+    it('defaults to page 1 when only limit is provided', async () => {
       const query = crearQueryMock<Factura[]>([]);
       facturaModelMock.find.mockReturnValue(query);
 
@@ -507,14 +512,30 @@ describe('FacturaService', () => {
       expect(query.limit).toHaveBeenCalledWith(20);
     });
 
-    it('does not paginate when only page is provided without limit', async () => {
+    it('applies the default limit when only page is provided', async () => {
       const query = crearQueryMock<Factura[]>([]);
       facturaModelMock.find.mockReturnValue(query);
 
       await service.findAll({ page: 3 });
 
-      expect(query.skip).not.toHaveBeenCalled();
-      expect(query.limit).not.toHaveBeenCalled();
+      expect(query.skip).toHaveBeenCalledWith(
+        2 * FACTURA_LISTADO_LIMITE_DEFECTO,
+      );
+      expect(query.limit).toHaveBeenCalledWith(
+        FACTURA_LISTADO_LIMITE_DEFECTO,
+      );
+    });
+
+    it('calling findAll with no argument at all still bounds the query (safety net if a caller bypasses the controller)', async () => {
+      const query = crearQueryMock<Factura[]>([]);
+      facturaModelMock.find.mockReturnValue(query);
+
+      await service.findAll();
+
+      expect(query.skip).toHaveBeenCalledWith(0);
+      expect(query.limit).toHaveBeenCalledWith(
+        FACTURA_LISTADO_LIMITE_DEFECTO,
+      );
     });
   });
 

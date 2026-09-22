@@ -17,7 +17,12 @@ import {
   ClienteDocument,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
-import { FACTURA_CONTADOR_ID, FACTURA_TIMEZONE } from './factura.constants';
+import {
+  FACTURA_CONTADOR_ID,
+  FACTURA_LISTADO_LIMITE_DEFECTO,
+  FACTURA_LISTADO_PAGINA_DEFECTO,
+  FACTURA_TIMEZONE,
+} from './factura.constants';
 import { calcularTotales } from './factura-totales';
 import { obtenerFechaEnZona } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
@@ -237,14 +242,19 @@ export class FacturaService implements OnModuleInit {
     }
   }
 
+  /**
+   * Always bounded: defaults to page 1 / limit 50 when the caller sends
+   * neither, so a listing can never return the whole collection unbounded.
+   */
   async findAll(query: ListarFacturasQueryDto = {}): Promise<Factura[]> {
-    const { page, limit } = query;
-    const consulta = this.facturaModel.find().sort({ numero: -1 });
-    if (limit !== undefined) {
-      const paginaActual = page ?? 1;
-      consulta.skip((paginaActual - 1) * limit).limit(limit);
-    }
-    return consulta.exec();
+    const pagina = query.page ?? FACTURA_LISTADO_PAGINA_DEFECTO;
+    const limite = query.limit ?? FACTURA_LISTADO_LIMITE_DEFECTO;
+    return this.facturaModel
+      .find()
+      .sort({ numero: -1 })
+      .skip((pagina - 1) * limite)
+      .limit(limite)
+      .exec();
   }
 
   async findOne(id: string): Promise<Factura> {
