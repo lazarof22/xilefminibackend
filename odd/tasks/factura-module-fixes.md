@@ -26,7 +26,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 ## Tasks
 - [x] T1 Atomic correlative numbering (counter collection with `$inc`, seeded from max existing `numero`) — fixes #1, part of #8
 - [x] T2 Server-side totals, tax calculation, stricter DTO validation, server-controlled fields removed from create — fixes #2, #6, #7, #8
-- [ ] T3 Restricted update DTO (only mutable fields), reject edits on annulled invoices, swagger mapped types — fixes #3, #9
+- [x] T3 Restricted update DTO (only mutable fields), reject edits on annulled invoices, swagger mapped types — fixes #3, #9
 - [ ] T4 Local-timezone default date (America/Havana) + `YYYY-MM-DD` validation — fixes #4
 - [ ] T5 Deterministic client matching (nit > email > phone), duplicate-key recovery, logged failures — fixes #5
 - [ ] T6 Optional pagination on `findAll` (`page`, `limit`) — fixes #10
@@ -52,7 +52,14 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED (`factura.service.spec.ts` T2 describe block): 3 failed (client totals/estado trusted, tax importe not recomputed).
   - GREEN: `npx jest src/modules/factura` -> 23 passed (3 suites).
   - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean (fixed unsafe-mock-typing/prettier issues in the spec files with typed `jest.Mock<T, unknown[]>` generics instead of `any`).
+  - Commit: `8b91de3` fix(factura): compute totals and tax server-side, tighten DTO
+
+- T3 done. `UpdateFacturaDto` rebuilt with `@nestjs/swagger` `PartialType(PickType(CreateFacturaDto, ['concepto','impreso','direccion','telefono','email']))`, so items/totals/numero/estado/fecha/nit are rejected by the global `forbidNonWhitelisted` pipe. `FacturaService.update`/`anular` now use a single conditional `findOneAndUpdate({id, estado:{$ne:'anulada'}}, ..., {new:true, runValidators:true})`; when it matches nothing, a private `asegurarEditable()` re-queries by `id` alone to distinguish 404 (no such invoice) from 409 `ConflictException` (exists but already anulada) — avoiding the earlier read-then-write race.
+  - RED (`update-factura.dto.spec.ts`): 1 failed (`fecha` still accepted, since `UpdateFacturaDto` was `PartialType(CreateFacturaDto)`, i.e. every field).
+  - RED (`factura.service.spec.ts` T3 describe block): 4 failed (no conditional `estado` filter, no `runValidators`, `anular` on an already-anulada invoice returned 404 instead of 409).
+  - GREEN: `npx jest src/modules/factura` -> 32 passed (4 suites).
+  - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose in `it(...)` descriptions/comments, no type usages.
   - Commit: (recorded after commit below)
 
 ## Next step
-Continue with T3 (restricted update DTO + anular/update conflict handling).
+Continue with T4 (local-timezone default date + validation).

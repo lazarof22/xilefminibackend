@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -207,23 +208,45 @@ export class FacturaService implements OnModuleInit {
     id: string,
     updateFacturaDto: UpdateFacturaDto,
   ): Promise<Factura> {
-    const factura = await this.facturaModel
-      .findOneAndUpdate({ id }, updateFacturaDto, { new: true })
+    const actualizada = await this.facturaModel
+      .findOneAndUpdate({ id, estado: { $ne: 'anulada' } }, updateFacturaDto, {
+        new: true,
+        runValidators: true,
+      })
       .exec();
-    if (!factura) {
-      throw new NotFoundException(`Factura con ID ${id} no encontrada`);
+    if (actualizada) {
+      return actualizada;
     }
-    return factura;
+    return this.asegurarEditable(id, 'modificada');
   }
 
   async anular(id: string): Promise<Factura> {
-    const factura = await this.facturaModel
-      .findOneAndUpdate({ id }, { estado: 'anulada' }, { new: true })
+    const anulada = await this.facturaModel
+      .findOneAndUpdate(
+        { id, estado: { $ne: 'anulada' } },
+        { estado: 'anulada' },
+        { new: true, runValidators: true },
+      )
       .exec();
-    if (!factura) {
+    if (anulada) {
+      return anulada;
+    }
+    return this.asegurarEditable(id, 'anulada');
+  }
+
+  /**
+   * Distinguishes 404 (no such invoice) from 409 (invoice exists but is
+   * already anulada) after a conditional `{ estado: { $ne: 'anulada' } }`
+   * update matched nothing. Always throws.
+   */
+  private async asegurarEditable(id: string, accion: string): Promise<never> {
+    const existente = await this.facturaModel.findOne({ id }).exec();
+    if (!existente) {
       throw new NotFoundException(`Factura con ID ${id} no encontrada`);
     }
-    return factura;
+    throw new ConflictException(
+      `La factura ${id} esta anulada y no puede ser ${accion}`,
+    );
   }
 
   async remove(id: string): Promise<Factura> {

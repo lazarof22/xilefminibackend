@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { Logger } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { FacturaService } from './factura.service';
 import { Factura } from './schema/factura.schema';
 import { FacturaContador } from './schema/factura-contador.schema';
@@ -10,6 +10,7 @@ import {
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
+import { UpdateFacturaDto } from './dto/update-factura.dto';
 import { FACTURA_CONTADOR_ID } from './factura.constants';
 
 /**
@@ -224,6 +225,99 @@ describe('FacturaService', () => {
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(comoRegistro(construidoCon.impuesto).importe).toBe(10);
       expect(construidoCon.total).toBe(110);
+    });
+  });
+
+  describe('update / anular (T3)', () => {
+    it('updates a non-annulled invoice with runValidators enabled', async () => {
+      const actualizada = { id: 'FAC-000001', concepto: 'nuevo' } as Factura;
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(actualizada),
+      );
+
+      const dto: UpdateFacturaDto = { concepto: 'nuevo' };
+      const resultado = await service.update('FAC-000001', dto);
+
+      expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: 'FAC-000001', estado: { $ne: 'anulada' } },
+        dto,
+        { new: true, runValidators: true },
+      );
+      expect(resultado).toBe(actualizada);
+    });
+
+    it('throws NotFoundException on update when the invoice does not exist', async () => {
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+
+      await expect(
+        service.update('FAC-999999', { concepto: 'x' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('throws ConflictException on update when the invoice is already anulada', async () => {
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>({
+          id: 'FAC-000001',
+          estado: 'anulada',
+        } as Factura),
+      );
+
+      await expect(
+        service.update('FAC-000001', { concepto: 'x' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('anular sets estado to anulada via a conditional update', async () => {
+      const anulada = { id: 'FAC-000001', estado: 'anulada' } as Factura;
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(anulada),
+      );
+
+      const resultado = await service.anular('FAC-000001');
+
+      expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: 'FAC-000001', estado: { $ne: 'anulada' } },
+        { estado: 'anulada' },
+        { new: true, runValidators: true },
+      );
+      expect(resultado).toBe(anulada);
+    });
+
+    it('throws NotFoundException on anular when the invoice does not exist', async () => {
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+
+      await expect(service.anular('FAC-999999')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('throws ConflictException on anular when the invoice is already anulada', async () => {
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>({
+          id: 'FAC-000001',
+          estado: 'anulada',
+        } as Factura),
+      );
+
+      await expect(service.anular('FAC-000001')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
     });
   });
 
