@@ -80,7 +80,7 @@ export class FacturaService implements OnModuleInit {
     const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
       calcularTotales(createFacturaDto.items, createFacturaDto.impuesto);
 
-    const emisor = createFacturaDto.emisor ?? (await this.obtenerEmisor());
+    const emisor = await this.obtenerEmisor();
 
     let clienteId: Types.ObjectId | undefined;
     if (nit || telefono || email) {

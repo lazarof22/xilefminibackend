@@ -116,6 +116,20 @@ describe('CreateFacturaDto (T2)', () => {
     expect(errores).toHaveLength(0);
   });
 
+  it('rejects emisor: the issuer always comes from EmpresaDatos server-side (T8)', async () => {
+    const instancia = plainToInstance(CreateFacturaDto, {
+      ...dtoValido(),
+      emisor: { nombre: 'Otra empresa', nit: '999' },
+    });
+
+    const errores = await validate(instancia, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
+    expect(errores.some((e) => e.property === 'emisor')).toBe(true);
+  });
+
   describe('fecha (T4)', () => {
     it('accepts a well-formed YYYY-MM-DD date', async () => {
       const instancia = plainToInstance(

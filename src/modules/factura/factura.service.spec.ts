@@ -242,6 +242,47 @@ describe('FacturaService', () => {
     });
   });
 
+  describe('emisor always from EmpresaDatos (T8)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it('uses obtenerEmisor (EmpresaDatos), ignoring any client-sent emisor', async () => {
+      (empresaDatosServiceMock.obtener as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Empresa Real S.A.',
+        ruc_nit: '111-REAL',
+        direccion: 'Dir real',
+        telefono: '000',
+        email: 'real@empresa.com',
+      });
+
+      const dto = {
+        ...baseDto(),
+        emisor: { nombre: 'Empresa Falsa', nit: '999-FALSO' },
+      } as unknown as CreateFacturaDto;
+
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.emisor)).toEqual({
+        nombre: 'Empresa Real S.A.',
+        nit: '111-REAL',
+        direccion: 'Dir real',
+        telefono: '000',
+        email: 'real@empresa.com',
+      });
+    });
+
+    it('leaves emisor undefined when EmpresaDatos has no data configured', async () => {
+      await service.create(baseDto());
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.emisor).toBeUndefined();
+    });
+  });
+
   describe('update / anular (T3)', () => {
     it('updates a non-annulled invoice with runValidators enabled', async () => {
       const actualizada = { id: 'FAC-000001', concepto: 'nuevo' } as Factura;

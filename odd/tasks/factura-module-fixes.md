@@ -33,7 +33,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 
 ### Review follow-ups (native review review-1bfec93a25e1e19a, approved with advisories; user authorized fixing them)
 - [x] T7 Always-bounded `findAll`: default limit 50, max 500, response stays `Factura[]` — R1-002, R4-findall-unbounded-default
-- [ ] T8 Issuer (`emisor`) always taken from EmpresaDatos; removed from create DTO — R1-003
+- [x] T8 Issuer (`emisor`) always taken from EmpresaDatos; removed from create DTO — R1-003
 - [ ] T9 No burned invoice numbers: run every fallible step (emisor, client, date, totals, `validate()`) before allocating; on save failure roll the counter back conditionally, otherwise log the gap with the lost `numero` — R3/R4 numero-gap
 - [ ] T10 Hardening: validate `FACTURA_TIMEZONE` at startup (fail fast); log when E11000 re-query finds nothing; clamp line discount so `subtotal - descuentoTotal + recargoTotal == base`; strict rounding test; Swagger 409 responses; readability cleanups (merge duplicate impuesto interfaces, rename `asegurarEditable`, name the placeholder constants, drop dead guard) — R3/R2 advisories
 - [ ] T11 Runtime smoke test against local MongoDB with the server running (create, list, get, patch, anular, 409 paths, concurrent creates)
@@ -99,8 +99,14 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - `npm run build` → clean.
   - Commit: `c0e2fa5` fix(factura): bound invoice listing by default
 
+- T8 done. Removed `emisor`/`EmisorDatosDto` from `CreateFacturaDto` (the global `forbidNonWhitelisted` pipe now rejects any request that still sends `emisor`); `EmisorDatosDto` had no other usage so it was deleted outright (the `EmisorDatos` schema subdocument in `factura.schema.ts` is untouched). `FacturaService.create` now always does `const emisor = await this.obtenerEmisor();` instead of `createFacturaDto.emisor ?? (await this.obtenerEmisor())`.
+  - RED: `create-factura.dto.spec.ts` → 1 failed (`emisor` still accepted by the whitelist); `factura.service.spec.ts` → 2 failed (client-sent `emisor` still won over `obtenerEmisor()`).
+  - GREEN: `npx jest src/modules/factura` → 64 passed.
+  - `npm run build` → clean.
+  - Commit: (recorded after commit below)
+
 ## Next step
-T8–T11 (review follow-ups), delegated to one writer.
+T9–T11 (review follow-ups), delegated to one writer.
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.

@@ -97,53 +97,6 @@ export class ImpuestoDto {
   importe?: number;
 }
 
-export class EmisorDatosDto {
-  @ApiPropertyOptional({ description: 'Nombre del emisor' })
-  @IsString()
-  @IsOptional()
-  nombre?: string;
-
-  @ApiPropertyOptional({ description: 'NIT del emisor' })
-  @IsString()
-  @IsOptional()
-  nit?: string;
-
-  @ApiPropertyOptional({ description: 'Direccion del emisor' })
-  @IsString()
-  @IsOptional()
-  direccion?: string;
-
-  @ApiPropertyOptional({ description: 'Telefono del emisor' })
-  @IsString()
-  @IsOptional()
-  telefono?: string;
-
-  @ApiPropertyOptional({ description: 'Email del emisor' })
-  @IsString()
-  @IsOptional()
-  email?: string;
-
-  @ApiPropertyOptional({ description: 'Codigo REEUP del emisor' })
-  @IsString()
-  @IsOptional()
-  reeup?: string;
-
-  @ApiPropertyOptional({ description: 'Numero de cuenta bancaria del emisor' })
-  @IsString()
-  @IsOptional()
-  numeroCuenta?: string;
-
-  @ApiPropertyOptional({ description: 'Sucursal bancaria del emisor' })
-  @IsString()
-  @IsOptional()
-  sucursalBancaria?: string;
-
-  @ApiPropertyOptional({ description: 'Registro comercial del emisor' })
-  @IsString()
-  @IsOptional()
-  registroComercial?: string;
-}
-
 export class CreateFacturaDto {
   @ApiPropertyOptional({
     description:
@@ -198,14 +151,11 @@ export class CreateFacturaDto {
   @IsOptional()
   concepto?: string;
 
-  @ApiPropertyOptional({
-    type: EmisorDatosDto,
-    description: 'Datos del emisor (si no se envian, se toman de EmpresaDatos)',
-  })
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => EmisorDatosDto)
-  emisor?: EmisorDatosDto;
+  // emisor is intentionally absent: it is always taken server-side from
+  // EmpresaDatos (FacturaService.obtenerEmisor), never from the client, so
+  // an invoice can never be forged with a fake issuer. The global
+  // ValidationPipe (whitelist + forbidNonWhitelisted) rejects any request
+  // that still sends it.
 
   @ApiPropertyOptional({
     type: ImpuestoDto,
