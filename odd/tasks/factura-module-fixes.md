@@ -13,7 +13,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 ## Constraints
 - No `any`; explicit types everywhere.
 - TDD: strict (source: global user config `Strict TDD Mode: enabled`), runner `npx jest src/modules/factura`.
-- Baseline commit: `67f75a8 feat(factura): import factura module from xilefbackend`.
+- Baseline commit: `f366305 feat(factura): import factura module from xilefbackend`.
 - Contract change: `id`, `numero`, `estado`, `total` removed from create DTO (server-controlled). The frontend currently stores invoices in localStorage and does not POST them yet.
 
 ## Totals formula (matches xilefminifrontend FacturacionTab)
@@ -52,7 +52,7 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED: `npx jest src/modules/factura` → 4 failed (`Cannot read properties of undefined (reading 'sort')`, `numero` not 7, `onModuleInit is not a function` x2).
   - GREEN: `npx jest src/modules/factura` → 4 passed.
   - `npm run build` → clean.
-  - Commit: `eb95549` fix(factura): allocate invoice numbers atomically
+  - Commit: `d347603` fix(factura): allocate invoice numbers atomically
 
 - T2 done. Added pure `factura-totales.ts` (`calcularTotales`, `redondear`) implementing the formula from Scope; `FacturaService.create` now always recomputes items/subtotal/descuentoTotal/recargoTotal/impuesto/total server-side and always sets `estado: 'confirmada'`. `CreateFacturaDto`/`ItemFacturaDto` tightened: removed `id`, `numero`, `estado`, `total` (invoice), `subtotal`, `descuentoTotal`, `recargoTotal`, and item `total` (never accepted, recomputed); added `@ArrayMinSize(1)` on items, `@IsPositive()` on `cantidad`, `@Min(0)` on `precio`/`costo`/`descuentoMonto`/`recargo`, `@Min(0)/@Max(100)` on `descuentoPct` and `impuesto.porciento`, `@Min(0)` on `impuesto.importe`. Tax rule: `porciento` set -> importe recomputed (client importe ignored); else client `importe` used if defined (0 valid); else no tax.
   - RED (`factura-totales.spec.ts`): module-not-found (file didn't exist yet).
@@ -62,14 +62,14 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED (`factura.service.spec.ts` T2 describe block): 3 failed (client totals/estado trusted, tax importe not recomputed).
   - GREEN: `npx jest src/modules/factura` -> 23 passed (3 suites).
   - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean (fixed unsafe-mock-typing/prettier issues in the spec files with typed `jest.Mock<T, unknown[]>` generics instead of `any`).
-  - Commit: `8b91de3` fix(factura): compute totals and tax server-side, tighten DTO
+  - Commit: `400aaaf` fix(factura): compute totals and tax server-side, tighten DTO
 
 - T3 done. `UpdateFacturaDto` rebuilt with `@nestjs/swagger` `PartialType(PickType(CreateFacturaDto, ['concepto','impreso','direccion','telefono','email']))`, so items/totals/numero/estado/fecha/nit are rejected by the global `forbidNonWhitelisted` pipe. `FacturaService.update`/`anular` now use a single conditional `findOneAndUpdate({id, estado:{$ne:'anulada'}}, ..., {new:true, runValidators:true})`; when it matches nothing, a private `asegurarEditable()` re-queries by `id` alone to distinguish 404 (no such invoice) from 409 `ConflictException` (exists but already anulada) — avoiding the earlier read-then-write race.
   - RED (`update-factura.dto.spec.ts`): 1 failed (`fecha` still accepted, since `UpdateFacturaDto` was `PartialType(CreateFacturaDto)`, i.e. every field).
   - RED (`factura.service.spec.ts` T3 describe block): 4 failed (no conditional `estado` filter, no `runValidators`, `anular` on an already-anulada invoice returned 404 instead of 409).
   - GREEN: `npx jest src/modules/factura` -> 32 passed (4 suites).
   - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose in `it(...)` descriptions/comments, no type usages.
-  - Commit: `6e14446` fix(factura): restrict update DTO and reject edits on annulled invoices
+  - Commit: `8b341a2` fix(factura): restrict update DTO and reject edits on annulled invoices
 
 - T4 done. Added `factura-fecha.ts` (`obtenerFechaEnZona(timezone, fecha?)`) using `Intl.DateTimeFormat('en-CA', {timeZone,...})` to compute `YYYY-MM-DD` in a given IANA timezone instead of UTC. `FACTURA_TIMEZONE` constant in `factura.constants.ts` (`America/Havana`, overridable via `FACTURA_TIMEZONE` env var). `FacturaService.create` now defaults `fecha` via `obtenerFechaEnZona(FACTURA_TIMEZONE)` instead of `new Date().toISOString().split('T')[0]`. `CreateFacturaDto.fecha` now validated with `@Matches(/^\d{4}-\d{2}-\d{2}$/)` plus `@IsDateString({strict:true})` (rejects e.g. `2026-02-30`).
   - RED (`factura-fecha.spec.ts`): module-not-found (file didn't exist).
@@ -77,7 +77,7 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED (`create-factura.dto.spec.ts` fecha block + `factura.service.spec.ts` T4 block): 3 failed (malformed/impossible dates accepted; default fecha used UTC, off by one day near midnight).
   - GREEN: `npx jest src/modules/factura` -> 41 passed (5 suites).
   - `npm run build` -> clean. `npx eslint "src/modules/factura/**/*.ts"` -> clean. `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
-  - Commit: `5d0038b` fix(factura): default invoice date to America/Havana, validate format
+  - Commit: `34d83ee` fix(factura): default invoice date to America/Havana, validate format
 
 - T5 done. Added `factura-mongo-errors.ts` (`isDuplicateKeyError(err: unknown): boolean`, typed guard for Mongo E11000). `buscarOCrearCliente` now looks up via a new `buscarCliente()` that runs three separate `findOne` queries in priority order (nit -> email_cliente -> telefono_cliente, first hit wins) instead of a single `$or`, so a phone number can no longer accidentally match another client's nit. On `nuevoCliente.save()` throwing an E11000 duplicate key (lost a create race), it re-queries by the same priority and returns that client instead of failing. On any other save error, it calls `this.logger.warn(...)` (Nest `Logger`, injected as `private readonly logger`) and returns `null` — no more empty `catch {}`. Found a mongoose typing note: this project's mongoose (9.9.5) renamed `FilterQuery<T>` to `QueryFilter<T>`; `npm run build` initially failed with `TS2614: Module "mongoose" has no exported member 'FilterQuery'` and was fixed by importing `QueryFilter` instead.
   - RED (`factura-mongo-errors.spec.ts`): module-not-found (file didn't exist).
@@ -87,7 +87,7 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - `npm run build` -> initially failed on `FilterQuery` (see above); clean after switching to `QueryFilter`.
   - `npx eslint "src/modules/factura/**/*.ts"` -> clean (an intermediate `no-unsafe-argument` warning on the untyped filter argument went away once `QueryFilter<Cliente>` was applied).
   - `rg -n "\bany\b" src/modules/factura` -> only prose, no type usage.
-  - Commit: `cfb4c3a` fix(factura): deterministic client matching with duplicate-key recovery
+  - Commit: `b7a6e87` fix(factura): deterministic client matching with duplicate-key recovery
 
 - T6 done. Added `dto/listar-facturas-query.dto.ts` (`ListarFacturasQueryDto`: `page`/`limit` optional, `@Type(() => Number)` + `@IsInt` + `@Min(1)`, `limit` also `@Max(500)`). `FacturaService.findAll(query: ListarFacturasQueryDto = {})` still returns `Factura[]` (non-breaking); now sorts by `numero` desc (was `createdAt`, which doesn't reflect the correlative order) and applies `skip((page-1)*limit).limit(limit)` only when `limit` is provided (page defaults to 1 when only limit is sent; page alone without limit is a no-op, since skip without limit is meaningless for pagination). Controller `GET /facturas` now takes `@Query() query: ListarFacturasQueryDto`.
   - RED (`listar-facturas-query.dto.spec.ts`): module-not-found (file didn't exist).
