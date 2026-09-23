@@ -155,7 +155,7 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - GREEN: `npx jest src/modules/factura` -> 78 passed. Build/eslint clean, no `any`. Live: POST with nit and no direccion -> `clienteId` set, client stored with 'Sin dirección'.
 
 ## Next step
-Module README with the endpoint contract for the frontend.
+Done. Module README (`src/modules/factura/README.md`) documents the endpoint contract for the frontend, verified live. Merge/push is the user decision.
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.
