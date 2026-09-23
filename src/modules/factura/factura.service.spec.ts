@@ -336,6 +336,9 @@ describe('FacturaService', () => {
             seq: 4,
           }),
         );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
       savedFactura.save.mockRejectedValueOnce(new Error('fallo al guardar'));
       const advertir = jest.spyOn(Logger.prototype, 'warn');
 
@@ -343,6 +346,7 @@ describe('FacturaService', () => {
         'fallo al guardar',
       );
 
+      expect(facturaModelMock.findOne).toHaveBeenCalledWith({ numero: 5 });
       expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
         2,
         { _id: FACTURA_CONTADOR_ID, seq: 5 },
@@ -351,12 +355,50 @@ describe('FacturaService', () => {
       expect(advertir).toHaveBeenCalledWith(expect.stringContaining('5'));
     });
 
+    it('never releases the number when save fails with a duplicate key (avoids a re-allocation livelock)', async () => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValueOnce(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 5 }),
+      );
+      const duplicado = Object.assign(new Error('E11000 duplicate key'), {
+        code: 11000,
+      });
+      savedFactura.save.mockRejectedValueOnce(duplicado);
+      const errorLog = jest.spyOn(Logger.prototype, 'error');
+
+      await expect(service.create(baseDto())).rejects.toBe(duplicado);
+
+      expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('5'));
+    });
+
+    it('never releases the number when an invoice with it was actually persisted (ambiguous write failure)', async () => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValueOnce(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 5 }),
+      );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>({ numero: 5 } as Factura),
+      );
+      savedFactura.save.mockRejectedValueOnce(new Error('socket timeout'));
+
+      await expect(service.create(baseDto())).rejects.toThrow('socket timeout');
+
+      expect(facturaModelMock.findOne).toHaveBeenCalledWith({ numero: 5 });
+      expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenCalledTimes(
+        1,
+      );
+    });
+
     it('logs an error naming the burned numero when the rollback does not match', async () => {
       facturaContadorModelMock.findOneAndUpdate
         .mockReturnValueOnce(
           crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 5 }),
         )
         .mockReturnValueOnce(crearQueryMock<FacturaContador | null>(null));
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
       savedFactura.save.mockRejectedValueOnce(new Error('fallo al guardar'));
       const errorLog = jest.spyOn(Logger.prototype, 'error');
 

@@ -155,11 +155,24 @@ export class FacturaService implements OnModuleInit {
    * reuse it. The conditional `{ seq: numero }` filter only matches (and
    * decrements) when no other invoice has allocated a later number since;
    * otherwise the number is permanently lost (a gap) and only logged.
+   *
+   * The number is never released when it is already taken: on a duplicate
+   * key error, or when an invoice with that `numero` was actually persisted
+   * (a write that applied server-side but reported an error). Releasing it
+   * there would hand the same taken number to every next invoice, failing
+   * each one until the counter is repaired by hand.
    */
   private async compensarNumeroTrasFalloDeGuardado(
     numero: number,
     err: unknown,
   ): Promise<void> {
+    if (isDuplicateKeyError(err) || (await this.numeroPersistido(numero))) {
+      this.logger.error(
+        `El numero de factura ${numero} ya esta ocupado; no se libera y el contador sigue adelante tras un fallo al guardar: ${String(err)}`,
+      );
+      return;
+    }
+
     const liberado = await this.facturaContadorModel
       .findOneAndUpdate(
         { _id: FACTURA_CONTADOR_ID, seq: numero },
@@ -177,6 +190,11 @@ export class FacturaService implements OnModuleInit {
     this.logger.error(
       `No se pudo recuperar el numero de factura ${numero}; quedo perdido (gap permanente en la numeracion) tras un fallo al guardar: ${String(err)}`,
     );
+  }
+
+  private async numeroPersistido(numero: number): Promise<boolean> {
+    const existente = await this.facturaModel.findOne({ numero }).exec();
+    return existente !== null;
   }
 
   /**

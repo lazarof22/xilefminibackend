@@ -146,8 +146,12 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
 
   No bug found by the smoke test — no fix commit was needed for T11.
 
+- Review correction (native review review-6731772c3fa88b4e, finding R4-numero-rollback-livelock, CRITICAL): the T9 counter compensation released the number even when it was already taken, so a duplicate-key failure would hand the same number to every next invoice (creation livelock). Fix: `compensarNumeroTrasFalloDeGuardado` never releases on a duplicate key error or when an invoice with that `numero` is persisted (`numeroPersistido`), only logs; otherwise conditional release as before. Route: inline (one file + spec, understood fix).
+  - RED: `npx jest src/modules/factura/factura.service.spec.ts -t "no burned"` -> 3 failed.
+  - GREEN: `npx jest src/modules/factura` -> 76 passed (7 suites). `npm run build` clean, `npx eslint` clean, no `any`.
+
 ## Next step
-Native review of the follow-up commits (parent).
+Re-query native review status for the corrected candidate (parent).
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.
