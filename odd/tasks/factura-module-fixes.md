@@ -39,7 +39,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 - [x] T8 Issuer (`emisor`) always taken from EmpresaDatos; removed from create DTO — R1-003
 - [x] T9 No burned invoice numbers: run every fallible step (emisor, client, date, totals, `validate()`) before allocating; on save failure roll the counter back conditionally, otherwise log the gap with the lost `numero` — R3/R4 numero-gap
 - [x] T10 Hardening: validate `FACTURA_TIMEZONE` at startup (fail fast); log when E11000 re-query finds nothing; clamp line discount so `subtotal - descuentoTotal + recargoTotal == base`; strict rounding test; Swagger 409 responses; readability cleanups (merge duplicate impuesto interfaces, rename `asegurarEditable`, name the placeholder constants, drop dead guard) — R3/R2 advisories
-- [ ] T11 Runtime smoke test against local MongoDB with the server running (create, list, get, patch, anular, 409 paths, concurrent creates)
+- [x] T11 Runtime smoke test against local MongoDB with the server running (create, list, get, patch, anular, 409 paths, concurrent creates)
 
 ## Route
 Delegated direct: one writer (writer trigger: 2+ non-trivial files).
@@ -125,8 +125,29 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - `npm run build` → clean. `npx eslint "src/modules/factura/**/*.ts"` → clean. `rg -n ":\s*any\b|as any|<any>|any\[\]" src/modules/factura` → empty.
   - Commit: `<recorded below>`
 
+- T11 done. No system `mongod` service was reachable (`mongosh --eval 'db.runCommand({ping:1})'` → `ECONNREFUSED 127.0.0.1:27017`; `sudo -n service/systemctl start mongod` both failed with "interactive authentication is required"). Started a standalone `mongod --dbpath <mktemp -d /tmp/factura-smoke.XXXXXX> --fork --logpath <dir>/mongod.log --port 27018` instead (per the task's fallback). No local routes on `/facturas` are guarded (no `@UseGuards`/global `APP_GUARD` — confirmed via `rg`), so no auth was needed. Built (`npm run build`) and ran `node dist/main.js` with `MONGODB_URI=mongodb://127.0.0.1:27018/xilefmini_factura_smoke PORT=3000` (env override only; the real `.env`/`.env.example` values were read but never touched or printed) — a dedicated database kept this fully isolated from any real data. Dropped the smoke database, killed the app process, ran `mongod --dbpath <dir> --shutdown`, and removed the temp dir afterwards.
+
+  | # | Request | Expected | Observed |
+  |---|---------|----------|----------|
+  | 1 | `POST /facturas` valid (2 items, `descuentoPct`+`descuentoMonto`, `recargo`, `impuesto.porciento`), missing `metodoPago` | 400 (metodoPago required) | 400, `["metodoPago should not be empty","metodoPago must be a string"]` |
+  | 2 | same + `metodoPago` | 201, server-computed totals, `FAC-######` id | 201, `numero:1`, `id:"FAC-000001"`, `subtotal:130`, `descuentoTotal:15`, `recargoTotal:2`, `impuesto.importe:11.7`, `total:128.7` (matches the formula: base=117, 117*10/100=11.7) |
+  | 3 | `POST` with `id`/`numero`/`total`/`emisor` set | 400 | 400, `["property id should not exist","property numero should not exist","property total should not exist","property emisor should not exist"]` |
+  | 4 | `POST` with `items: []` | 400 | 400, `["items must contain at least 1 elements"]` |
+  | 5 | `GET /facturas` (no query) | 200, bounded default | 200, array with the 1 existing invoice |
+  | 6 | `GET /facturas?page=1&limit=1` | 200, paginated | 200, array with 1 item |
+  | 7 | `GET /facturas/FAC-000001` | 200 | 200, full invoice |
+  | 8 | `PATCH /facturas/FAC-000001` `{concepto:"venta modificada"}` | 200 | 200, `concepto` updated |
+  | 9 | `PATCH /facturas/FAC-000001` `{items:[]}` | 400 | 400, `["property items should not exist"]` |
+  | 10 | `PATCH /facturas/FAC-000001/anular` (1st) | 200 | 200, `estado:"anulada"` |
+  | 11 | `PATCH /facturas/FAC-000001/anular` (2nd) | 409 | 409, `"La factura FAC-000001 esta anulada y no puede ser anulada"` |
+  | 12 | `PATCH /facturas/FAC-000001` `{concepto:"x"}` on the now-anulada invoice | 409 | 409, `"...no puede ser modificada"` |
+  | 13 | `DELETE /facturas/FAC-999999` (non-existent) | 404 | 404, `"Factura con ID FAC-999999 no encontrada"` |
+  | 14 | 10 concurrent `POST /facturas` (valid, 1 item each) | 10x 201, 10 distinct consecutive `numero`s, no 500s | all 10 returned 201; numeros `2..11`, each distinct and consecutive |
+
+  No bug found by the smoke test — no fix commit was needed for T11.
+
 ## Next step
-T11 (runtime smoke test).
+Native review of the follow-up commits (parent).
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.
