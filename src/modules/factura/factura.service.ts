@@ -19,6 +19,7 @@ import {
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
   FACTURA_CAMPO_VACIO_SENTINEL,
+  FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
   FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO,
   FACTURA_CLIENTE_NOMBRE_POR_DEFECTO,
   FACTURA_CLIENTE_TELEFONO_PLACEHOLDER_PREFIJO,
@@ -302,7 +303,7 @@ export class FacturaService implements OnModuleInit {
       email_cliente:
         email ||
         `cliente-${sufijo}@${FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO}`,
-      direccion_cliente: direccion ?? '',
+      direccion_cliente: direccion || FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
     });
 
     try {

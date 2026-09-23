@@ -150,8 +150,12 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - RED: `npx jest src/modules/factura/factura.service.spec.ts -t "no burned"` -> 3 failed.
   - GREEN: `npx jest src/modules/factura` -> 76 passed (7 suites). `npm run build` clean, `npx eslint` clean, no `any`.
 
+- Live test fix (found testing the running dev server, pre-existing from xilefbackend): an invoice with nit/telefono/email but no direccion failed to auto-create the client, because the Cliente schema requires a non-empty `direccion_cliente` and the service sent `''`; the invoice was saved without `clienteId`. Fix: `FACTURA_CLIENTE_DIRECCION_PLACEHOLDER` ('Sin dirección') when no address is sent. Route: inline (one file + spec + constant).
+  - RED: new spec validates the constructed client against the real `ClienteSchema` -> `direccion_cliente: Path 'direccion_cliente' is required`.
+  - GREEN: `npx jest src/modules/factura` -> 78 passed. Build/eslint clean, no `any`. Live: POST with nit and no direccion -> `clienteId` set, client stored with 'Sin dirección'.
+
 ## Next step
-Re-query native review status for the corrected candidate (parent).
+Module README with the endpoint contract for the frontend.
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.

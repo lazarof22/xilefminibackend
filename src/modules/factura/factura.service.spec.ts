@@ -4,14 +4,17 @@ import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { FacturaService } from './factura.service';
 import { Factura } from './schema/factura.schema';
 import { FacturaContador } from './schema/factura-contador.schema';
+import mongoose from 'mongoose';
 import {
   Cliente,
   ClienteDocument,
+  ClienteSchema,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import {
+  FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
   FACTURA_CONTADOR_ID,
   FACTURA_LISTADO_LIMITE_DEFECTO,
 } from './factura.constants';
@@ -537,6 +540,39 @@ describe('FacturaService', () => {
     beforeEach(() => {
       facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
         crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it('auto-creates a client that passes the real Cliente schema when no direccion is sent', async () => {
+      const dto = { ...baseDto(), nit: 'NIT-1' } as CreateFacturaDto;
+
+      await service.create(dto);
+
+      expect(clienteModelMock).toHaveBeenCalledTimes(1);
+      const datosCliente = clienteModelMock.mock.calls[0][0];
+      const ClienteReal = mongoose.model(
+        'ClienteValidacionSpec',
+        ClienteSchema,
+      );
+      await expect(
+        new ClienteReal(datosCliente).validate(),
+      ).resolves.toBeUndefined();
+      expect(datosCliente.direccion_cliente).toBe(
+        FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
+      );
+    });
+
+    it('keeps the direccion sent by the buyer when the client is auto-created', async () => {
+      const dto = {
+        ...baseDto(),
+        nit: 'NIT-1',
+        direccion: 'Calle 1',
+      } as CreateFacturaDto;
+
+      await service.create(dto);
+
+      expect(clienteModelMock.mock.calls[0][0].direccion_cliente).toBe(
+        'Calle 1',
       );
     });
 

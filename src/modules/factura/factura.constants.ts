@@ -45,3 +45,10 @@ export const FACTURA_CLIENTE_TELEFONO_PLACEHOLDER_PREFIJO = '0';
  * blank).
  */
 export const FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO = 'xilef.local';
+
+/**
+ * Placeholder `direccion_cliente` assigned to an auto-created client when
+ * the invoice carries no buyer address (the Cliente schema requires a
+ * non-empty value, so an empty string would make the client creation fail).
+ */
+export const FACTURA_CLIENTE_DIRECCION_PLACEHOLDER = 'Sin dirección';
