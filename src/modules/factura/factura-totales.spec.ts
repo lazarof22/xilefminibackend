@@ -2,9 +2,20 @@ import { calcularTotales, redondear } from './factura-totales';
 
 describe('redondear', () => {
   it('rounds to 2 decimals', () => {
-    expect(redondear(1.005)).toBeCloseTo(1.01, 2);
-    expect(redondear(10.005)).toBeCloseTo(10.0, 1);
     expect(redondear(3.14159)).toBe(3.14);
+  });
+
+  it('rounds deterministically half-up on classic floating-point edge cases (T10)', () => {
+    expect(redondear(1.005)).toBe(1.01);
+    expect(redondear(10.005)).toBe(10.01);
+    expect(redondear(2.675)).toBe(2.68);
+    expect(redondear(0.1 + 0.2)).toBe(0.3);
+  });
+
+  it('rounds negative values symmetrically (half-up in magnitude, T10)', () => {
+    expect(redondear(-1.005)).toBe(-1.01);
+    expect(redondear(-2.675)).toBe(-2.68);
+    expect(redondear(-3.14159)).toBe(-3.14);
   });
 });
 
@@ -62,6 +73,33 @@ describe('calcularTotales (T2)', () => {
     );
 
     expect(resultado.items[0].total).toBe(0);
+  });
+
+  it('clamps the line discount itself (not just the total) so the totals invariant always holds, even with an over-discount and a surcharge (T10)', () => {
+    // gross = 10*1 = 10; rawDiscount = 50 (way over gross); recargo = 5.
+    // lineDiscount must be clamped to min(50, gross+recargo=15) = 15, so
+    // total = max(0, 10 - 15 + 5) = 0, and the invariant below still holds
+    // (it would not if descuentoTotal kept the unclamped 50).
+    const resultado = calcularTotales(
+      [
+        item({
+          cantidad: 1,
+          precio: 10,
+          descuentoMonto: 50,
+          recargo: 5,
+        }),
+      ],
+      undefined,
+    );
+
+    expect(resultado.items[0].total).toBe(0);
+    expect(resultado.descuentoTotal).toBe(15);
+    expect(resultado.subtotal).toBe(10);
+    expect(resultado.recargoTotal).toBe(5);
+    const base = resultado.items.reduce((acc, i) => acc + i.total, 0);
+    expect(
+      resultado.subtotal - resultado.descuentoTotal + resultado.recargoTotal,
+    ).toBe(base);
   });
 
   it('sums multiple lines into subtotal/descuentoTotal/recargoTotal/total', () => {

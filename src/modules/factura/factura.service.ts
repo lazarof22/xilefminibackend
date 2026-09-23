@@ -18,13 +18,17 @@ import {
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
+  FACTURA_CAMPO_VACIO_SENTINEL,
+  FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO,
+  FACTURA_CLIENTE_NOMBRE_POR_DEFECTO,
+  FACTURA_CLIENTE_TELEFONO_PLACEHOLDER_PREFIJO,
   FACTURA_CONTADOR_ID,
   FACTURA_LISTADO_LIMITE_DEFECTO,
   FACTURA_LISTADO_PAGINA_DEFECTO,
   FACTURA_TIMEZONE,
 } from './factura.constants';
 import { calcularTotales } from './factura-totales';
-import { obtenerFechaEnZona } from './factura-fecha';
+import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
 
 @Injectable()
@@ -45,6 +49,10 @@ export class FacturaService implements OnModuleInit {
    * never collide with newly allocated numbers.
    */
   async onModuleInit(): Promise<void> {
+    // Fail fast: an unrecognized FACTURA_TIMEZONE would otherwise only
+    // surface as silently wrong invoice dates on every create().
+    validarZonaHoraria(FACTURA_TIMEZONE);
+
     const ultima = await this.facturaModel
       .findOne()
       .sort({ numero: -1 })
@@ -74,11 +82,11 @@ export class FacturaService implements OnModuleInit {
 
     const limpiar = (v?: string) => {
       const t = (v ?? '').trim();
-      return t === '—' ? '' : t;
+      return t === FACTURA_CAMPO_VACIO_SENTINEL ? '' : t;
     };
 
     const clienteNombre =
-      limpiar(createFacturaDto.cliente) || 'Venta al público';
+      limpiar(createFacturaDto.cliente) || FACTURA_CLIENTE_NOMBRE_POR_DEFECTO;
     const nit = limpiar(createFacturaDto.nit);
     const direccion = limpiar(createFacturaDto.direccion);
     const telefono = limpiar(createFacturaDto.telefono);
@@ -248,6 +256,10 @@ export class FacturaService implements OnModuleInit {
     return this.clienteModel.findOne(filtro).exec();
   }
 
+  /**
+   * Only called with at least one of nit/telefono/email already guaranteed
+   * truthy by the caller (`create`), so no need to re-check that here.
+   */
   private async buscarOCrearCliente(datos: {
     nombre: string;
     nit?: string;
@@ -256,10 +268,6 @@ export class FacturaService implements OnModuleInit {
     direccion?: string;
   }): Promise<ClienteDocument | null> {
     const { nombre, nit, telefono, email, direccion } = datos;
-
-    if (!nit && !telefono && !email) {
-      return null;
-    }
 
     const existente = await this.buscarCliente({ nit, email, telefono });
     if (existente) {
@@ -271,8 +279,11 @@ export class FacturaService implements OnModuleInit {
       id_cliente: nit || `CLI-${sufijo}`,
       nombre_cliente: nombre,
       nit,
-      telefono_cliente: telefono || `0${sufijo}`,
-      email_cliente: email || `cliente-${sufijo}@xilef.local`,
+      telefono_cliente:
+        telefono || `${FACTURA_CLIENTE_TELEFONO_PLACEHOLDER_PREFIJO}${sufijo}`,
+      email_cliente:
+        email ||
+        `cliente-${sufijo}@${FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO}`,
       direccion_cliente: direccion ?? '',
     });
 
@@ -282,13 +293,36 @@ export class FacturaService implements OnModuleInit {
       if (isDuplicateKeyError(err)) {
         // Lost a race with a concurrent create: the client now exists,
         // re-query it by the same priority instead of failing.
-        return this.buscarCliente({ nit, email, telefono });
+        const recuperado = await this.buscarCliente({ nit, email, telefono });
+        if (!recuperado) {
+          // The client that won the race is now gone too (e.g. deleted
+          // between the failed insert and this re-query). Log which
+          // criteria were used, never the values, to avoid leaking PII.
+          this.logger.warn(
+            `Clave duplicada (E11000) al crear cliente, pero la re-consulta no encontro nada (criterios usados: ${this.criteriosUsados(
+              { nit, email, telefono },
+            )})`,
+          );
+        }
+        return recuperado;
       }
       this.logger.warn(
         `No se pudo crear el cliente para la factura: ${String(err)}`,
       );
       return null;
     }
+  }
+
+  /** Lists which of nit/email/telefono were provided, never their values. */
+  private criteriosUsados(criterios: {
+    nit?: string;
+    email?: string;
+    telefono?: string;
+  }): string {
+    return Object.entries(criterios)
+      .filter(([, valor]) => valor)
+      .map(([clave]) => clave)
+      .join(', ');
   }
 
   /**
@@ -327,7 +361,7 @@ export class FacturaService implements OnModuleInit {
     if (actualizada) {
       return actualizada;
     }
-    return this.asegurarEditable(id, 'modificada');
+    return this.lanzarNoEditable(id, 'modificada');
   }
 
   async anular(id: string): Promise<Factura> {
@@ -341,7 +375,7 @@ export class FacturaService implements OnModuleInit {
     if (anulada) {
       return anulada;
     }
-    return this.asegurarEditable(id, 'anulada');
+    return this.lanzarNoEditable(id, 'anulada');
   }
 
   /**
@@ -349,7 +383,7 @@ export class FacturaService implements OnModuleInit {
    * already anulada) after a conditional `{ estado: { $ne: 'anulada' } }`
    * update matched nothing. Always throws.
    */
-  private async asegurarEditable(id: string, accion: string): Promise<never> {
+  private async lanzarNoEditable(id: string, accion: string): Promise<never> {
     const existente = await this.facturaModel.findOne({ id }).exec();
     if (!existente) {
       throw new NotFoundException(`Factura con ID ${id} no encontrada`);

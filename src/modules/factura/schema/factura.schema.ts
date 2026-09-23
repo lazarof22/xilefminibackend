@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
+import { FACTURA_CLIENTE_NOMBRE_POR_DEFECTO } from '../factura.constants';
 
 export type FacturaDocument = HydratedDocument<Factura>;
 
@@ -92,7 +93,7 @@ export class Factura {
   @Prop({ required: true })
   fecha!: string;
 
-  @Prop({ required: true, default: 'Venta al público' })
+  @Prop({ required: true, default: FACTURA_CLIENTE_NOMBRE_POR_DEFECTO })
   cliente!: string;
 
   @Prop({ default: '' })

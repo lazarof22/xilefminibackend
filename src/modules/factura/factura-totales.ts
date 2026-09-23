@@ -29,13 +29,14 @@ export interface ItemFacturaCalculado extends ItemFacturaEntrada {
   total: number;
 }
 
-export interface ImpuestoEntrada {
-  tipo?: string;
-  porciento?: number;
-  importe?: number;
-}
-
-export interface ImpuestoCalculado {
+/**
+ * Shape of `impuesto`, both as sent by the client (all fields optional,
+ * `importe` only used as a fallback when `porciento` is absent) and as
+ * returned by `calcularTotales` (the same shape, since `calcularImpuesto`
+ * either recomputes `importe` from `porciento` or passes the client's
+ * fields through unchanged) — one interface for both directions.
+ */
+export interface Impuesto {
   tipo?: string;
   porciento?: number;
   importe?: number;
@@ -46,18 +47,28 @@ export interface TotalesCalculados {
   subtotal: number;
   descuentoTotal: number;
   recargoTotal: number;
-  impuesto?: ImpuestoCalculado;
+  impuesto?: Impuesto;
   total: number;
 }
 
-/** Rounds to 2 decimals, correcting for binary floating-point error. */
+/**
+ * Rounds to 2 decimals, deterministically half-up in magnitude (never
+ * banker's rounding), correcting for binary floating-point error such as
+ * `2.675 * 100 === 267.49999999999997`. `toFixed(8)` re-snaps the scaled
+ * value to the decimal the caller meant before `Math.round` decides the
+ * half-up tie, and the sign is restored afterwards so negative values round
+ * symmetrically (`-1.005` -> `-1.01`, not `-1`).
+ */
 export function redondear(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
+  const signo = n < 0 ? -1 : 1;
+  const magnitudRedondeada =
+    Math.round(Number((Math.abs(n) * 100).toFixed(8))) / 100;
+  return signo * magnitudRedondeada;
 }
 
 export function calcularTotales(
   items: ItemFacturaEntrada[],
-  impuesto: ImpuestoEntrada | undefined,
+  impuesto: Impuesto | undefined,
 ): TotalesCalculados {
   let subtotal = 0;
   let descuentoTotal = 0;
@@ -65,9 +76,14 @@ export function calcularTotales(
 
   const itemsCalculados: ItemFacturaCalculado[] = items.map((item) => {
     const gross = redondear(item.precio * item.cantidad);
-    const lineDiscount = redondear(
+    const rawDiscount = redondear(
       item.descuentoMonto + (gross * item.descuentoPct) / 100,
     );
+    // Clamp the discount itself, not just the resulting total, so
+    // `subtotal - descuentoTotal + recargoTotal === base` always holds
+    // (an unclamped over-discount would inflate descuentoTotal beyond what
+    // the clamped item totals actually reflect).
+    const lineDiscount = Math.min(rawDiscount, redondear(gross + item.recargo));
     const total = redondear(Math.max(0, gross - lineDiscount + item.recargo));
 
     subtotal = redondear(subtotal + gross);
@@ -96,8 +112,8 @@ export function calcularTotales(
 
 function calcularImpuesto(
   base: number,
-  impuesto: ImpuestoEntrada | undefined,
-): ImpuestoCalculado | undefined {
+  impuesto: Impuesto | undefined,
+): Impuesto | undefined {
   if (!impuesto) {
     return undefined;
   }

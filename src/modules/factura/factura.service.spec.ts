@@ -586,6 +586,27 @@ describe('FacturaService', () => {
       expect(clienteModelMock.findOne).toHaveBeenCalledTimes(2);
     });
 
+    it('logs a warning naming the matched keys (not their values) when a duplicate-key re-query finds nothing (T10)', async () => {
+      // Every findOne call (initial lookup + post-duplicate re-query)
+      // returns nothing, simulating the client having been removed
+      // between the failed insert and the re-query.
+      clienteModelMock.findOne.mockReturnValue(
+        crearQueryMock<ClienteDocument | null>(null),
+      );
+      savedCliente.save.mockRejectedValueOnce({ code: 11000 });
+      const advertir = jest.spyOn(Logger.prototype, 'warn');
+
+      const dto = { ...baseDto(), nit: '111' } as CreateFacturaDto;
+      const resultado = await service.create(dto);
+
+      expect(resultado).toBeDefined();
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.clienteId).toBeUndefined();
+      expect(advertir).toHaveBeenCalledWith(expect.stringContaining('nit'));
+      // No PII: the actual nit value must not leak into the log message.
+      expect(advertir).not.toHaveBeenCalledWith(expect.stringContaining('111'));
+    });
+
     it('logs and returns null (no clienteId, no throw) on a non-duplicate-key error', async () => {
       clienteModelMock.findOne.mockReturnValue(
         crearQueryMock<ClienteDocument | null>(null),

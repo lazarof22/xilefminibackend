@@ -1,4 +1,4 @@
-import { obtenerFechaEnZona } from './factura-fecha';
+import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 
 describe('obtenerFechaEnZona (T4)', () => {
   afterEach(() => jest.useRealTimers());
@@ -22,5 +22,18 @@ describe('obtenerFechaEnZona (T4)', () => {
     expect(
       obtenerFechaEnZona('America/Havana', new Date('2026-01-01T03:00:00Z')),
     ).toBe('2025-12-31');
+  });
+});
+
+describe('validarZonaHoraria (T10)', () => {
+  it('does not throw for a recognized IANA timezone', () => {
+    expect(() => validarZonaHoraria('America/Havana')).not.toThrow();
+    expect(() => validarZonaHoraria('UTC')).not.toThrow();
+  });
+
+  it('throws a clear error for an unrecognized timezone', () => {
+    expect(() => validarZonaHoraria('Not/A_Timezone')).toThrow(
+      /FACTURA_TIMEZONE/,
+    );
   });
 });

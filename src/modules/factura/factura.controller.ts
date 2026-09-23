@@ -47,7 +47,9 @@ export class FacturaController {
   @ApiOperation({ summary: 'Modificar una factura' })
   @ApiParam({ name: 'id', description: 'ID de la factura' })
   @ApiResponse({ status: 200, description: 'Factura modificada con exito' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({ status: 409, description: 'La factura esta anulada' })
   update(@Param('id') id: string, @Body() updateFacturaDto: UpdateFacturaDto) {
     return this.facturaService.update(id, updateFacturaDto);
   }
@@ -59,6 +61,7 @@ export class FacturaController {
   @ApiParam({ name: 'id', description: 'ID de la factura' })
   @ApiResponse({ status: 200, description: 'Factura anulada con exito' })
   @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({ status: 409, description: 'La factura ya esta anulada' })
   anular(@Param('id') id: string) {
     return this.facturaService.anular(id);
   }
@@ -70,6 +73,7 @@ export class FacturaController {
   @ApiParam({ name: 'id', description: 'ID de la factura' })
   @ApiResponse({ status: 200, description: 'Factura anulada con exito' })
   @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({ status: 409, description: 'La factura ya esta anulada' })
   remove(@Param('id') id: string) {
     return this.facturaService.remove(id);
   }

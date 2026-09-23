@@ -22,3 +22,26 @@ export const FACTURA_LISTADO_LIMITE_DEFECTO = 50;
 
 /** Maximum `limit` accepted by `findAll`/`ListarFacturasQueryDto`. */
 export const FACTURA_LISTADO_LIMITE_MAXIMO = 500;
+
+/** Fallback `cliente` name used when none is sent by the client. */
+export const FACTURA_CLIENTE_NOMBRE_POR_DEFECTO = 'Venta al público';
+
+/**
+ * Sentinel some frontend forms send for "no value" (an em dash) instead of
+ * an empty string; normalized to `''` before being stored.
+ */
+export const FACTURA_CAMPO_VACIO_SENTINEL = '—';
+
+/**
+ * Prefix for the placeholder `telefono_cliente` assigned to an
+ * auto-created client that has no telefono (the field is unique, so it
+ * can't be left blank).
+ */
+export const FACTURA_CLIENTE_TELEFONO_PLACEHOLDER_PREFIJO = '0';
+
+/**
+ * Domain for the placeholder `email_cliente` assigned to an auto-created
+ * client that has no email (the field is unique, so it can't be left
+ * blank).
+ */
+export const FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO = 'xilef.local';
