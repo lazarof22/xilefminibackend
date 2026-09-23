@@ -18,10 +18,13 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 
 ## Totals formula (matches xilefminifrontend FacturacionTab)
 - gross = precio * cantidad
-- lineDiscount = descuentoMonto + gross * descuentoPct / 100
-- item.total = max(0, gross - lineDiscount + recargo)
-- subtotal = Σ gross; descuentoTotal = Σ lineDiscount; recargoTotal = Σ recargo
+- rawDiscount = descuentoMonto + gross * descuentoPct / 100
+- lineDiscount = min(rawDiscount, gross + recargo) — clamped (T10) so a line can never go negative and the invariant below always holds, even when the client sends an over-discount
+- item.total = max(0, gross - lineDiscount + recargo) (the `max(0, …)` is now a belt-and-braces safety net; the clamp above already guarantees non-negativity)
+- subtotal = Σ gross; descuentoTotal = Σ lineDiscount (clamped); recargoTotal = Σ recargo
 - base = Σ item.total; impuesto.importe = base * porciento / 100 when porciento is set; total = base + importe
+- Invariant (held exactly, within `redondear`'s 2-decimal rounding): `subtotal - descuentoTotal + recargoTotal === base`
+- `redondear` (T10): deterministic half-up rounding to 2 decimals, symmetric for negatives (`Math.round(Number((Math.abs(n)*100).toFixed(8)))/100`, sign restored) — avoids both raw binary floating-point error (`2.675*100 === 267.49999999999997`) and JS `Math.round`'s banker's-rounding-adjacent behavior on negative numbers.
 
 ## Tasks
 - [x] T1 Atomic correlative numbering (counter collection with `$inc`, seeded from max existing `numero`) — fixes #1, part of #8
@@ -35,7 +38,7 @@ Concurrent creates collide on `numero`, totals are trusted from the client (or d
 - [x] T7 Always-bounded `findAll`: default limit 50, max 500, response stays `Factura[]` — R1-002, R4-findall-unbounded-default
 - [x] T8 Issuer (`emisor`) always taken from EmpresaDatos; removed from create DTO — R1-003
 - [x] T9 No burned invoice numbers: run every fallible step (emisor, client, date, totals, `validate()`) before allocating; on save failure roll the counter back conditionally, otherwise log the gap with the lost `numero` — R3/R4 numero-gap
-- [ ] T10 Hardening: validate `FACTURA_TIMEZONE` at startup (fail fast); log when E11000 re-query finds nothing; clamp line discount so `subtotal - descuentoTotal + recargoTotal == base`; strict rounding test; Swagger 409 responses; readability cleanups (merge duplicate impuesto interfaces, rename `asegurarEditable`, name the placeholder constants, drop dead guard) — R3/R2 advisories
+- [x] T10 Hardening: validate `FACTURA_TIMEZONE` at startup (fail fast); log when E11000 re-query finds nothing; clamp line discount so `subtotal - descuentoTotal + recargoTotal == base`; strict rounding test; Swagger 409 responses; readability cleanups (merge duplicate impuesto interfaces, rename `asegurarEditable`, name the placeholder constants, drop dead guard) — R3/R2 advisories
 - [ ] T11 Runtime smoke test against local MongoDB with the server running (create, list, get, patch, anular, 409 paths, concurrent creates)
 
 ## Route
@@ -111,8 +114,19 @@ Delegated direct: one writer (writer trigger: 2+ non-trivial files).
   - `npm run build` → clean. `npx eslint "src/modules/factura/**/*.ts"` → clean (after `--fix` for prettier formatting only). `rg -n ":\s*any\b|as any|<any>|any\[\]" src/modules/factura` → empty.
   - Commit: (recorded after commit below)
 
+- T10 done. Continued from a previously-interrupted writer's uncommitted edits (already had: `validarZonaHoraria` + its `factura-fecha.spec.ts` tests, the E11000-re-query-finds-nothing warn log + its `factura.service.spec.ts` test, named placeholder constants in `factura.constants.ts` used by `factura.service.ts`/`factura.schema.ts`, and the dead duplicate `!nit && !telefono && !email` guard already removed from `buscarOCrearCliente`). Finished the remaining hardening:
+  - `factura-totales.ts`: `redondear` rewritten to deterministic half-up rounding restoring sign (`Math.round(Number((Math.abs(n)*100).toFixed(8)))/100`), fixing both `2.675`-style binary floating-point error and asymmetric rounding of negatives. `calcularTotales` now clamps `lineDiscount = min(rawDiscount, gross + recargo)` (previously only the resulting `total` was clamped via `max(0, …)`, which let `descuentoTotal` count more discount than was actually applied, breaking the `subtotal - descuentoTotal + recargoTotal === base` invariant under an over-discount + surcharge).
+  - `factura.controller.ts`: added `@ApiResponse({status:409})` to `PATCH :id`, `PATCH :id/anular`, `DELETE :id`; added `@ApiResponse({status:400})` to `PATCH :id` (the only one of those three with a body to validate).
+  - `factura-totales.ts`: merged the two structurally-identical `ImpuestoEntrada`/`ImpuestoCalculado` interfaces into one `Impuesto` (no external usages outside the file, confirmed via `rg`).
+  - `factura.service.ts`: renamed the always-throwing `asegurarEditable` to `lanzarNoEditable` (no external references, confirmed via `rg`).
+  - Updated this doc's "Totals formula" section (see above) with the clamp and the invariant.
+  - RED (`factura-totales.spec.ts`, inherited from the interrupted writer): 2 failed — `redondear(-1.005)` returned `-1` instead of `-1.01`; the over-discount invariant test expected `descuentoTotal: 15` but got `50` (unclamped).
+  - GREEN: `npx jest src/modules/factura` → 74 passed (7 suites).
+  - `npm run build` → clean. `npx eslint "src/modules/factura/**/*.ts"` → clean. `rg -n ":\s*any\b|as any|<any>|any\[\]" src/modules/factura` → empty.
+  - Commit: `<recorded below>`
+
 ## Next step
-T10–T11 (review follow-ups), delegated to one writer.
+T11 (runtime smoke test).
 
 ## Previous next step
 All T1-T6 done. Acceptance criteria met: `npx jest src/modules/factura` (60/60), `npm run build`, `npx eslint "src/modules/factura/**/*.ts"` all clean; no `any` type usage in the module. Follow-up for the caller: the create/update contract changed (id/numero/estado/totals removed from CreateFacturaDto; UpdateFacturaDto now only accepts concepto/impreso/direccion/telefono/email) — the frontend does not yet POST invoices (per Constraints), so no consumer is broken today, but this should be communicated before the frontend integrates.
