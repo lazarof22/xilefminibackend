@@ -50,13 +50,13 @@ type FacturaConstructorData = Record<string, unknown>;
 // built as a jest constructor mock and cast through `unknown`; this is the
 // standard way to mock a Mongoose Model in Nest unit tests.
 type FacturaModelMock = jest.Mock<unknown, [FacturaConstructorData]> & {
-  find: jest.Mock<QueryMock<Factura | null>, unknown[]>;
+  find: jest.Mock<QueryMock<Factura[]>, unknown[]>;
   findOne: jest.Mock<QueryMock<Factura | null>, unknown[]>;
   findOneAndUpdate: jest.Mock<QueryMock<Factura | null>, unknown[]>;
 };
 
 type FacturaContadorModelMock = {
-  findOneAndUpdate: jest.Mock<QueryMock<FacturaContador>, unknown[]>;
+  findOneAndUpdate: jest.Mock<QueryMock<FacturaContador | null>, unknown[]>;
   updateOne: jest.Mock<QueryMock<unknown>, unknown[]>;
 };
 
@@ -117,7 +117,7 @@ describe('FacturaService', () => {
         validate: savedFactura.validate,
       });
     }) as unknown as FacturaModelMock;
-    facturaModelMock.find = jest.fn<QueryMock<Factura | null>, unknown[]>();
+    facturaModelMock.find = jest.fn<QueryMock<Factura[]>, unknown[]>();
     facturaModelMock.findOne = jest.fn<QueryMock<Factura | null>, unknown[]>();
     facturaModelMock.findOneAndUpdate = jest.fn<
       QueryMock<Factura | null>,
@@ -125,7 +125,7 @@ describe('FacturaService', () => {
     >();
 
     facturaContadorModelMock = {
-      findOneAndUpdate: jest.fn<QueryMock<FacturaContador>, unknown[]>(),
+      findOneAndUpdate: jest.fn<QueryMock<FacturaContador | null>, unknown[]>(),
       updateOne: jest.fn<QueryMock<unknown>, unknown[]>(),
     };
 
