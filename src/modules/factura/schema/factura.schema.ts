@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import {
+  EstadoFactura,
   FACTURA_CLIENTE_NOMBRE_POR_DEFECTO,
   TipoPago,
 } from '../factura.constants';
@@ -203,12 +204,16 @@ export class Factura {
   @Prop({ required: true })
   total!: number;
 
+  // Legacy 'ajustada' documents are migrated to 'confirmada' in
+  // FacturaService.onModuleInit before this enum can reject them on a
+  // later write (see factura-estado.ts for the transitions).
   @Prop({
+    type: String,
     required: true,
-    enum: ['confirmada', 'ajustada', 'anulada'],
-    default: 'confirmada',
+    enum: Object.values(EstadoFactura),
+    default: EstadoFactura.EDICION,
   })
-  estado!: string;
+  estado!: EstadoFactura;
 
   @Prop({
     required: true,

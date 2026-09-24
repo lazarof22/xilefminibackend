@@ -98,6 +98,93 @@ export class FacturaController {
     return this.facturaService.update(id, updateFacturaDto);
   }
 
+  @Patch(':id/terminar')
+  @Roles(...ROLES_ESCRITURA)
+  @ApiOperation({
+    summary: 'Terminar una factura (cierra el flujo normal de edicion)',
+  })
+  @ApiParam({ name: 'id', description: 'ID de la factura' })
+  @ApiResponse({ status: 200, description: 'Factura terminada con exito' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Rol sin permiso para terminar',
+  })
+  @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({
+    status: 409,
+    description: 'La factura no esta en edicion',
+  })
+  terminar(@Param('id') id: string) {
+    return this.facturaService.terminar(id);
+  }
+
+  @Patch(':id/editar')
+  @Roles(...ROLES_ESCRITURA)
+  @ApiOperation({
+    summary: 'Volver a edicion una factura terminada',
+  })
+  @ApiParam({ name: 'id', description: 'ID de la factura' })
+  @ApiResponse({
+    status: 200,
+    description: 'Factura vuelta a edicion con exito',
+  })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Rol sin permiso para editar',
+  })
+  @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({
+    status: 409,
+    description: 'La factura no esta terminada',
+  })
+  volverAEdicion(@Param('id') id: string) {
+    return this.facturaService.volverAEdicion(id);
+  }
+
+  @Patch(':id/confirmar')
+  @Roles(...ROLES_ESCRITURA)
+  @ApiOperation({
+    summary: 'Confirmar una factura terminada',
+  })
+  @ApiParam({ name: 'id', description: 'ID de la factura' })
+  @ApiResponse({ status: 200, description: 'Factura confirmada con exito' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Rol sin permiso para confirmar',
+  })
+  @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({
+    status: 409,
+    description: 'La factura no esta terminada',
+  })
+  confirmar(@Param('id') id: string) {
+    return this.facturaService.confirmar(id);
+  }
+
+  @Patch(':id/cancelar')
+  @Roles(...ROLES_ESCRITURA)
+  @ApiOperation({
+    summary: 'Cancelar una factura confirmada (reversa)',
+  })
+  @ApiParam({ name: 'id', description: 'ID de la factura' })
+  @ApiResponse({ status: 200, description: 'Factura cancelada con exito' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Rol sin permiso para cancelar',
+  })
+  @ApiResponse({ status: 404, description: 'No encontrada' })
+  @ApiResponse({
+    status: 409,
+    description: 'La factura no esta confirmada',
+  })
+  cancelar(@Param('id') id: string) {
+    return this.facturaService.cancelar(id);
+  }
+
   @Patch(':id/anular')
   @Roles(...ROLES_ESCRITURA)
   @ApiOperation({

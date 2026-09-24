@@ -31,6 +31,7 @@ import { Pais } from '../nomencladores/pais/schema/pais.schema';
 import { Usuario } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
+  EstadoFactura,
   FACTURA_CAMPO_VACIO_SENTINEL,
   FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
   FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO,
@@ -44,6 +45,10 @@ import {
 import { calcularTotales } from './factura-totales';
 import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
+import {
+  mensajeTransicionInvalida,
+  origenesPermitidos,
+} from './factura-estado';
 
 @Injectable()
 export class FacturaService implements OnModuleInit {
@@ -62,14 +67,17 @@ export class FacturaService implements OnModuleInit {
   ) {}
 
   /**
-   * Seeds the invoice counter from the highest existing `numero` so
-   * previously imported invoices (created before this counter existed)
-   * never collide with newly allocated numbers.
+   * Seeds the invoice counter from the highest existing `numero` and
+   * migrates legacy `estado` values so previously imported invoices
+   * (created before this counter/enum existed) never collide with newly
+   * allocated numbers or fail schema validation on their next write.
    */
   async onModuleInit(): Promise<void> {
     // Fail fast: an unrecognized FACTURA_TIMEZONE would otherwise only
     // surface as silently wrong invoice dates on every create().
     validarZonaHoraria(FACTURA_TIMEZONE);
+
+    await this.migrarEstadoAjustada();
 
     const ultima = await this.facturaModel
       .findOne()
@@ -83,6 +91,33 @@ export class FacturaService implements OnModuleInit {
         { upsert: true },
       )
       .exec();
+  }
+
+  /**
+   * One-time, idempotent migration (T6a): documents stored with the old
+   * `estado: 'ajustada'` (a value this service itself never wrote, but
+   * present in data imported before this enum existed) are normalized to
+   * `confirmada`, the closest current state. Runs before the counter seed
+   * so a legacy value never blocks Mongoose schema validation on a later
+   * write; existing `confirmada`/`anulada` documents are valid in the new
+   * enum as-is and need no migration.
+   */
+  private async migrarEstadoAjustada(): Promise<void> {
+    // 'ajustada' predates the EstadoFactura enum, so it is not one of its
+    // values; the cast only widens the filter's type for this one legacy
+    // literal, it never bypasses runtime validation.
+    const estadoLegacyAjustada = 'ajustada' as unknown as EstadoFactura;
+    const resultado = await this.facturaModel
+      .updateMany(
+        { estado: estadoLegacyAjustada },
+        { $set: { estado: EstadoFactura.CONFIRMADA } },
+      )
+      .exec();
+    if (resultado.modifiedCount > 0) {
+      this.logger.log(
+        `Migradas ${resultado.modifiedCount} factura(s) de estado "ajustada" a "confirmada"`,
+      );
+    }
   }
 
   /**
@@ -161,7 +196,7 @@ export class FacturaService implements OnModuleInit {
       descuentoTotal,
       recargoTotal,
       total,
-      estado: 'confirmada',
+      estado: EstadoFactura.EDICION,
       tipo: createFacturaDto.tipo ?? 'factura_normal',
       impreso: createFacturaDto.impreso ?? false,
       despachadoPor: createFacturaDto.despachadoPor,
@@ -516,51 +551,120 @@ export class FacturaService implements OnModuleInit {
     return factura;
   }
 
+  /**
+   * PATCH /facturas/:id (T6a): allowed only while the invoice is still in
+   * `edicion`. T6b will add the `terminada` fecha/talonario carve-out and
+   * full per-state editing on top of this atomic filter.
+   */
   async update(
     id: string,
     updateFacturaDto: UpdateFacturaDto,
   ): Promise<Factura> {
     const actualizada = await this.facturaModel
-      .findOneAndUpdate({ id, estado: { $ne: 'anulada' } }, updateFacturaDto, {
-        new: true,
-        runValidators: true,
-      })
+      .findOneAndUpdate(
+        { id, estado: EstadoFactura.EDICION },
+        updateFacturaDto,
+        { new: true, runValidators: true },
+      )
       .exec();
     if (actualizada) {
       return actualizada;
     }
-    return this.lanzarNoEditable(id, 'modificada');
-  }
-
-  async anular(id: string): Promise<Factura> {
-    const anulada = await this.facturaModel
-      .findOneAndUpdate(
-        { id, estado: { $ne: 'anulada' } },
-        { estado: 'anulada' },
-        { new: true, runValidators: true },
-      )
-      .exec();
-    if (anulada) {
-      return anulada;
-    }
-    return this.lanzarNoEditable(id, 'anulada');
+    return this.lanzarNoEditable(id);
   }
 
   /**
    * Distinguishes 404 (no such invoice) from 409 (invoice exists but is
-   * already anulada) after a conditional `{ estado: { $ne: 'anulada' } }`
-   * update matched nothing. Always throws.
+   * not in `edicion`) after the conditional update above matched nothing.
+   * Always throws.
    */
-  private async lanzarNoEditable(id: string, accion: string): Promise<never> {
+  private async lanzarNoEditable(id: string): Promise<never> {
     const existente = await this.facturaModel.findOne({ id }).exec();
     if (!existente) {
       throw new NotFoundException(`Factura con ID ${id} no encontrada`);
     }
     throw new ConflictException(
-      `La factura ${id} esta anulada y no puede ser ${accion}`,
+      `La factura ${id} esta en estado "${existente.estado}": solo se puede editar una factura en edición`,
     );
   }
 
+  /** `terminar` (T6a): closes edicion for the normal edit flow. */
+  async terminar(id: string): Promise<Factura> {
+    return this.transicionar(id, EstadoFactura.TERMINADA);
+  }
+
+  /** `editar` (T6a): reopens a terminada invoice back to edicion. */
+  async volverAEdicion(id: string): Promise<Factura> {
+    return this.transicionar(id, EstadoFactura.EDICION);
+  }
+
+  /**
+   * Confirms the invoice (T6a: state only). T7 adds the inventory
+   * decrease + Kardex `venta` movement here, with compensation on partial
+   * failure; kept as its own method now so that side effect has one clear
+   * place to land.
+   */
+  async confirmar(id: string): Promise<Factura> {
+    return this.transicionar(id, EstadoFactura.CONFIRMADA);
+  }
+
+  /**
+   * Rolls a confirmed invoice back (T6a: state only). T7 adds the
+   * inventory increase + Kardex `devolucion` movement here, mirroring
+   * `confirmar`.
+   */
+  async cancelar(id: string): Promise<Factura> {
+    return this.transicionar(id, EstadoFactura.CANCELADA);
+  }
+
+  async anular(id: string): Promise<Factura> {
+    return this.transicionar(id, EstadoFactura.ANULADA);
+  }
+
+  /**
+   * Single conditional `findOneAndUpdate` that both claims a state
+   * transition and checks the invoice's current state in one atomic
+   * write: `origenesPermitidos(destino)` (factura-estado.ts) becomes the
+   * `$in` filter, so no other state can match. The invoice's `numero`/`id`
+   * are never touched here (anular never releases or reuses them, see
+   * `siguienteNumero`/`compensarNumeroTrasFalloDeGuardado`).
+   */
+  private async transicionar(
+    id: string,
+    destino: EstadoFactura,
+  ): Promise<Factura> {
+    const actualizada = await this.facturaModel
+      .findOneAndUpdate(
+        { id, estado: { $in: origenesPermitidos(destino) } },
+        { $set: { estado: destino } },
+        { new: true, runValidators: true },
+      )
+      .exec();
+    if (actualizada) {
+      return actualizada;
+    }
+    return this.lanzarTransicionInvalida(id, destino);
+  }
+
+  /**
+   * Distinguishes 404 (no such invoice) from 409 (invoice exists but is
+   * not in an allowed origin state for `destino`) after the conditional
+   * transition update above matched nothing. Always throws.
+   */
+  private async lanzarTransicionInvalida(
+    id: string,
+    destino: EstadoFactura,
+  ): Promise<never> {
+    const existente = await this.facturaModel.findOne({ id }).exec();
+    if (!existente) {
+      throw new NotFoundException(`Factura con ID ${id} no encontrada`);
+    }
+    throw new ConflictException(
+      mensajeTransicionInvalida(id, existente.estado, destino),
+    );
+  }
+
+  /** DELETE /facturas/:id (T4): alias of `anular`, never a hard delete. */
   async remove(id: string): Promise<Factura> {
     const factura = await this.anular(id);
     return factura;

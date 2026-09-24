@@ -10,12 +10,16 @@ Guía para conectar el frontend con los endpoints de `/facturas`: qué envía ca
 
 | Método | Ruta | Para qué | Rol requerido | Éxito | Errores |
 |---|---|---|---|---|---|
-| `POST` | `/facturas` | Emitir una factura | `administrador`, `gerente`, `facturador` | `201` | `400`, `401`, `403`, `404`, `422` |
+| `POST` | `/facturas` | Emitir una factura (nace en `edicion`) | `administrador`, `gerente`, `facturador` | `201` | `400`, `401`, `403`, `404`, `422` |
 | `GET` | `/facturas` | Listar facturas (paginado) | cualquier usuario autenticado | `200` | `400`, `401` |
 | `GET` | `/facturas/:id` | Ver una factura | cualquier usuario autenticado | `200` | `401`, `404` |
-| `PATCH` | `/facturas/:id` | Editar datos no fiscales | `administrador`, `gerente`, `facturador` | `200` | `400`, `401`, `403`, `404`, `409` |
-| `PATCH` | `/facturas/:id/anular` | Anular una factura | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
-| `DELETE` | `/facturas/:id` | Anular (baja lógica, **no borra**) | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id` | Editar datos no fiscales (**solo en `edicion`**) | `administrador`, `gerente`, `facturador` | `200` | `400`, `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id/terminar` | `edicion` → `terminada` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id/editar` | `terminada` → `edicion` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id/confirmar` | `terminada` → `confirmada` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id/cancelar` | `confirmada` → `cancelada` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id/anular` | `edicion`/`terminada` → `anulada` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `DELETE` | `/facturas/:id` | Anular (alias del anterior, **no borra**) | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
 
 - `:id` es el identificador legible de la factura (por ejemplo `FAC-000005`), **no** el `_id` de Mongo.
 - Todas las peticiones con cuerpo usan `Content-Type: application/json`.
@@ -32,6 +36,52 @@ Las rutas de **lectura** (`GET /facturas`, `GET /facturas/:id`) solo requieren e
 |---|---|
 | `401` | No se envió token, el token es inválido/expiró, o el usuario del token ya no existe (ver [`facturadoPor`](#facturado-por)). |
 | `403` | El usuario autenticado no tiene un rol permitido para esa ruta. |
+
+---
+
+## Estados y transiciones de una factura (T6a)
+
+Toda factura tiene un `estado`, uno de `edicion`, `terminada`, `confirmada`, `cancelada`, `anulada`. Nace siempre en `edicion`.
+
+| Estado | Significado |
+|---|---|
+| `edicion` | Estado inicial. Todos los campos de negocio son editables (por ahora, vía `PATCH /facturas/:id`, ver más abajo; T6b ampliará qué se puede editar). No hay movimiento de inventario. |
+| `terminada` | Cerrada para el flujo normal de edición. Puede volver a `edicion`, confirmarse o anularse. Todavía no hay movimiento de inventario. |
+| `confirmada` | Factura en firme. Descuenta inventario (T7, todavía no implementado). |
+| `cancelada` | Reversa de una factura `confirmada`: aumenta inventario (T7, todavía no implementado). Estado terminal. |
+| `anulada` | Estado terminal. Su `numero`/`id` nunca se reutiliza: el contador correlativo nunca se decrementa al anular, así que ninguna factura futura puede recibir ese mismo código. |
+
+**Transiciones permitidas** (cualquier otra combinación devuelve `409`):
+
+```
+edicion    -> terminada | anulada
+terminada  -> edicion | confirmada | anulada
+confirmada -> cancelada
+cancelada  -> (terminal, sin salida)
+anulada    -> (terminal, sin salida)
+```
+
+Cada transición es una única petición `PATCH` sin cuerpo:
+
+| Transición | Endpoint |
+|---|---|
+| `edicion` → `terminada` | `PATCH /facturas/:id/terminar` |
+| `terminada` → `edicion` | `PATCH /facturas/:id/editar` |
+| `terminada` → `confirmada` | `PATCH /facturas/:id/confirmar` |
+| `confirmada` → `cancelada` | `PATCH /facturas/:id/cancelar` |
+| `edicion`/`terminada` → `anulada` | `PATCH /facturas/:id/anular` (o `DELETE /facturas/:id`, alias) |
+
+**Respuesta `200`:** la `Factura` con el nuevo `estado`.
+**Errores:** `404` (no existe), `409` (la factura no está en un estado desde el que se pueda hacer esa transición; el mensaje nombra el estado actual y el estado destino intentado).
+
+```http
+PATCH /facturas/FAC-000005/terminar
+Authorization: Bearer <token>
+```
+
+```json
+{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000005 esta en estado \"confirmada\" y no puede pasar a \"terminada\"" }
+```
 
 ---
 
@@ -105,7 +155,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
   "descuentoTotal": 25,
   "recargoTotal": 3,
   "total": 251.35,
-  "estado": "confirmada",
+  "estado": "edicion",
   "tipo": "factura_normal",
   "impreso": false,
   "createdAt": "2026-09-23T02:11:34.262Z",
@@ -132,7 +182,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `facturadoPor` | `object` | El usuario (`Facturador`) autenticado que emitió la factura. Lo toma el servidor del token JWT, nunca del cuerpo de la petición (ver [Facturado por](#facturado-por)). Ausente solo en facturas emitidas antes de este campo (legado). |
 | `items[].total` | `number` | Lo calcula el servidor (ver [Cómo se calculan los totales](#cómo-se-calculan-los-totales)). |
 | `subtotal`, `descuentoTotal`, `recargoTotal`, `total` | `number` | Los calcula el servidor. Redondeados a 2 decimales. |
-| `estado` | `string` | `"confirmada"` o `"anulada"`. Toda factura nueva nace `"confirmada"`. |
+| `estado` | `string` | `"edicion"`, `"terminada"`, `"confirmada"`, `"cancelada"` o `"anulada"`. Toda factura nueva nace `"edicion"` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6a)). |
 | `tipo` | `string` | `"factura_normal"` (por defecto) o `"ajuste"`. |
 | `impreso` | `boolean` | `false` por defecto. |
 
@@ -331,7 +381,7 @@ GET /facturas/FAC-000005
 
 ## `PATCH /facturas/:id` — Editar datos no fiscales
 
-Una factura emitida es un documento fiscal: **solo** se pueden editar estos campos (todos opcionales):
+Solo se puede editar una factura **en estado `edicion`** (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6a)); en cualquier otro estado devuelve `409`. Por ahora, **solo** se pueden editar estos campos (todos opcionales); T6b ampliará qué se puede editar en `edicion` y agregará el caso especial de `terminada` (solo `fecha`/`talonario`):
 
 | Campo | Tipo |
 |---|---|
@@ -357,7 +407,7 @@ Authorization: Bearer <token>
 ```
 
 **Respuesta `200`:** la `Factura` actualizada.
-**Errores:** `400` (campo no permitido), `404` (no existe), `409` (la factura está anulada).
+**Errores:** `400` (campo no permitido), `404` (no existe), `409` (la factura no está en `edicion`).
 
 > Uso típico: después de imprimir, enviar `{ "impreso": true }`.
 
@@ -365,14 +415,14 @@ Authorization: Bearer <token>
 
 ## `PATCH /facturas/:id/anular` — Anular una factura
 
-Sin cuerpo. La factura **no se borra**: queda con `estado: "anulada"` para conservar el registro.
+Sin cuerpo. Solo desde `edicion` o `terminada` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6a)). La factura **no se borra**: queda con `estado: "anulada"` para conservar el registro, y su `numero`/`id` no se vuelve a usar nunca.
 
 ```http
 PATCH /facturas/FAC-000005/anular
 ```
 
 **Respuesta `200`:** la `Factura` con `estado: "anulada"`.
-**Errores:** `404` (no existe), `409` (ya estaba anulada).
+**Errores:** `404` (no existe), `409` (la factura ya está `confirmada`, `cancelada` o `anulada`).
 
 ## `DELETE /facturas/:id`
 
@@ -401,7 +451,11 @@ Todos los errores siguen el formato estándar de NestJS:
 ```
 
 ```json
-{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000006 esta anulada y no puede ser modificada" }
+{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000006 esta en estado \"terminada\": solo se puede editar una factura en edición" }
+```
+
+```json
+{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000006 esta en estado \"cancelada\" y no puede pasar a \"anulada\"" }
 ```
 
 ```json
@@ -459,5 +513,5 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 - [ ] Paginar el listado con `page` y `limit` (máximo 500).
 - [ ] Manejar el `401` (sin sesión / sesión expirada) y el `403` (rol sin permiso: solo `administrador`, `gerente` y `facturador` pueden crear, editar o anular).
 - [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
-- [ ] Manejar el `409` al editar o anular una factura ya anulada.
+- [ ] Manejar el `409` al editar (solo vale en `edicion`) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
 - [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }`.

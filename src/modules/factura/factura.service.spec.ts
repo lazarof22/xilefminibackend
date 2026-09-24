@@ -31,11 +31,13 @@ import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-dato
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import {
+  EstadoFactura,
   FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
   FACTURA_CONTADOR_ID,
   FACTURA_LISTADO_LIMITE_DEFECTO,
   FACTURA_TIMEZONE,
 } from './factura.constants';
+import { origenesPermitidos } from './factura-estado';
 import { obtenerFechaEnZona } from './factura-fecha';
 
 const ALMACEN_ID = '507f1f77bcf86cd799439011';
@@ -76,6 +78,7 @@ type FacturaModelMock = jest.Mock<unknown, [FacturaConstructorData]> & {
   find: jest.Mock<QueryMock<Factura[]>, unknown[]>;
   findOne: jest.Mock<QueryMock<Factura | null>, unknown[]>;
   findOneAndUpdate: jest.Mock<QueryMock<Factura | null>, unknown[]>;
+  updateMany: jest.Mock<QueryMock<{ modifiedCount: number }>, unknown[]>;
 };
 
 type FacturaContadorModelMock = {
@@ -166,6 +169,13 @@ describe('FacturaService', () => {
       QueryMock<Factura | null>,
       unknown[]
     >();
+    facturaModelMock.updateMany = jest.fn<
+      QueryMock<{ modifiedCount: number }>,
+      unknown[]
+    >();
+    facturaModelMock.updateMany.mockReturnValue(
+      crearQueryMock({ modifiedCount: 0 }),
+    );
 
     facturaContadorModelMock = {
       findOneAndUpdate: jest.fn<QueryMock<FacturaContador | null>, unknown[]>(),
@@ -339,7 +349,7 @@ describe('FacturaService', () => {
       expect(construidoCon.total).toBe(200);
     });
 
-    it('always sets estado to confirmada for a new invoice, ignoring any client-sent estado', async () => {
+    it('always sets estado to edicion for a new invoice, ignoring any client-sent estado (T6a)', async () => {
       const dto = {
         ...baseDto(),
         estado: 'anulada',
@@ -348,7 +358,7 @@ describe('FacturaService', () => {
       await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
-      expect(construidoCon.estado).toBe('confirmada');
+      expect(construidoCon.estado).toBe(EstadoFactura.EDICION);
     });
 
     it('computes tax importe from porciento server-side', async () => {
@@ -524,7 +534,7 @@ describe('FacturaService', () => {
       await service.update('FAC-000001', dto);
 
       expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-        { id: 'FAC-000001', estado: { $ne: 'anulada' } },
+        { id: 'FAC-000001', estado: EstadoFactura.EDICION },
         dto,
         { new: true, runValidators: true },
       );
@@ -848,8 +858,8 @@ describe('FacturaService', () => {
     });
   });
 
-  describe('update / anular (T3)', () => {
-    it('updates a non-annulled invoice with runValidators enabled', async () => {
+  describe('update — only while edicion (T6a)', () => {
+    it('updates an invoice in edicion with runValidators enabled', async () => {
       const actualizada = { id: 'FAC-000001', concepto: 'nuevo' } as Factura;
       facturaModelMock.findOneAndUpdate.mockReturnValue(
         crearQueryMock<Factura | null>(actualizada),
@@ -859,7 +869,7 @@ describe('FacturaService', () => {
       const resultado = await service.update('FAC-000001', dto);
 
       expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-        { id: 'FAC-000001', estado: { $ne: 'anulada' } },
+        { id: 'FAC-000001', estado: EstadoFactura.EDICION },
         dto,
         { new: true, runValidators: true },
       );
@@ -879,65 +889,174 @@ describe('FacturaService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('throws ConflictException on update when the invoice is already anulada', async () => {
+    it.each([
+      EstadoFactura.TERMINADA,
+      EstadoFactura.CONFIRMADA,
+      EstadoFactura.CANCELADA,
+      EstadoFactura.ANULADA,
+    ])(
+      'throws ConflictException on update when the invoice is %s (not edicion)',
+      async (estado) => {
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>({
+            id: 'FAC-000001',
+            estado,
+          } as Factura),
+        );
+
+        await expect(
+          service.update('FAC-000001', { concepto: 'x' }),
+        ).rejects.toBeInstanceOf(ConflictException);
+      },
+    );
+
+    it('the ConflictException message says only an edicion invoice may be edited', async () => {
       facturaModelMock.findOneAndUpdate.mockReturnValue(
         crearQueryMock<Factura | null>(null),
       );
       facturaModelMock.findOne.mockReturnValue(
         crearQueryMock<Factura | null>({
           id: 'FAC-000001',
-          estado: 'anulada',
+          estado: EstadoFactura.TERMINADA,
         } as Factura),
       );
 
       await expect(
         service.update('FAC-000001', { concepto: 'x' }),
-      ).rejects.toBeInstanceOf(ConflictException);
+      ).rejects.toThrow(/solo se puede editar una factura en edici[oó]n/i);
+    });
+  });
+
+  describe('state transitions (T6a)', () => {
+    describe.each([
+      {
+        metodo: 'terminar' as const,
+        destino: EstadoFactura.TERMINADA,
+      },
+      {
+        metodo: 'volverAEdicion' as const,
+        destino: EstadoFactura.EDICION,
+      },
+      {
+        metodo: 'confirmar' as const,
+        destino: EstadoFactura.CONFIRMADA,
+      },
+      {
+        metodo: 'cancelar' as const,
+        destino: EstadoFactura.CANCELADA,
+      },
+      {
+        metodo: 'anular' as const,
+        destino: EstadoFactura.ANULADA,
+      },
+    ])('$metodo', ({ metodo, destino }) => {
+      it(`claims the transition to ${destino} with a single conditional findOneAndUpdate`, async () => {
+        const actualizada = { id: 'FAC-000001', estado: destino } as Factura;
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(actualizada),
+        );
+
+        const resultado = await service[metodo]('FAC-000001');
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+          { id: 'FAC-000001', estado: { $in: origenesPermitidos(destino) } },
+          { $set: { estado: destino } },
+          { new: true, runValidators: true },
+        );
+        expect(resultado).toBe(actualizada);
+      });
+
+      it('throws NotFoundException when the invoice does not exist', async () => {
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+
+        await expect(service[metodo]('FAC-999999')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
+
+      it('throws ConflictException naming the current state when the invoice is not in an allowed origin state', async () => {
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>({
+            id: 'FAC-000001',
+            estado: EstadoFactura.CANCELADA,
+          } as Factura),
+        );
+
+        await expect(service[metodo]('FAC-000001')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
     });
 
-    it('anular sets estado to anulada via a conditional update', async () => {
-      const anulada = { id: 'FAC-000001', estado: 'anulada' } as Factura;
+    it('remove (DELETE alias) anula the invoice the same way anular does', async () => {
+      const anulada = {
+        id: 'FAC-000001',
+        estado: EstadoFactura.ANULADA,
+      } as Factura;
       facturaModelMock.findOneAndUpdate.mockReturnValue(
         crearQueryMock<Factura | null>(anulada),
       );
 
-      const resultado = await service.anular('FAC-000001');
+      const resultado = await service.remove('FAC-000001');
 
       expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-        { id: 'FAC-000001', estado: { $ne: 'anulada' } },
-        { estado: 'anulada' },
+        {
+          id: 'FAC-000001',
+          estado: { $in: origenesPermitidos(EstadoFactura.ANULADA) },
+        },
+        { $set: { estado: EstadoFactura.ANULADA } },
         { new: true, runValidators: true },
       );
       expect(resultado).toBe(anulada);
     });
+  });
 
-    it('throws NotFoundException on anular when the invoice does not exist', async () => {
+  describe('annulled numero/id are never reused (T6a)', () => {
+    it('anular never touches the invoice counter', async () => {
       facturaModelMock.findOneAndUpdate.mockReturnValue(
-        crearQueryMock<Factura | null>(null),
-      );
-      facturaModelMock.findOne.mockReturnValue(
-        crearQueryMock<Factura | null>(null),
-      );
-
-      await expect(service.anular('FAC-999999')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-    });
-
-    it('throws ConflictException on anular when the invoice is already anulada', async () => {
-      facturaModelMock.findOneAndUpdate.mockReturnValue(
-        crearQueryMock<Factura | null>(null),
-      );
-      facturaModelMock.findOne.mockReturnValue(
         crearQueryMock<Factura | null>({
           id: 'FAC-000001',
-          estado: 'anulada',
+          estado: EstadoFactura.ANULADA,
         } as Factura),
       );
 
-      await expect(service.anular('FAC-000001')).rejects.toBeInstanceOf(
-        ConflictException,
+      await service.anular('FAC-000001');
+
+      expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('the next created invoice after an annulment gets a new numero/id', async () => {
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>({
+          id: 'FAC-000005',
+          estado: EstadoFactura.ANULADA,
+        } as Factura),
       );
+      await service.anular('FAC-000005');
+
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 6 }),
+      );
+      await crear(baseDto());
+
+      // numero/id are assigned directly on the constructed instance after
+      // validation (T9), not on the resolved save() value (see the T1
+      // 'builds the id from the allocated number' test for the same
+      // pattern), so they're read from the tracked constructor instance.
+      const instancia = comoRegistro(facturaModelMock.mock.instances[0]);
+      expect(instancia.numero).toBe(6);
+      expect(instancia.id).toBe('FAC-000006');
     });
   });
 
@@ -1190,6 +1309,52 @@ describe('FacturaService', () => {
 
       expect(query.skip).toHaveBeenCalledWith(0);
       expect(query.limit).toHaveBeenCalledWith(FACTURA_LISTADO_LIMITE_DEFECTO);
+    });
+  });
+
+  describe('legacy estado migration on module init (T6a)', () => {
+    beforeEach(() => {
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock(null as unknown as Factura),
+      );
+      facturaContadorModelMock.updateOne.mockReturnValue(
+        crearQueryMock(undefined),
+      );
+    });
+
+    it('migrates every ajustada invoice to confirmada with one updateMany', async () => {
+      facturaModelMock.updateMany.mockReturnValue(
+        crearQueryMock({ modifiedCount: 3 }),
+      );
+
+      await service.onModuleInit();
+
+      expect(facturaModelMock.updateMany).toHaveBeenCalledWith(
+        { estado: 'ajustada' },
+        { $set: { estado: EstadoFactura.CONFIRMADA } },
+      );
+    });
+
+    it('is idempotent: logs nothing extra when nothing was migrated', async () => {
+      facturaModelMock.updateMany.mockReturnValue(
+        crearQueryMock({ modifiedCount: 0 }),
+      );
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+
+      await service.onModuleInit();
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it('logs the migrated count when it migrated at least one invoice', async () => {
+      facturaModelMock.updateMany.mockReturnValue(
+        crearQueryMock({ modifiedCount: 2 }),
+      );
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+
+      await service.onModuleInit();
+
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('2'));
     });
   });
 

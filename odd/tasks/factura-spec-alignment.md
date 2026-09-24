@@ -52,8 +52,9 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 - [x] T3 Document data: issuer snapshot includes `ciudad` and `pais`; `metodoPago` validated against the `TipoPago` enum; participants `despachadoPor`, `transportadoPor`, `recibidoPor` `{ nombre, ci, fecha }` (merged from T5: same files, one coherent contract change)
 - [x] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
 - T5 (no checkbox: merged into T3, tracked there) (same schema/DTO/README surface; per-state edit restriction lands with T6)
-- [ ] T6 State machine (+ T3 review carry-overs: reject `null` participants on PATCH, type `metodoPago` as `TipoPago`): new `estado` enum, default `edicion`, transition endpoints (`terminar`, `editar`, `confirmar`, `cancelar`, `anular`), per-state edit rules, `talonario` field, legacy mapping, annulled-code uniqueness test
-- [ ] T7 Inventory movements: `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
+- [x] T6a States and transitions: `EstadoFactura` enum (default `edicion`), pure transition table, endpoints `terminar`, `editar` (back to edicion), `confirmar`, `cancelar`, `anular` (+ `DELETE` alias) with conditional atomic updates, legacy `ajustada` -> `confirmada` migration, annulled-code-never-reused test
+- [ ] T6b Edit rules per state: `edicion` edits every business field (totals, warehouse/product checks and client link re-run server-side), `terminada` only `fecha` + `talonario` (new field), others 409; carry-overs: reject `null` participants, `metodoPago` typed `TipoPago`
+- [ ] T7 Inventory movements (only invoices confirmed after this feature carry `inventarioAplicado: true`; cancelling a legacy `confirmada` must not add stock back): `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
 - [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
 
 ## Route
@@ -107,10 +108,16 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
 - T4 done (route: delegated direct, one writer). Class-level `@UseGuards(JwtAuthGuard, RolesGuard)` + `@ApiBearerAuth()` on `FacturaController`; `@Roles(administrador, gerente, facturador)` on create/update/anular/remove; reads have no `@Roles` (`RolesGuard` allows when metadata is absent). New `auth/types/jwt-user.type.ts` (`JwtUser`, `RequestWithUser`, matching `JwtStrategy.validate`). `facturadoPor { empleadoId (ref Usuario), nombre, ci, fecha }` snapshotted server-side from the JWT `userId` before number allocation; employee gone -> 401. README: auth, roles table, 401/403.
   - RED: `npx jest src/modules/factura` -> 10 failed / 116 passed.
   - GREEN: `npx jest src/modules/factura src/modules/auth` -> 126 passed (parent re-ran: 126 passed). Full `npx jest` -> 339 passed, 1 failed (known). Build, eslint, prettier clean; no `any`.
-  - Note for T6: the existing `DELETE` endpoint hard-deletes invoices; restrict it to `edicion` so issued documents can only be annulled, never removed.
+  - Correction: `DELETE /facturas/:id` is already a logical annulment (alias of `anular`, verified in README/controller), not a hard delete. T6 keeps it as an alias subject to the same transition rules.
+  - Commit: `357c9d3` feat(factura): exige autenticacion por rol y registra quien factura
+  - Native review: assess `high` (auth), consent granted, 4 lenses, lineage `review-f8aba9197956f8e7` approved and acknowledged (burned). 9 advisories (spec naming, README wording, controller spec asserting metadata only). Reviewed boundary -> `357c9d3`.
+
+- T6a done (route: delegated direct, one writer). `EstadoFactura` enum (schema `type: String`, default `edicion`); pure `factura-estado.ts` (`esTransicionValida`, `origenesPermitidos`, `mensajeTransicionInvalida`) with an exhaustive 25-pair spec; service `transicionar(id, destino)` = one conditional `findOneAndUpdate` on `estado $in origenesPermitidos(destino)`, then 404/409 disambiguation; public `terminar`, `volverAEdicion`, `confirmar`, `cancelar`, `anular` (+ `DELETE` alias); new `PATCH :id/terminar|editar|confirmar|cancelar` with write roles; PATCH update only while `edicion` (T6b widens); `onModuleInit` migrates legacy `ajustada` -> `confirmada` idempotently; tests pin `id`/`numero` unique and that annulment never touches the counter. README: states, transition table + diagram, endpoints.
+  - RED: `factura-estado.spec.ts` module not found; service spec 20 failed / 58 passed; controller spec 8 failed / 10 passed. (Disclosed: `schema/factura.schema.spec.ts` written as a pinning test, not RED-first, for uniqueness that pre-existed.)
+  - GREEN: `npx jest src/modules/factura` -> 193 passed (parent re-ran: 193 passed). Full `npx jest` -> 406 passed, 1 failed (known). Build, eslint clean; no `any` (legacy filter uses a documented `as unknown as EstadoFactura` cast).
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T6 state machine.
+T6b edit rules per state.

@@ -22,6 +22,10 @@ describe('FacturaController', () => {
       findAll: jest.fn(),
       findOne: jest.fn(),
       update: jest.fn(),
+      terminar: jest.fn(),
+      volverAEdicion: jest.fn(),
+      confirmar: jest.fn(),
+      cancelar: jest.fn(),
       anular: jest.fn(),
       remove: jest.fn(),
     };
@@ -53,6 +57,10 @@ describe('FacturaController', () => {
   const handlers: Record<string, (...args: never[]) => unknown> = {
     create: FacturaController.prototype.create,
     update: FacturaController.prototype.update,
+    terminar: FacturaController.prototype.terminar,
+    volverAEdicion: FacturaController.prototype.volverAEdicion,
+    confirmar: FacturaController.prototype.confirmar,
+    cancelar: FacturaController.prototype.cancelar,
     anular: FacturaController.prototype.anular,
     remove: FacturaController.prototype.remove,
     findAll: FacturaController.prototype.findAll,
@@ -72,12 +80,18 @@ describe('FacturaController', () => {
       UsuarioRol.FACTURADOR,
     ];
 
-    it.each(['create', 'update', 'anular', 'remove'])(
-      '%s carries the expected @Roles metadata',
-      (nombre) => {
-        expect(rolesDe(nombre)).toEqual(rolesEsperados);
-      },
-    );
+    it.each([
+      'create',
+      'update',
+      'terminar',
+      'volverAEdicion',
+      'confirmar',
+      'cancelar',
+      'anular',
+      'remove',
+    ])('%s carries the expected @Roles metadata', (nombre) => {
+      expect(rolesDe(nombre)).toEqual(rolesEsperados);
+    });
   });
 
   describe('read endpoints stay open to any authenticated user', () => {
@@ -103,5 +117,30 @@ describe('FacturaController', () => {
     await controller.create(dto, req);
 
     expect(serviceMock.create).toHaveBeenCalledWith(dto, 'user-1');
+  });
+
+  describe('state transitions (T6a) forward the id to the matching service method', () => {
+    it.each([
+      ['terminar', 'terminar'],
+      ['volverAEdicion', 'volverAEdicion'],
+      ['confirmar', 'confirmar'],
+      ['cancelar', 'cancelar'],
+      ['anular', 'anular'],
+      ['remove', 'remove'],
+    ])('controller.%s forwards to service.%s', async (metodoControlador) => {
+      (
+        serviceMock[metodoControlador as keyof FacturaService] as jest.Mock
+      ).mockResolvedValue({ id: 'FAC-000001' });
+
+      await (
+        controller[metodoControlador as keyof FacturaController] as unknown as (
+          id: string,
+        ) => Promise<unknown>
+      )('FAC-000001');
+
+      expect(
+        serviceMock[metodoControlador as keyof FacturaService],
+      ).toHaveBeenCalledWith('FAC-000001');
+    });
   });
 });

@@ -70,3 +70,25 @@ export enum TipoPago {
   TRANSFERENCIA = 'transferencia',
   CREDITO = 'credito',
 }
+
+/**
+ * Invoice lifecycle states (T6a, spec "TABLA DE UNA FACTURA"):
+ *  - `edicion`: default on create; every business field is editable and
+ *    totals are recomputed server-side (T6b).
+ *  - `terminada`: closed for the normal edit flow; only `fecha` and
+ *    `talonario` stay editable (T6b); no inventory movement.
+ *  - `confirmada`: inventory decreases (T7, not implemented by T6a).
+ *  - `cancelada`: a `confirmada` invoice rolled back; inventory increases
+ *    (T7).
+ *  - `anulada`: terminal; its `numero`/`id` can never be reused by another
+ *    invoice (the counter is never decremented on anular, see
+ *    FacturaService.siguienteNumero).
+ * See factura-estado.ts for the legal transitions between these states.
+ */
+export enum EstadoFactura {
+  EDICION = 'edicion',
+  TERMINADA = 'terminada',
+  CONFIRMADA = 'confirmada',
+  CANCELADA = 'cancelada',
+  ANULADA = 'anulada',
+}
