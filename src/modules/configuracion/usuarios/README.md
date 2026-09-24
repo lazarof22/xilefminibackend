@@ -78,5 +78,5 @@ Reutiliza `empleado.schema.ts` del módulo `auth`:
 | departamento | ObjectId (ref: Departamento) | ✅ |
 | cargo | ObjectId (ref: CargoEmpleado) | ✅ |
 | salario | number | ✅ |
-| rol | enum UsuarioRol | (default: empleado) |
+| rol | enum UsuarioRol: `administrador`, `gerente`, `economico`, `cajero`, `facturador`, `jefe`, `empleado` | (default: empleado) |
 | createdAt | Date | auto |
