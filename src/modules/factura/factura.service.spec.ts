@@ -4,6 +4,7 @@ import {
   ConflictException,
   Logger,
   NotFoundException,
+  UnauthorizedException,
   UnprocessableEntityException,
   BadRequestException,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ import {
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais, PaisDocument } from '../nomencladores/pais/schema/pais.schema';
+import { Usuario, UsuarioDocument } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
@@ -32,10 +34,13 @@ import {
   FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
   FACTURA_CONTADOR_ID,
   FACTURA_LISTADO_LIMITE_DEFECTO,
+  FACTURA_TIMEZONE,
 } from './factura.constants';
+import { obtenerFechaEnZona } from './factura-fecha';
 
 const ALMACEN_ID = '507f1f77bcf86cd799439011';
 const PRODUCTO_ID = '507f1f77bcf86cd799439012';
+const USER_ID = '507f1f77bcf86cd799439013';
 
 /**
  * Minimal chainable Mongoose query mock. Every method returns the same
@@ -94,6 +99,10 @@ type PaisModelMock = {
   findById: jest.Mock<QueryMock<PaisDocument | null>, unknown[]>;
 };
 
+type UsuarioModelMock = {
+  findById: jest.Mock<QueryMock<UsuarioDocument | null>, unknown[]>;
+};
+
 /** Narrows an unknown record field, for the rare assertion that needs a nested shape. */
 function comoRegistro(valor: unknown): Record<string, unknown> {
   return valor as Record<string, unknown>;
@@ -107,6 +116,7 @@ describe('FacturaService', () => {
   let almacenModelMock: AlmacenModelMock;
   let productoModelMock: ProductoModelMock;
   let paisModelMock: PaisModelMock;
+  let usuarioModelMock: UsuarioModelMock;
   let savedFactura: Partial<Factura> & {
     save: jest.Mock;
     validate: jest.Mock<Promise<void>, [unknown?]>;
@@ -209,6 +219,20 @@ describe('FacturaService', () => {
       crearQueryMock<PaisDocument | null>(null),
     );
 
+    // Default happy path (T4): the authenticated user exists and is
+    // snapshotted into facturadoPor. Individual T4 tests override this to
+    // simulate the account having been deleted after login (401).
+    usuarioModelMock = {
+      findById: jest.fn<QueryMock<UsuarioDocument | null>, unknown[]>(),
+    };
+    usuarioModelMock.findById.mockReturnValue(
+      crearQueryMock<UsuarioDocument | null>({
+        _id: USER_ID,
+        nombre_empleado: 'Juan Pérez',
+        ci_empleado: '12345678901',
+      } as UsuarioDocument),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FacturaService,
@@ -221,6 +245,7 @@ describe('FacturaService', () => {
         { provide: getModelToken(Almacen.name), useValue: almacenModelMock },
         { provide: getModelToken(Producto.name), useValue: productoModelMock },
         { provide: getModelToken(Pais.name), useValue: paisModelMock },
+        { provide: getModelToken(Usuario.name), useValue: usuarioModelMock },
         { provide: EmpresaDatosService, useValue: empresaDatosServiceMock },
       ],
     }).compile();
@@ -240,13 +265,26 @@ describe('FacturaService', () => {
     };
   }
 
+  /**
+   * `FacturaService.create` now requires the authenticated user id (T4).
+   * Every pre-T4 test below only cares about invoice behaviour, not about
+   * facturadoPor, so this wrapper defaults userId to a user the mocked
+   * `usuarioModel` resolves, keeping those call sites unchanged in intent.
+   */
+  function crear(
+    dto: CreateFacturaDto,
+    userId: string = USER_ID,
+  ): Promise<Factura> {
+    return service.create(dto, userId);
+  }
+
   describe('numeracion atomica (T1)', () => {
     it('allocates the invoice number via an atomic $inc on the counter', async () => {
       facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
         crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 5 }),
       );
 
-      await service.create(baseDto());
+      await crear(baseDto());
 
       expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenCalledWith(
         { _id: FACTURA_CONTADOR_ID },
@@ -266,7 +304,7 @@ describe('FacturaService', () => {
         numero: 999,
       } as unknown as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       // numero/id are assigned directly on the constructed instance after
       // validation (T9), not passed to the constructor, so they are read
@@ -294,7 +332,7 @@ describe('FacturaService', () => {
         total: 999999,
       } as unknown as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.subtotal).toBe(200);
@@ -307,7 +345,7 @@ describe('FacturaService', () => {
         estado: 'anulada',
       } as unknown as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.estado).toBe('confirmada');
@@ -320,7 +358,7 @@ describe('FacturaService', () => {
         impuesto: { tipo: 'ISV', porciento: 10, importe: 1 },
       } as unknown as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(comoRegistro(construidoCon.impuesto).importe).toBe(10);
@@ -349,7 +387,7 @@ describe('FacturaService', () => {
         emisor: { nombre: 'Empresa Falsa', nit: '999-FALSO' },
       } as unknown as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(comoRegistro(construidoCon.emisor)).toEqual({
@@ -362,7 +400,7 @@ describe('FacturaService', () => {
     });
 
     it('leaves emisor undefined when EmpresaDatos has no data configured', async () => {
-      await service.create(baseDto());
+      await crear(baseDto());
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.emisor).toBeUndefined();
@@ -385,7 +423,7 @@ describe('FacturaService', () => {
         } as PaisDocument),
       );
 
-      await service.create(baseDto());
+      await crear(baseDto());
 
       expect(paisModelMock.findById).toHaveBeenCalledWith(
         '507f1f77bcf86cd799439099',
@@ -408,7 +446,7 @@ describe('FacturaService', () => {
         ciudad: 'La Habana',
       });
 
-      await service.create(baseDto());
+      await crear(baseDto());
 
       expect(paisModelMock.findById).not.toHaveBeenCalled();
       const construidoCon = facturaModelMock.mock.calls[0][0];
@@ -424,7 +462,7 @@ describe('FacturaService', () => {
         crearQueryMock<PaisDocument | null>(null),
       );
 
-      await service.create(baseDto());
+      await crear(baseDto());
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(comoRegistro(construidoCon.emisor).pais).toBeUndefined();
@@ -451,7 +489,7 @@ describe('FacturaService', () => {
         recibidoPor: { ...participante, nombre: 'Luis Diaz' },
       } as unknown as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.despachadoPor).toEqual(participante);
@@ -462,7 +500,7 @@ describe('FacturaService', () => {
     });
 
     it('leaves the participants undefined when not sent', async () => {
-      await service.create(baseDto());
+      await crear(baseDto());
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.despachadoPor).toBeUndefined();
@@ -501,7 +539,7 @@ describe('FacturaService', () => {
     });
 
     it('loads the almacén by id and persists almacenId + the codigo snapshot', async () => {
-      await service.create(baseDto());
+      await crear(baseDto());
 
       expect(almacenModelMock.findById).toHaveBeenCalledWith(ALMACEN_ID);
       const construidoCon = facturaModelMock.mock.calls[0][0];
@@ -514,9 +552,7 @@ describe('FacturaService', () => {
         crearQueryMock<AlmacenDocument | null>(null),
       );
 
-      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(crear(baseDto())).rejects.toBeInstanceOf(NotFoundException);
       expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
     });
 
@@ -529,7 +565,7 @@ describe('FacturaService', () => {
         } as AlmacenDocument),
       );
 
-      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+      await expect(crear(baseDto())).rejects.toBeInstanceOf(
         UnprocessableEntityException,
       );
       expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
@@ -544,7 +580,7 @@ describe('FacturaService', () => {
         ],
       } as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       expect(productoModelMock.find).toHaveBeenCalledTimes(1);
       expect(productoModelMock.find).toHaveBeenCalledWith({
@@ -557,10 +593,10 @@ describe('FacturaService', () => {
         crearQueryMock<ProductoDocument[]>([]),
       );
 
-      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+      await expect(crear(baseDto())).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      await expect(service.create(baseDto())).rejects.toThrow(PRODUCTO_ID);
+      await expect(crear(baseDto())).rejects.toThrow(PRODUCTO_ID);
       expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
     });
 
@@ -574,10 +610,10 @@ describe('FacturaService', () => {
         ]),
       );
 
-      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+      await expect(crear(baseDto())).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      await expect(service.create(baseDto())).rejects.toThrow(PRODUCTO_ID);
+      await expect(crear(baseDto())).rejects.toThrow(PRODUCTO_ID);
     });
 
     it('allows the producto when its almacen matches the invoice almacenId', async () => {
@@ -590,7 +626,7 @@ describe('FacturaService', () => {
         ]),
       );
 
-      await expect(service.create(baseDto())).resolves.toBeDefined();
+      await expect(crear(baseDto())).resolves.toBeDefined();
     });
 
     it('matches the producto almacen against an uppercase-hex almacenId using canonical ObjectId equality', async () => {
@@ -607,7 +643,7 @@ describe('FacturaService', () => {
         almacenId: ALMACEN_ID.toUpperCase(),
       };
 
-      await expect(service.create(dto)).resolves.toBeDefined();
+      await expect(crear(dto)).resolves.toBeDefined();
     });
 
     it('finds the producto when productoId is sent in uppercase hex, matching the canonical stored _id', async () => {
@@ -624,7 +660,7 @@ describe('FacturaService', () => {
         items: [{ ...itemBase, productoId: PRODUCTO_ID.toUpperCase() }],
       };
 
-      await expect(service.create(dto)).resolves.toBeDefined();
+      await expect(crear(dto)).resolves.toBeDefined();
     });
 
     it('loads the almacén by the exact almacenId given, letting Mongoose handle case-insensitive ObjectId casting', async () => {
@@ -634,7 +670,7 @@ describe('FacturaService', () => {
         almacenId: almacenIdMayuscula,
       };
 
-      await service.create(dto);
+      await crear(dto);
 
       expect(almacenModelMock.findById).toHaveBeenCalledWith(
         almacenIdMayuscula,
@@ -648,7 +684,7 @@ describe('FacturaService', () => {
         crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
       );
 
-      await service.create(baseDto());
+      await crear(baseDto());
 
       expect(savedFactura.validate).toHaveBeenCalledWith({
         pathsToSkip: ['numero', 'id'],
@@ -662,9 +698,7 @@ describe('FacturaService', () => {
     it('never allocates a number when document validation fails', async () => {
       savedFactura.validate.mockRejectedValueOnce(new Error('datos invalidos'));
 
-      await expect(service.create(baseDto())).rejects.toThrow(
-        'datos invalidos',
-      );
+      await expect(crear(baseDto())).rejects.toThrow('datos invalidos');
 
       expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
       expect(savedFactura.save).not.toHaveBeenCalled();
@@ -687,9 +721,7 @@ describe('FacturaService', () => {
       savedFactura.save.mockRejectedValueOnce(new Error('fallo al guardar'));
       const advertir = jest.spyOn(Logger.prototype, 'warn');
 
-      await expect(service.create(baseDto())).rejects.toThrow(
-        'fallo al guardar',
-      );
+      await expect(crear(baseDto())).rejects.toThrow('fallo al guardar');
 
       expect(facturaModelMock.findOne).toHaveBeenCalledWith({ numero: 5 });
       expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
@@ -710,7 +742,7 @@ describe('FacturaService', () => {
       savedFactura.save.mockRejectedValueOnce(duplicado);
       const errorLog = jest.spyOn(Logger.prototype, 'error');
 
-      await expect(service.create(baseDto())).rejects.toBe(duplicado);
+      await expect(crear(baseDto())).rejects.toBe(duplicado);
 
       expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenCalledTimes(
         1,
@@ -727,7 +759,7 @@ describe('FacturaService', () => {
       );
       savedFactura.save.mockRejectedValueOnce(new Error('socket timeout'));
 
-      await expect(service.create(baseDto())).rejects.toThrow('socket timeout');
+      await expect(crear(baseDto())).rejects.toThrow('socket timeout');
 
       expect(facturaModelMock.findOne).toHaveBeenCalledWith({ numero: 5 });
       expect(facturaContadorModelMock.findOneAndUpdate).toHaveBeenCalledTimes(
@@ -747,11 +779,72 @@ describe('FacturaService', () => {
       savedFactura.save.mockRejectedValueOnce(new Error('fallo al guardar'));
       const errorLog = jest.spyOn(Logger.prototype, 'error');
 
-      await expect(service.create(baseDto())).rejects.toThrow(
-        'fallo al guardar',
-      );
+      await expect(crear(baseDto())).rejects.toThrow('fallo al guardar');
 
       expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('5'));
+    });
+  });
+
+  describe('facturadoPor: authenticated user snapshot (T4)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it("snapshots nombre, ci, empleadoId and today's fecha from the authenticated user", async () => {
+      usuarioModelMock.findById.mockReturnValue(
+        crearQueryMock<UsuarioDocument | null>({
+          _id: USER_ID,
+          nombre_empleado: 'María López',
+          ci_empleado: '98765432109',
+        } as UsuarioDocument),
+      );
+
+      await crear(baseDto(), USER_ID);
+
+      expect(usuarioModelMock.findById).toHaveBeenCalledWith(USER_ID);
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon).facturadoPor).toEqual({
+        empleadoId: USER_ID,
+        nombre: 'María López',
+        ci: '98765432109',
+        fecha: obtenerFechaEnZona(FACTURA_TIMEZONE),
+      });
+    });
+
+    it('throws 401 when the authenticated user no longer exists (deleted after login)', async () => {
+      usuarioModelMock.findById.mockReturnValue(
+        crearQueryMock<UsuarioDocument | null>(null),
+      );
+
+      await expect(crear(baseDto(), USER_ID)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(facturaModelMock).not.toHaveBeenCalled();
+    });
+
+    it('never allocates a number when the authenticated user no longer exists (T9 rule)', async () => {
+      usuarioModelMock.findById.mockReturnValue(
+        crearQueryMock<UsuarioDocument | null>(null),
+      );
+
+      await expect(crear(baseDto(), USER_ID)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+
+      expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(savedFactura.save).not.toHaveBeenCalled();
+    });
+
+    it('looks up the employee before allocating the invoice number (T9 rule)', async () => {
+      await crear(baseDto(), USER_ID);
+
+      const ordenBusquedaUsuario =
+        usuarioModelMock.findById.mock.invocationCallOrder[0];
+      const ordenAsignacionNumero =
+        facturaContadorModelMock.findOneAndUpdate.mock.invocationCallOrder[0];
+      expect(ordenBusquedaUsuario).toBeLessThan(ordenAsignacionNumero);
     });
   });
 
@@ -861,7 +954,7 @@ describe('FacturaService', () => {
       // 2026-09-23T02:00:00Z is 2026-09-22 local (Havana, UTC-4 in Sept).
       jest.useFakeTimers().setSystemTime(new Date('2026-09-23T02:00:00Z'));
 
-      await service.create(baseDto());
+      await crear(baseDto());
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.fecha).toBe('2026-09-22');
@@ -871,7 +964,7 @@ describe('FacturaService', () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-09-23T02:00:00Z'));
 
       const dto = { ...baseDto(), fecha: '2020-01-01' } as CreateFacturaDto;
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.fecha).toBe('2020-01-01');
@@ -888,7 +981,7 @@ describe('FacturaService', () => {
     it('auto-creates a client that passes the real Cliente schema when no direccion is sent', async () => {
       const dto = { ...baseDto(), nit: 'NIT-1' } as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       expect(clienteModelMock).toHaveBeenCalledTimes(1);
       const datosCliente = clienteModelMock.mock.calls[0][0];
@@ -911,7 +1004,7 @@ describe('FacturaService', () => {
         direccion: 'Calle 1',
       } as CreateFacturaDto;
 
-      await service.create(dto);
+      await crear(dto);
 
       expect(clienteModelMock.mock.calls[0][0].direccion_cliente).toBe(
         'Calle 1',
@@ -931,7 +1024,7 @@ describe('FacturaService', () => {
         email: 'a@b.com',
         telefono: '555',
       } as CreateFacturaDto;
-      await service.create(dto);
+      await crear(dto);
 
       expect(clienteModelMock.findOne).toHaveBeenCalledTimes(1);
       expect(clienteModelMock.findOne).toHaveBeenCalledWith({ nit: '111' });
@@ -952,7 +1045,7 @@ describe('FacturaService', () => {
         email: 'a@b.com',
         telefono: '555',
       } as CreateFacturaDto;
-      await service.create(dto);
+      await crear(dto);
 
       expect(clienteModelMock.findOne).toHaveBeenCalledTimes(2);
       expect(clienteModelMock.findOne).toHaveBeenNthCalledWith(1, {
@@ -979,7 +1072,7 @@ describe('FacturaService', () => {
         email: 'a@b.com',
         telefono: '555',
       } as CreateFacturaDto;
-      await service.create(dto);
+      await crear(dto);
 
       expect(clienteModelMock.findOne).toHaveBeenCalledTimes(3);
       expect(clienteModelMock.findOne).toHaveBeenNthCalledWith(3, {
@@ -999,7 +1092,7 @@ describe('FacturaService', () => {
       savedCliente.save.mockRejectedValueOnce({ code: 11000 });
 
       const dto = { ...baseDto(), nit: '111' } as CreateFacturaDto;
-      await service.create(dto);
+      await crear(dto);
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.clienteId).toBe('cliente-recuperado');
@@ -1017,7 +1110,7 @@ describe('FacturaService', () => {
       const advertir = jest.spyOn(Logger.prototype, 'warn');
 
       const dto = { ...baseDto(), nit: '111' } as CreateFacturaDto;
-      const resultado = await service.create(dto);
+      const resultado = await crear(dto);
 
       expect(resultado).toBeDefined();
       const construidoCon = facturaModelMock.mock.calls[0][0];
@@ -1035,7 +1128,7 @@ describe('FacturaService', () => {
       const advertir = jest.spyOn(Logger.prototype, 'warn');
 
       const dto = { ...baseDto(), nit: '111' } as CreateFacturaDto;
-      const resultado = await service.create(dto);
+      const resultado = await crear(dto);
 
       expect(resultado).toBeDefined();
       const construidoCon = facturaModelMock.mock.calls[0][0];

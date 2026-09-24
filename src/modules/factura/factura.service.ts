@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
+  UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -27,6 +28,7 @@ import {
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais } from '../nomencladores/pais/schema/pais.schema';
+import { Usuario } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
   FACTURA_CAMPO_VACIO_SENTINEL,
@@ -55,6 +57,7 @@ export class FacturaService implements OnModuleInit {
     @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
     @InjectModel(Pais.name) private paisModel: Model<Pais>,
+    @InjectModel(Usuario.name) private usuarioModel: Model<Usuario>,
     private readonly empresaDatosService: EmpresaDatosService,
   ) {}
 
@@ -83,15 +86,22 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
-   * Runs every fallible step (emisor, client lookup, date, totals, and
-   * full document validation) BEFORE allocating a correlative `numero`,
-   * so an invalid request never burns a number. Only after the document
-   * validates does it allocate `numero`/`id` and save; if `save()` still
-   * fails (e.g. a lost race on the unique `numero` index), it attempts to
-   * release the allocated number back to the counter (see
-   * `compensarNumeroTrasFalloDeGuardado`).
+   * Runs every fallible step (almacén/productos, facturador, emisor,
+   * client lookup, date, totals, and full document validation) BEFORE
+   * allocating a correlative `numero`, so an invalid request never burns a
+   * number. Only after the document validates does it allocate
+   * `numero`/`id` and save; if `save()` still fails (e.g. a lost race on
+   * the unique `numero` index), it attempts to release the allocated
+   * number back to the counter (see `compensarNumeroTrasFalloDeGuardado`).
+   *
+   * `userId` is the authenticated JWT user id (T4, `FacturaController`),
+   * never taken from the request body: it is resolved into `facturadoPor`
+   * (name, CI, date) via `obtenerFacturadorPor`.
    */
-  async create(createFacturaDto: CreateFacturaDto): Promise<Factura> {
+  async create(
+    createFacturaDto: CreateFacturaDto,
+    userId: string,
+  ): Promise<Factura> {
     const fecha =
       createFacturaDto.fecha ?? obtenerFechaEnZona(FACTURA_TIMEZONE);
 
@@ -114,6 +124,7 @@ export class FacturaService implements OnModuleInit {
     // an invalid almacén or item never burns an invoice number.
     const almacen = await this.obtenerAlmacenValido(createFacturaDto.almacenId);
     await this.validarProductosDelAlmacen(items, createFacturaDto.almacenId);
+    const facturadoPor = await this.obtenerFacturadorPor(userId);
 
     const emisor = await this.obtenerEmisor();
 
@@ -156,6 +167,7 @@ export class FacturaService implements OnModuleInit {
       despachadoPor: createFacturaDto.despachadoPor,
       transportadoPor: createFacturaDto.transportadoPor,
       recibidoPor: createFacturaDto.recibidoPor,
+      facturadoPor,
     });
 
     // numero/id are not set yet (allocated below), so they are excluded
@@ -341,6 +353,33 @@ export class FacturaService implements OnModuleInit {
         );
       }
     }
+  }
+
+  /**
+   * Resolves "Facturado por" (T4) from the authenticated JWT user: the
+   * employee record is loaded and snapshotted (name, CI, today's date in
+   * the invoice timezone), never taken from the request body. The
+   * employee no longer existing (e.g. the account was deleted right after
+   * the token was issued) is an authentication failure, not a bad
+   * request, so it throws 401 — and, run before `siguienteNumero()` (T9),
+   * it never burns an invoice number.
+   */
+  private async obtenerFacturadorPor(userId: string): Promise<{
+    empleadoId: Types.ObjectId;
+    nombre: string;
+    ci: string;
+    fecha: string;
+  }> {
+    const usuario = await this.usuarioModel.findById(userId).exec();
+    if (!usuario) {
+      throw new UnauthorizedException('El usuario autenticado ya no existe');
+    }
+    return {
+      empleadoId: usuario._id,
+      nombre: usuario.nombre_empleado,
+      ci: usuario.ci_empleado,
+      fecha: obtenerFechaEnZona(FACTURA_TIMEZONE),
+    };
   }
 
   /**

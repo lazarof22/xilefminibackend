@@ -50,9 +50,9 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 - [x] T2 Warehouse code: unique `codigo` on `Almacen` (schema + DTOs); invoice references the warehouse (`almacenId`) and snapshots `almacenCodigo`; items must belong to that warehouse when the product has one
 - [x] T2b Warehouse code hardening (from T2 review warnings): reject whitespace-only `codigo`, reject `codigo: null` on update, normalize ObjectId comparison (uppercase hex), README error messages accurate
 - [x] T3 Document data: issuer snapshot includes `ciudad` and `pais`; `metodoPago` validated against the `TipoPago` enum; participants `despachadoPor`, `transportadoPor`, `recibidoPor` `{ nombre, ci, fecha }` (merged from T5: same files, one coherent contract change)
-- [ ] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
+- [x] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
 - T5 (no checkbox: merged into T3, tracked there) (same schema/DTO/README surface; per-state edit restriction lands with T6)
-- [ ] T6 State machine: new `estado` enum, default `edicion`, transition endpoints (`terminar`, `editar`, `confirmar`, `cancelar`, `anular`), per-state edit rules, `talonario` field, legacy mapping, annulled-code uniqueness test
+- [ ] T6 State machine (+ T3 review carry-overs: reject `null` participants on PATCH, type `metodoPago` as `TipoPago`): new `estado` enum, default `edicion`, transition endpoints (`terminar`, `editar`, `confirmar`, `cancelar`, `anular`), per-state edit rules, `talonario` field, legacy mapping, annulled-code uniqueness test
 - [ ] T7 Inventory movements: `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
 - [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
 
@@ -101,9 +101,16 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
   - RED: `npx jest src/modules/factura` -> 13 failed / 101 passed.
   - GREEN: same -> 114 passed (parent re-ran: 114 passed). Full `npx jest` -> 327 passed, 1 failed (known). Build clean, eslint + prettier clean, no `any`.
   - Size: ~626 authored lines (over the ~400 heuristic because of DTO/service spec coverage for three features; not trimmed).
+  - Commit: `581be08` feat(factura): agrega ciudad y pais del emisor, tipo de pago y participantes del despacho
+  - Native review: assess `high`, consent granted, 4 lenses, lineage `review-68639bf2ac422b8e` approved and acknowledged (burned). 11 advisories; carried into T6: PATCH accepts `null` participants (R1-001/R3), `metodoPago` typed `string` instead of `TipoPago` in the schema (R4-001), comment wording in `TipoPago` doc (R2-001). Reviewed boundary -> `581be08`.
+
+- T4 done (route: delegated direct, one writer). Class-level `@UseGuards(JwtAuthGuard, RolesGuard)` + `@ApiBearerAuth()` on `FacturaController`; `@Roles(administrador, gerente, facturador)` on create/update/anular/remove; reads have no `@Roles` (`RolesGuard` allows when metadata is absent). New `auth/types/jwt-user.type.ts` (`JwtUser`, `RequestWithUser`, matching `JwtStrategy.validate`). `facturadoPor { empleadoId (ref Usuario), nombre, ci, fecha }` snapshotted server-side from the JWT `userId` before number allocation; employee gone -> 401. README: auth, roles table, 401/403.
+  - RED: `npx jest src/modules/factura` -> 10 failed / 116 passed.
+  - GREEN: `npx jest src/modules/factura src/modules/auth` -> 126 passed (parent re-ran: 126 passed). Full `npx jest` -> 339 passed, 1 failed (known). Build, eslint, prettier clean; no `any`.
+  - Note for T6: the existing `DELETE` endpoint hard-deletes invoices; restrict it to `edicion` so issued documents can only be annulled, never removed.
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T4 auth guards + facturadoPor.
+T6 state machine.

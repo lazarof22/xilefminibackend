@@ -2,24 +2,36 @@
 
 Guía para conectar el frontend con los endpoints de `/facturas`: qué envía cada uno, qué devuelve y qué errores puede dar.
 
-> **Regla de oro:** el frontend envía **qué se vendió y a quién**. El servidor decide **el número, el id, el estado, los totales, el impuesto y el emisor**. Si el frontend manda alguno de esos campos, la petición se rechaza con `400`.
+> **Regla de oro:** el frontend envía **qué se vendió y a quién**. El servidor decide **el número, el id, el estado, los totales, el impuesto, el emisor y quién factura (`facturadoPor`)**. Si el frontend manda alguno de esos campos, la petición se rechaza con `400`.
 
 ---
 
 ## Resumen de endpoints
 
-| Método | Ruta | Para qué | Éxito | Errores |
-|---|---|---|---|---|
-| `POST` | `/facturas` | Emitir una factura | `201` | `400`, `404`, `422` |
-| `GET` | `/facturas` | Listar facturas (paginado) | `200` | `400` |
-| `GET` | `/facturas/:id` | Ver una factura | `200` | `404` |
-| `PATCH` | `/facturas/:id` | Editar datos no fiscales | `200` | `400`, `404`, `409` |
-| `PATCH` | `/facturas/:id/anular` | Anular una factura | `200` | `404`, `409` |
-| `DELETE` | `/facturas/:id` | Anular (baja lógica, **no borra**) | `200` | `404`, `409` |
+| Método | Ruta | Para qué | Rol requerido | Éxito | Errores |
+|---|---|---|---|---|---|
+| `POST` | `/facturas` | Emitir una factura | `administrador`, `gerente`, `facturador` | `201` | `400`, `401`, `403`, `404`, `422` |
+| `GET` | `/facturas` | Listar facturas (paginado) | cualquier usuario autenticado | `200` | `400`, `401` |
+| `GET` | `/facturas/:id` | Ver una factura | cualquier usuario autenticado | `200` | `401`, `404` |
+| `PATCH` | `/facturas/:id` | Editar datos no fiscales | `administrador`, `gerente`, `facturador` | `200` | `400`, `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id/anular` | Anular una factura | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
+| `DELETE` | `/facturas/:id` | Anular (baja lógica, **no borra**) | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
 
 - `:id` es el identificador legible de la factura (por ejemplo `FAC-000005`), **no** el `_id` de Mongo.
 - Todas las peticiones con cuerpo usan `Content-Type: application/json`.
-- Hoy estas rutas no piden autenticación.
+
+### Autenticación y roles (T4)
+
+Todas las rutas de `/facturas` requieren un JWT válido (`Authorization: Bearer <token>`), el mismo emitido por `/auth/login`. Sin token, o con uno inválido/expirado, el servidor responde `401`.
+
+Además, las rutas que **escriben** (`POST`, `PATCH`, `DELETE`) exigen que el usuario autenticado tenga uno de estos roles: `administrador`, `gerente` o `facturador`. Un usuario autenticado con otro rol (por ejemplo `cajero` o `economico`) recibe `403` al intentar usarlas.
+
+Las rutas de **lectura** (`GET /facturas`, `GET /facturas/:id`) solo requieren estar autenticado: cualquier rol vale.
+
+| Error | Cuándo |
+|---|---|
+| `401` | No se envió token, el token es inválido/expiró, o el usuario del token ya no existe (ver [`facturadoPor`](#facturado-por)). |
+| `403` | El usuario autenticado no tiene un rol permitido para esa ruta. |
 
 ---
 
@@ -69,6 +81,12 @@ Todos los endpoints que devuelven una factura usan esta forma:
     "ci": "12345678901",
     "fecha": "2026-09-23"
   },
+  "facturadoPor": {
+    "empleadoId": "6ab3390ec5a9357a2d833c00",
+    "nombre": "Carlos Ruiz",
+    "ci": "80010112345",
+    "fecha": "2026-09-24"
+  },
   "items": [
     {
       "id": "i1",
@@ -111,6 +129,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `impuesto` | `object` | **Opcional:** `importe` siempre lo calcula el servidor cuando hay `porciento`. |
 | `metodoPago` | `string` | Uno de `"efectivo"`, `"transferencia"`, `"credito"` (enum `TipoPago`, ver más abajo). |
 | `despachadoPor`, `transportadoPor`, `recibidoPor` | `object` | **Opcionales:** ver [Participantes](#participantes-despachado-por--transportado-por--recibido-por). No incluyen firma (fuera de alcance). |
+| `facturadoPor` | `object` | El usuario (`Facturador`) autenticado que emitió la factura. Lo toma el servidor del token JWT, nunca del cuerpo de la petición (ver [Facturado por](#facturado-por)). Ausente solo en facturas emitidas antes de este campo (legado). |
 | `items[].total` | `number` | Lo calcula el servidor (ver [Cómo se calculan los totales](#cómo-se-calculan-los-totales)). |
 | `subtotal`, `descuentoTotal`, `recargoTotal`, `total` | `number` | Los calcula el servidor. Redondeados a 2 decimales. |
 | `estado` | `string` | `"confirmada"` o `"anulada"`. Toda factura nueva nace `"confirmada"`. |
@@ -137,6 +156,21 @@ Cada uno, cuando está presente, es un objeto con esta forma (sin firma, excluid
 Los tres son opcionales tanto al crear (`POST`) como al editar (`PATCH`, ver [Editar datos no fiscales](#patch-facturasid--editar-datos-no-fiscales)).
 
 > Los campos opcionales **no vienen en el JSON** cuando no tienen valor; no llegan como `null`. En TypeScript tipalos como `campo?: tipo`.
+
+### Facturado por
+
+`facturadoPor` es quién emitió la factura: el usuario `Facturador` (o `administrador`/`gerente`) que estaba autenticado en ese momento. **No se envía en el `POST`**, el servidor lo calcula a partir del token JWT:
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `empleadoId` | `string` | `_id` de Mongo del usuario autenticado. |
+| `nombre` | `string` | `nombre_empleado` del usuario en el momento de facturar (una foto; si luego se renombra el usuario, la factura conserva el nombre original). |
+| `ci` | `string` | `ci_empleado` del usuario, misma foto. |
+| `fecha` | `string` | `YYYY-MM-DD`, la fecha de hoy en `America/Havana` (no la `fecha` de la factura, que puede ser distinta si se envía manualmente). |
+
+Si el token es válido pero el usuario ya no existe (por ejemplo, se borró la cuenta después de haber iniciado sesión), el `POST` responde `401` y **no se emite la factura** (no se consume ningún número correlativo).
+
+`facturadoPor` está ausente solo en facturas emitidas antes de que este campo existiera (legado); toda factura nueva siempre lo trae.
 
 ---
 
@@ -211,7 +245,7 @@ Cualquier otro valor se rechaza con `400`. Una factura vieja guardada con un val
 
 El servidor responde `400` (`property X should not exist`) si el cuerpo trae alguno de estos campos:
 
-`id`, `numero`, `estado`, `subtotal`, `descuentoTotal`, `recargoTotal`, `total`, `emisor`, `almacenCodigo`, `items[].total`
+`id`, `numero`, `estado`, `subtotal`, `descuentoTotal`, `recargoTotal`, `total`, `emisor`, `almacenCodigo`, `items[].total`, `facturadoPor`
 
 ### Errores del almacén y los productos
 
@@ -231,6 +265,7 @@ El servidor responde `400` (`property X should not exist`) si el cuerpo trae alg
 ```http
 POST /facturas
 Content-Type: application/json
+Authorization: Bearer <token>
 
 {
   "metodoPago": "efectivo",
@@ -316,6 +351,7 @@ Cualquier otro campo (`items`, `total`, `numero`, `estado`, `nit`, `fecha`, `alm
 ```http
 PATCH /facturas/FAC-000005
 Content-Type: application/json
+Authorization: Bearer <token>
 
 { "impreso": true }
 ```
@@ -353,6 +389,14 @@ Todos los errores siguen el formato estándar de NestJS:
 ```
 
 ```json
+{ "statusCode": 401, "error": "Unauthorized", "message": "Unauthorized" }
+```
+
+```json
+{ "statusCode": 403, "error": "Forbidden", "message": "Forbidden resource" }
+```
+
+```json
 { "statusCode": 404, "error": "Not Found", "message": "Factura con ID FAC-999999 no encontrada" }
 ```
 
@@ -364,7 +408,7 @@ Todos los errores siguen el formato estándar de NestJS:
 { "statusCode": 422, "error": "Unprocessable Entity", "message": "El almacén \"Almacén Central\" no tiene código configurado" }
 ```
 
-> En los `400` de validación, `message` es un **array** (un mensaje por cada problema). En `404`, `409` y `422` es un **string**.
+> En los `400` de validación, `message` es un **array** (un mensaje por cada problema). En `401`, `403`, `404`, `409` y `422` es un **string**.
 
 ---
 
@@ -407,11 +451,13 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 
 ## Checklist para el frontend
 
-- [ ] No enviar `id`, `numero`, `estado`, totales, `items[].total`, `emisor` ni `almacenCodigo` en el `POST`.
+- [ ] Enviar siempre `Authorization: Bearer <token>` en todas las peticiones a `/facturas`.
+- [ ] No enviar `id`, `numero`, `estado`, totales, `items[].total`, `emisor`, `almacenCodigo` ni `facturadoPor` en el `POST`.
 - [ ] Enviar siempre `almacenId` (el `_id` del almacén) y el `productoId` real (`_id` de Mongo) de cada item.
-- [ ] Mostrar e imprimir los datos **de la respuesta** del `POST` (número, totales, emisor, `almacenCodigo`).
+- [ ] Mostrar e imprimir los datos **de la respuesta** del `POST` (número, totales, emisor, `almacenCodigo`, `facturadoPor`).
 - [ ] Enviar `descuentoPct`, `descuentoMonto` y `recargo` en cada item, con `0` si no aplican.
 - [ ] Paginar el listado con `page` y `limit` (máximo 500).
+- [ ] Manejar el `401` (sin sesión / sesión expirada) y el `403` (rol sin permiso: solo `administrador`, `gerente` y `facturador` pueden crear, editar o anular).
 - [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
 - [ ] Manejar el `409` al editar o anular una factura ya anulada.
 - [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }`.

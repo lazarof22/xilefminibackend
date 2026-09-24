@@ -109,6 +109,30 @@ class ParticipanteFactura {
   fecha!: string;
 }
 
+/**
+ * "Facturado por" (T4, spec "TABLA DE UNA FACTURA", signature excluded):
+ * snapshot of the authenticated Facturador user at creation time. Unlike
+ * `ParticipanteFactura`, this one *is* a system user, so it carries an
+ * `empleadoId` reference in addition to the name/CI/date snapshot (kept
+ * even if the employee is later renamed or removed). Optional on the
+ * schema so legacy invoices (created before this field existed) still
+ * load; always set for new invoices (`FacturaService.create`).
+ */
+@Schema({ _id: false })
+class FacturadorFactura {
+  @Prop({ type: Types.ObjectId, ref: 'Usuario', required: true })
+  empleadoId!: Types.ObjectId;
+
+  @Prop({ required: true })
+  nombre!: string;
+
+  @Prop({ required: true })
+  ci!: string;
+
+  @Prop({ required: true })
+  fecha!: string;
+}
+
 @Schema({ timestamps: true, id: false })
 export class Factura {
   @Prop({ required: true, unique: true })
@@ -204,6 +228,12 @@ export class Factura {
 
   @Prop({ type: ParticipanteFactura, _id: false })
   recibidoPor?: ParticipanteFactura;
+
+  // Server-controlled (T4): never accepted from CreateFacturaDto /
+  // UpdateFacturaDto, always taken from the authenticated JWT user in
+  // FacturaService.create.
+  @Prop({ type: FacturadorFactura, _id: false })
+  facturadoPor?: FacturadorFactura;
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);

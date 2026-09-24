@@ -20,6 +20,7 @@ import {
   ProductoSchema,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais, PaisSchema } from '../nomencladores/pais/schema/pais.schema';
+import { Usuario, UsuarioSchema } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos
       { name: Almacen.name, schema: AlmacenSchema },
       { name: Producto.name, schema: ProductoSchema },
       { name: Pais.name, schema: PaisSchema },
+      { name: Usuario.name, schema: UsuarioSchema },
     ]),
     EmpresaDatosModule,
   ],
