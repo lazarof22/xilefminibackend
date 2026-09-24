@@ -1,6 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Logger,
+  NotFoundException,
+  UnprocessableEntityException,
+  BadRequestException,
+} from '@nestjs/common';
 import { FacturaService } from './factura.service';
 import { Factura } from './schema/factura.schema';
 import { FacturaContador } from './schema/factura-contador.schema';
@@ -10,6 +16,14 @@ import {
   ClienteDocument,
   ClienteSchema,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
+import {
+  Almacen,
+  AlmacenDocument,
+} from '../inventario/almacen/schema/almacen.schema';
+import {
+  Producto,
+  ProductoDocument,
+} from '../inventario/producto/schemas/producto.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
@@ -18,6 +32,9 @@ import {
   FACTURA_CONTADOR_ID,
   FACTURA_LISTADO_LIMITE_DEFECTO,
 } from './factura.constants';
+
+const ALMACEN_ID = '507f1f77bcf86cd799439011';
+const PRODUCTO_ID = '507f1f77bcf86cd799439012';
 
 /**
  * Minimal chainable Mongoose query mock. Every method returns the same
@@ -64,6 +81,14 @@ type ClienteModelMock = jest.Mock<unknown, [Record<string, unknown>]> & {
   findOne: jest.Mock<QueryMock<ClienteDocument | null>, unknown[]>;
 };
 
+type AlmacenModelMock = {
+  findById: jest.Mock<QueryMock<AlmacenDocument | null>, unknown[]>;
+};
+
+type ProductoModelMock = {
+  find: jest.Mock<QueryMock<ProductoDocument[]>, unknown[]>;
+};
+
 /** Narrows an unknown record field, for the rare assertion that needs a nested shape. */
 function comoRegistro(valor: unknown): Record<string, unknown> {
   return valor as Record<string, unknown>;
@@ -74,6 +99,8 @@ describe('FacturaService', () => {
   let facturaModelMock: FacturaModelMock;
   let facturaContadorModelMock: FacturaContadorModelMock;
   let clienteModelMock: ClienteModelMock;
+  let almacenModelMock: AlmacenModelMock;
+  let productoModelMock: ProductoModelMock;
   let savedFactura: Partial<Factura> & {
     save: jest.Mock;
     validate: jest.Mock<Promise<void>, [unknown?]>;
@@ -88,7 +115,7 @@ describe('FacturaService', () => {
 
   const itemBase = {
     id: 'item-1',
-    productoId: 'prod-1',
+    productoId: PRODUCTO_ID,
     productoNombre: 'Producto 1',
     cantidad: 2,
     precio: 100,
@@ -144,6 +171,29 @@ describe('FacturaService', () => {
       .fn<QueryMock<ClienteDocument | null>, unknown[]>()
       .mockReturnValue(crearQueryMock<ClienteDocument | null>(null));
 
+    // Default happy path: a valid almacén (with codigo) and, when the item
+    // uses PRODUCTO_ID, a producto with no almacen assigned (so it matches
+    // any almacenId). Individual tests override these for the T2 cases.
+    almacenModelMock = {
+      findById: jest.fn<QueryMock<AlmacenDocument | null>, unknown[]>(),
+    };
+    almacenModelMock.findById.mockReturnValue(
+      crearQueryMock<AlmacenDocument | null>({
+        _id: ALMACEN_ID,
+        nombreAlmacen: 'Almacén Central',
+        codigo: 'ALM-001',
+      } as AlmacenDocument),
+    );
+
+    productoModelMock = {
+      find: jest.fn<QueryMock<ProductoDocument[]>, unknown[]>(),
+    };
+    productoModelMock.find.mockReturnValue(
+      crearQueryMock<ProductoDocument[]>([
+        { _id: PRODUCTO_ID, almacen: undefined } as unknown as ProductoDocument,
+      ]),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FacturaService,
@@ -153,6 +203,8 @@ describe('FacturaService', () => {
           useValue: facturaContadorModelMock,
         },
         { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
+        { provide: getModelToken(Almacen.name), useValue: almacenModelMock },
+        { provide: getModelToken(Producto.name), useValue: productoModelMock },
         { provide: EmpresaDatosService, useValue: empresaDatosServiceMock },
       ],
     }).compile();
@@ -167,6 +219,7 @@ describe('FacturaService', () => {
   function baseDto(): CreateFacturaDto {
     return {
       metodoPago: 'efectivo',
+      almacenId: ALMACEN_ID,
       items: [{ ...itemBase }],
     };
   }
@@ -297,6 +350,107 @@ describe('FacturaService', () => {
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.emisor).toBeUndefined();
+    });
+  });
+
+  describe('almacén y productos de la factura (warehouse T2)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it('loads the almacén by id and persists almacenId + the codigo snapshot', async () => {
+      await service.create(baseDto());
+
+      expect(almacenModelMock.findById).toHaveBeenCalledWith(ALMACEN_ID);
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.almacenId).toBe(ALMACEN_ID);
+      expect(construidoCon.almacenCodigo).toBe('ALM-001');
+    });
+
+    it('throws NotFoundException when the almacén does not exist, without burning a numero', async () => {
+      almacenModelMock.findById.mockReturnValue(
+        crearQueryMock<AlmacenDocument | null>(null),
+      );
+
+      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('throws UnprocessableEntityException when the almacén has no codigo configured, without burning a numero', async () => {
+      almacenModelMock.findById.mockReturnValue(
+        crearQueryMock<AlmacenDocument | null>({
+          _id: ALMACEN_ID,
+          nombreAlmacen: 'Almacén Sin Código',
+          codigo: undefined,
+        } as AlmacenDocument),
+      );
+
+      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('loads every referenced producto in a single $in query, deduplicating repeated productoId', async () => {
+      const dto = {
+        ...baseDto(),
+        items: [
+          { ...itemBase, id: 'item-1' },
+          { ...itemBase, id: 'item-2' },
+        ],
+      } as CreateFacturaDto;
+
+      await service.create(dto);
+
+      expect(productoModelMock.find).toHaveBeenCalledTimes(1);
+      expect(productoModelMock.find).toHaveBeenCalledWith({
+        _id: { $in: [PRODUCTO_ID] },
+      });
+    });
+
+    it('throws BadRequestException naming the productoId when the product does not exist, without burning a numero', async () => {
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([]),
+      );
+
+      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(service.create(baseDto())).rejects.toThrow(PRODUCTO_ID);
+      expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException naming the productoId when the producto belongs to a different almacén', async () => {
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([
+          {
+            _id: PRODUCTO_ID,
+            almacen: 'otro-almacen-id',
+          } as unknown as ProductoDocument,
+        ]),
+      );
+
+      await expect(service.create(baseDto())).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(service.create(baseDto())).rejects.toThrow(PRODUCTO_ID);
+    });
+
+    it('allows the producto when its almacen matches the invoice almacenId', async () => {
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([
+          {
+            _id: PRODUCTO_ID,
+            almacen: ALMACEN_ID,
+          } as unknown as ProductoDocument,
+        ]),
+      );
+
+      await expect(service.create(baseDto())).resolves.toBeDefined();
     });
   });
 

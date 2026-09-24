@@ -18,7 +18,7 @@ describe('UpdateFacturaDto (T3)', () => {
     expect(errores).toHaveLength(0);
   });
 
-  it('rejects items, numero, estado, fecha, nit and totals (not mutable via update)', async () => {
+  it('rejects items, numero, estado, fecha, nit, totals and almacenId/almacenCodigo (not mutable via update)', async () => {
     const instancia = plainToInstance(UpdateFacturaDto, {
       concepto: 'x',
       items: [],
@@ -27,6 +27,8 @@ describe('UpdateFacturaDto (T3)', () => {
       fecha: '2026-01-01',
       nit: '123',
       total: 999,
+      almacenId: '507f1f77bcf86cd799439011',
+      almacenCodigo: 'ALM-001',
     });
     const errores = await validate(instancia, {
       whitelist: true,
@@ -40,6 +42,8 @@ describe('UpdateFacturaDto (T3)', () => {
       'fecha',
       'nit',
       'total',
+      'almacenId',
+      'almacenCodigo',
     ]) {
       expect(propiedadesRechazadas).toContain(campo);
     }

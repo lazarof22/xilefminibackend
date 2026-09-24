@@ -10,7 +10,7 @@ Guía para conectar el frontend con los endpoints de `/facturas`: qué envía ca
 
 | Método | Ruta | Para qué | Éxito | Errores |
 |---|---|---|---|---|
-| `POST` | `/facturas` | Emitir una factura | `201` | `400` |
+| `POST` | `/facturas` | Emitir una factura | `201` | `400`, `404`, `422` |
 | `GET` | `/facturas` | Listar facturas (paginado) | `200` | `400` |
 | `GET` | `/facturas/:id` | Ver una factura | `200` | `404` |
 | `PATCH` | `/facturas/:id` | Editar datos no fiscales | `200` | `400`, `404`, `409` |
@@ -41,6 +41,8 @@ Todos los endpoints que devuelven una factura usan esta forma:
   "moneda": "CUP",
   "concepto": "Venta mayorista",
   "clienteId": "6ab3390ec5a9357a2d833cbc",
+  "almacenId": "6ab335564ed6659d14298a70",
+  "almacenCodigo": "ALM-001",
   "emisor": {
     "nombre": "Empresa Dev SA",
     "nit": "NIT-EMPRESA-DEV",
@@ -86,6 +88,8 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `moneda` | `string` | `"CUP"` por defecto. |
 | `concepto` | `string` | **Opcional:** no aparece si nunca se cargó. |
 | `clienteId` | `string` | **Opcional:** solo aparece si se envió `nit`, `telefono` o `email` (ver [Clientes](#clientes)). |
+| `almacenId` | `string` | El `_id` del almacén desde el que se factura. Lo valida el servidor a partir del `almacenId` enviado en el `POST`. |
+| `almacenCodigo` | `string` | El código del almacén, tomado del almacén en el momento de emitir (no se actualiza si el código del almacén cambia después). |
 | `emisor` | `object` | **Opcional:** se toma de los datos de la empresa (`/empresa`). No aparece si la empresa no está configurada. |
 | `impuesto` | `object` | **Opcional:** `importe` siempre lo calcula el servidor cuando hay `porciento`. |
 | `items[].total` | `number` | Lo calcula el servidor (ver [Cómo se calculan los totales](#cómo-se-calculan-los-totales)). |
@@ -105,6 +109,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | Campo | Tipo | Obligatorio | Reglas |
 |---|---|---|---|
 | `metodoPago` | `string` | **Sí** | No puede estar vacío. |
+| `almacenId` | `string` | **Sí** | `_id` de Mongo de un almacén existente que tenga `codigo` configurado. |
 | `items` | `ItemFactura[]` | **Sí** | Al menos 1 item. |
 | `fecha` | `string` | No | `YYYY-MM-DD` y fecha real (`2026-02-30` se rechaza). |
 | `cliente` | `string` | No | Nombre del comprador. |
@@ -123,7 +128,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | Campo | Tipo | Obligatorio | Reglas |
 |---|---|---|---|
 | `id` | `string` | **Sí** | Identificador local del item (lo genera el frontend). |
-| `productoId` | `string` | **Sí** | |
+| `productoId` | `string` | **Sí** | `_id` de Mongo de un producto existente. Si ese producto tiene un almacén asignado, debe coincidir con el `almacenId` de la factura. |
 | `productoNombre` | `string` | **Sí** | |
 | `unidadMedida` | `string` | No | |
 | `cantidad` | `number` | **Sí** | Mayor que 0. |
@@ -145,7 +150,18 @@ Todos los endpoints que devuelven una factura usan esta forma:
 
 El servidor responde `400` (`property X should not exist`) si el cuerpo trae alguno de estos campos:
 
-`id`, `numero`, `estado`, `subtotal`, `descuentoTotal`, `recargoTotal`, `total`, `emisor`, `items[].total`
+`id`, `numero`, `estado`, `subtotal`, `descuentoTotal`, `recargoTotal`, `total`, `emisor`, `almacenCodigo`, `items[].total`
+
+### Errores del almacén y los productos
+
+| Caso | Código | Mensaje |
+|---|---|---|
+| `almacenId` no es un `_id` de Mongo válido | `400` | Error de validación (`almacenId must be a mongodb id`) |
+| El almacén no existe | `404` | `Almacén con ID <almacenId> no encontrado` |
+| El almacén existe pero no tiene `codigo` configurado | `422` | `El almacén "<nombre>" no tiene código configurado` |
+| Algún `items[].productoId` no es un `_id` de Mongo válido | `400` | Error de validación (`productoId must be a mongodb id`) |
+| Algún `items[].productoId` no corresponde a un producto existente | `400` | `El producto <productoId> no existe` |
+| Un producto tiene almacén asignado y no coincide con `almacenId` | `400` | `El producto <productoId> no pertenece al almacén seleccionado` |
 
 ### Ejemplo
 
@@ -155,6 +171,7 @@ Content-Type: application/json
 
 {
   "metodoPago": "efectivo",
+  "almacenId": "6ab335564ed6659d14298a70",
   "cliente": "Ana Pérez",
   "nit": "12345678901",
   "direccion": "Calle 1 #23",
@@ -162,7 +179,7 @@ Content-Type: application/json
   "items": [
     {
       "id": "i1",
-      "productoId": "p1",
+      "productoId": "6ab335564ed6659d14298a71",
       "productoNombre": "Arroz",
       "cantidad": 2,
       "precio": 100,
@@ -175,7 +192,7 @@ Content-Type: application/json
 }
 ```
 
-**Respuesta `201`:** el objeto [`Factura`](#el-objeto-factura-lo-que-devuelve-el-servidor) completo, con `id`, `numero`, totales y `emisor` ya calculados. **Usá esta respuesta para imprimir la factura**, no los totales que calculó el frontend.
+**Respuesta `201`:** el objeto [`Factura`](#el-objeto-factura-lo-que-devuelve-el-servidor) completo, con `id`, `numero`, totales, `almacenCodigo` y `emisor` ya calculados. **Usá esta respuesta para imprimir la factura**, no los totales que calculó el frontend.
 
 ---
 
@@ -221,7 +238,7 @@ Una factura emitida es un documento fiscal: **solo** se pueden editar estos camp
 | `telefono` | `string` |
 | `email` | `string` |
 
-Cualquier otro campo (`items`, `total`, `numero`, `estado`, `nit`, `fecha`, etc.) devuelve `400`. Para corregir importes, emití una factura de `tipo: "ajuste"`.
+Cualquier otro campo (`items`, `total`, `numero`, `estado`, `nit`, `fecha`, `almacenId`, `almacenCodigo`, etc.) devuelve `400`. El almacén de una factura no se puede cambiar después de emitida. Para corregir importes, emití una factura de `tipo: "ajuste"`.
 
 ```http
 PATCH /facturas/FAC-000005
@@ -270,7 +287,11 @@ Todos los errores siguen el formato estándar de NestJS:
 { "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000006 esta anulada y no puede ser modificada" }
 ```
 
-> En los `400` de validación, `message` es un **array** (un mensaje por cada problema). En `404` y `409` es un **string**.
+```json
+{ "statusCode": 422, "error": "Unprocessable Entity", "message": "El almacén \"Almacén Central\" no tiene código configurado" }
+```
+
+> En los `400` de validación, `message` es un **array** (un mensaje por cada problema). En `404`, `409` y `422` es un **string**.
 
 ---
 
@@ -313,9 +334,11 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 
 ## Checklist para el frontend
 
-- [ ] No enviar `id`, `numero`, `estado`, totales, `items[].total` ni `emisor` en el `POST`.
-- [ ] Mostrar e imprimir los datos **de la respuesta** del `POST` (número, totales, emisor).
+- [ ] No enviar `id`, `numero`, `estado`, totales, `items[].total`, `emisor` ni `almacenCodigo` en el `POST`.
+- [ ] Enviar siempre `almacenId` (el `_id` del almacén) y el `productoId` real (`_id` de Mongo) de cada item.
+- [ ] Mostrar e imprimir los datos **de la respuesta** del `POST` (número, totales, emisor, `almacenCodigo`).
 - [ ] Enviar `descuentoPct`, `descuentoMonto` y `recargo` en cada item, con `0` si no aplican.
 - [ ] Paginar el listado con `page` y `limit` (máximo 500).
+- [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
 - [ ] Manejar el `409` al editar o anular una factura ya anulada.
 - [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }`.

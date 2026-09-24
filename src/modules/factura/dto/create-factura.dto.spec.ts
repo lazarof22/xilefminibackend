@@ -2,12 +2,15 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateFacturaDto } from './create-factura.dto';
 
+const PRODUCTO_ID_VALIDO = '507f1f77bcf86cd799439011';
+const ALMACEN_ID_VALIDO = '507f1f77bcf86cd799439012';
+
 function itemValido(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
     id: 'item-1',
-    productoId: 'prod-1',
+    productoId: PRODUCTO_ID_VALIDO,
     productoNombre: 'Producto 1',
     cantidad: 2,
     precio: 100,
@@ -24,6 +27,7 @@ function dtoValido(
 ): Record<string, unknown> {
   return {
     metodoPago: 'efectivo',
+    almacenId: ALMACEN_ID_VALIDO,
     items: [itemValido()],
     ...overrides,
   };
@@ -128,6 +132,41 @@ describe('CreateFacturaDto (T2)', () => {
     });
 
     expect(errores.some((e) => e.property === 'emisor')).toBe(true);
+  });
+
+  describe('almacen y producto (T2)', () => {
+    it('requires almacenId', async () => {
+      const instancia = plainToInstance(CreateFacturaDto, {
+        ...dtoValido({ almacenId: undefined }),
+      });
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'almacenId')).toBe(true);
+    });
+
+    it('rejects an almacenId that is not a valid Mongo ObjectId', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ almacenId: 'no-es-un-object-id' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'almacenId')).toBe(true);
+    });
+
+    it('accepts a valid almacenId', async () => {
+      const instancia = plainToInstance(CreateFacturaDto, dtoValido());
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'almacenId')).toBe(false);
+    });
+
+    it('rejects a productoId that is not a valid Mongo ObjectId', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ items: [itemValido({ productoId: 'no-es-un-id' })] }),
+      );
+      const errores = await validate(instancia);
+      const itemErrors = errores.find((e) => e.property === 'items');
+      expect(itemErrors).toBeDefined();
+    });
   });
 
   describe('fecha (T4)', () => {

@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types } from 'mongoose';
@@ -16,6 +18,14 @@ import {
   Cliente,
   ClienteDocument,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
+import {
+  Almacen,
+  AlmacenDocument,
+} from '../inventario/almacen/schema/almacen.schema';
+import {
+  Producto,
+  ProductoDocument,
+} from '../inventario/producto/schemas/producto.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
   FACTURA_CAMPO_VACIO_SENTINEL,
@@ -41,6 +51,8 @@ export class FacturaService implements OnModuleInit {
     @InjectModel(FacturaContador.name)
     private facturaContadorModel: Model<FacturaContador>,
     @InjectModel(Cliente.name) private clienteModel: Model<Cliente>,
+    @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
+    @InjectModel(Producto.name) private productoModel: Model<Producto>,
     private readonly empresaDatosService: EmpresaDatosService,
   ) {}
 
@@ -96,6 +108,11 @@ export class FacturaService implements OnModuleInit {
     const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
       calcularTotales(createFacturaDto.items, createFacturaDto.impuesto);
 
+    // Both fallible (404/422/400) and run before siguienteNumero() (T9):
+    // an invalid almacén or item never burns an invoice number.
+    const almacen = await this.obtenerAlmacenValido(createFacturaDto.almacenId);
+    await this.validarProductosDelAlmacen(items, createFacturaDto.almacenId);
+
     const emisor = await this.obtenerEmisor();
 
     let clienteId: Types.ObjectId | undefined;
@@ -121,6 +138,8 @@ export class FacturaService implements OnModuleInit {
       moneda: createFacturaDto.moneda ?? 'CUP',
       concepto: createFacturaDto.concepto,
       clienteId,
+      almacenId: almacen._id,
+      almacenCodigo: almacen.codigo,
       emisor,
       impuesto,
       metodoPago: createFacturaDto.metodoPago,
@@ -231,6 +250,58 @@ export class FacturaService implements OnModuleInit {
       telefono: empresa.telefono,
       email: empresa.email,
     };
+  }
+
+  /**
+   * Loads the warehouse referenced by the invoice (T2). Not found -> 404;
+   * found but with no `codigo` configured -> 422 (the warehouse exists but
+   * cannot be used to invoice yet, since the client contract requires the
+   * warehouse code on every invoice).
+   */
+  private async obtenerAlmacenValido(
+    almacenId: string,
+  ): Promise<AlmacenDocument> {
+    const almacen = await this.almacenModel.findById(almacenId).exec();
+    if (!almacen) {
+      throw new NotFoundException(`Almacén con ID ${almacenId} no encontrado`);
+    }
+    if (!almacen.codigo) {
+      throw new UnprocessableEntityException(
+        `El almacén "${almacen.nombreAlmacen}" no tiene código configurado`,
+      );
+    }
+    return almacen;
+  }
+
+  /**
+   * Loads every producto referenced by the items in a single `$in` query
+   * (never N queries) and checks, for each item, that the productoId
+   * exists and — when that producto has an assigned almacen — that it
+   * matches the invoice's almacenId (T2).
+   */
+  private async validarProductosDelAlmacen(
+    items: { productoId: string }[],
+    almacenId: string,
+  ): Promise<void> {
+    const productoIds = [...new Set(items.map((item) => item.productoId))];
+    const productos = await this.productoModel
+      .find({ _id: { $in: productoIds } })
+      .exec();
+    const productosPorId = new Map<string, ProductoDocument>(
+      productos.map((producto) => [producto._id.toString(), producto]),
+    );
+
+    for (const productoId of productoIds) {
+      const producto = productosPorId.get(productoId);
+      if (!producto) {
+        throw new BadRequestException(`El producto ${productoId} no existe`);
+      }
+      if (producto.almacen && producto.almacen.toString() !== almacenId) {
+        throw new BadRequestException(
+          `El producto ${productoId} no pertenece al almacén seleccionado`,
+        );
+      }
+    }
   }
 
   /**

@@ -47,13 +47,13 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 
 ## Tasks
 - [x] T1 Roles: add `gerente`, `economico` to `UsuarioRol`
-- [ ] T2 Warehouse code: unique `codigo` on `Almacen` (schema + DTOs); invoice references the warehouse (`almacenId`) and snapshots `almacenCodigo`; items must belong to that warehouse when the product has one
+- [x] T2 Warehouse code: unique `codigo` on `Almacen` (schema + DTOs); invoice references the warehouse (`almacenId`) and snapshots `almacenCodigo`; items must belong to that warehouse when the product has one
 - [ ] T3 Document data: issuer snapshot includes `ciudad` and `pais`; `metodoPago` validated against the `TipoPago` enum
 - [ ] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
 - [ ] T5 Participants: `despachadoPor`, `transportadoPor`, `recibidoPor` `{ nombre, ci, fecha }` (optional, editable while `edicion`)
 - [ ] T6 State machine: new `estado` enum, default `edicion`, transition endpoints (`terminar`, `editar`, `confirmar`, `cancelar`, `anular`), per-state edit rules, `talonario` field, legacy mapping, annulled-code uniqueness test
 - [ ] T7 Inventory movements: `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
-- [ ] T8 Contract docs for the frontend + runtime smoke test against local MongoDB (if available)
+- [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
 
 ## Route
 Delegated direct, one bounded writer per task (writer trigger: every task touches 2+ non-trivial files: schema, DTO, service, specs). The parent reviews, spot-checks and commits.
@@ -80,10 +80,16 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
   - RED: `npx jest src/modules/configuracion/usuarios/dto` -> 2 failed, 4 passed (`gerente`, `economico` rejected by `@IsEnum`).
   - GREEN: same command -> 6 passed. `npm run build` -> clean.
   - Known pre-existing failure (base `d4bd1df`, unrelated): `usuarios.service.spec.ts` "should create a user with hashed password" -> `created.toObject is not a function` (mock lacks `toObject`). Full suite: 268 passed, 1 failed (that one).
-  - Commit: see T2 evidence (hash recorded in the following commit).
+  - Commit: `9a233fb` feat(auth): agrega los roles gerente y economico
+  - Native review: assess `high` (hot path `auth`), consent granted by the user, 4 lenses, lineage `review-61f9c79086c8a5c5` approved and acknowledged (authority burned). 5 non-blocking suggestions (spec helper naming, legacy roles untested, fixture refs as strings, deferred commit evidence). Reviewed boundary -> `9a233fb`.
+
+- T2 done (route: delegated direct, one writer; writer trigger: 17 files across almacen + factura). `Almacen.codigo` (trim, unique+sparse for legacy docs), required in create DTO (MaxLength 20), optional in update; E11000 -> 409 in `AlmacenService` via local `almacen-mongo-errors.ts`. `CreateFacturaDto.almacenId` required (`@IsMongoId`); `ItemFacturaDto.productoId` now `@IsMongoId`. `FacturaService.create` loads the warehouse (404 missing, 422 without `codigo`) and all products in one `$in` query (400 when a product is missing or belongs to another warehouse), before `siguienteNumero()` (T9 rule kept). Invoice persists `almacenId` + snapshot `almacenCodigo` (optional in schema for legacy, not editable). Almacen/Producto models registered in `FacturaModule` via `forFeature` (same pattern as Cliente). README updated.
+  - RED: `npx jest src/modules/inventario/almacen` -> 10 failed / 8 passed; `npx jest src/modules/factura` -> 9 failed / 80 passed.
+  - GREEN: `npx jest src/modules/factura src/modules/inventario/almacen` -> 107 passed (11 suites) (parent re-ran: 107 passed). Full `npx jest` -> 297 passed, 1 failed (known). `npm run build` clean. eslint clean on touched files except 4 pre-existing non-prettier almacen files (4-space/double quotes, unused Swagger imports on base; left untouched to keep the diff focused). No `any`.
+  - Decision: missing product -> 400 (item-level input error, same validation pass as the warehouse mismatch).
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T2 warehouse code.
+T3 document data (issuer ciudad/pais + TipoPago enum).

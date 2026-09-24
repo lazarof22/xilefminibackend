@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { CreateAlmacenDto } from './dto/create-almacen.dto';
 import { UpdateAlmacenDto } from './dto/update-almacen.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Almacen } from './schema/almacen.schema';
 import { Model } from 'mongoose';
+import { isDuplicateKeyError } from './almacen-mongo-errors';
 
 @Injectable()
 export class AlmacenService {
@@ -23,7 +24,14 @@ export class AlmacenService {
             throw new BadRequestException('Ya existe el almacén');
         }
         const nuevoAlmacen = new this.almacenModel(createAlmacenDto);
-        return nuevoAlmacen.save();
+        try {
+            return await nuevoAlmacen.save();
+        } catch (err) {
+            if (isDuplicateKeyError(err)) {
+                throw new ConflictException('Ya existe un almacén con ese código');
+            }
+            throw err;
+        }
     }
 
 
@@ -48,7 +56,15 @@ export class AlmacenService {
 
     // Actualizar un almacén
     async update(id: string, updateAlmacenDto: UpdateAlmacenDto): Promise<Almacen> {
-        const updatealm = await this.almacenModel.findByIdAndUpdate(id, updateAlmacenDto, { new: true }).exec();
+        let updatealm: Almacen | null;
+        try {
+            updatealm = await this.almacenModel.findByIdAndUpdate(id, updateAlmacenDto, { new: true }).exec();
+        } catch (err) {
+            if (isDuplicateKeyError(err)) {
+                throw new ConflictException('Ya existe un almacén con ese código');
+            }
+            throw err;
+        }
 
         if (!updatealm) {
             throw new NotFoundException('No se encontró el almacén');

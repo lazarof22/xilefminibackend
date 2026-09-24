@@ -117,6 +117,17 @@ export class Factura {
   @Prop({ type: Types.ObjectId, ref: 'Cliente' })
   clienteId?: Types.ObjectId;
 
+  // Both optional so legacy invoices (created before this field existed)
+  // still load; always set for new invoices (FacturaService.create).
+  // almacenCodigo is a snapshot (not a live lookup) so the invoice keeps
+  // showing the code that was valid at emission time, even if the
+  // almacén's codigo changes later.
+  @Prop({ type: Types.ObjectId, ref: 'Almacen' })
+  almacenId?: Types.ObjectId;
+
+  @Prop()
+  almacenCodigo?: string;
+
   @Prop({ type: EmisorDatos, _id: false })
   emisor?: EmisorDatos;
 

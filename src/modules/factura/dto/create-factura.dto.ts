@@ -14,6 +14,7 @@ import {
   Max,
   Matches,
   IsDateString,
+  IsMongoId,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -24,7 +25,7 @@ export class ItemFacturaDto {
   id!: string;
 
   @ApiProperty({ description: 'ID del producto' })
-  @IsString()
+  @IsMongoId({ message: 'El producto debe ser un ID de MongoDB válido' })
   @IsNotEmpty()
   productoId!: string;
 
@@ -150,6 +151,19 @@ export class CreateFacturaDto {
   @IsString()
   @IsOptional()
   concepto?: string;
+
+  @ApiProperty({
+    description:
+      'ID del almacén (central) desde el que se factura. El servidor valida que exista, tenga codigo configurado, y que cada item pertenezca a este almacén (cuando el producto tiene almacen asignado)',
+  })
+  @IsMongoId({ message: 'El almacén debe ser un ID de MongoDB válido' })
+  @IsNotEmpty()
+  almacenId!: string;
+
+  // almacenCodigo is intentionally absent: it is always taken server-side
+  // from the loaded Almacen (FacturaService.obtenerAlmacenValido), a
+  // snapshot the client can never forge. The global ValidationPipe
+  // (whitelist + forbidNonWhitelisted) rejects any request that sends it.
 
   // emisor is intentionally absent: it is always taken server-side from
   // EmpresaDatos (FacturaService.obtenerEmisor), never from the client, so
