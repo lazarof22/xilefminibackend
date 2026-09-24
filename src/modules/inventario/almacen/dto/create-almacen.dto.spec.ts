@@ -54,4 +54,23 @@ describe('CreateAlmacenDto (T2)', () => {
     const errores = await validate(instancia);
     expect(errores.some((e) => e.property === 'codigo')).toBe(true);
   });
+
+  it('rejects a whitespace-only codigo', async () => {
+    const instancia = plainToInstance(
+      CreateAlmacenDto,
+      dtoValido({ codigo: '   ' }),
+    );
+    const errores = await validate(instancia);
+    expect(errores.some((e) => e.property === 'codigo')).toBe(true);
+  });
+
+  it('trims surrounding whitespace from a valid codigo', async () => {
+    const instancia = plainToInstance(
+      CreateAlmacenDto,
+      dtoValido({ codigo: '  ALM-001  ' }),
+    );
+    const errores = await validate(instancia);
+    expect(errores).toHaveLength(0);
+    expect(instancia.codigo).toBe('ALM-001');
+  });
 });

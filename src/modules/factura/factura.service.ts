@@ -256,7 +256,10 @@ export class FacturaService implements OnModuleInit {
    * Loads the warehouse referenced by the invoice (T2). Not found -> 404;
    * found but with no `codigo` configured -> 422 (the warehouse exists but
    * cannot be used to invoice yet, since the client contract requires the
-   * warehouse code on every invoice).
+   * warehouse code on every invoice). `almacenId` is passed through as-is:
+   * Mongoose casts a Mongo id string to `ObjectId` case-insensitively, so an
+   * uppercase-hex `almacenId` (still a valid `@IsMongoId`) resolves the same
+   * document, with no manual normalization needed here.
    */
   private async obtenerAlmacenValido(
     almacenId: string,
@@ -277,7 +280,11 @@ export class FacturaService implements OnModuleInit {
    * Loads every producto referenced by the items in a single `$in` query
    * (never N queries) and checks, for each item, that the productoId
    * exists and — when that producto has an assigned almacen — that it
-   * matches the invoice's almacenId (T2).
+   * matches the invoice's almacenId (T2). Both comparisons go through the
+   * canonical (lowercase) hex form of the ObjectId: `producto._id` and
+   * `producto.almacen` come back lowercase from Mongo, but `productoId` and
+   * `almacenId` are raw strings validated only with `@IsMongoId`, so a
+   * client sending uppercase hex must still match.
    */
   private async validarProductosDelAlmacen(
     items: { productoId: string }[],
@@ -287,16 +294,24 @@ export class FacturaService implements OnModuleInit {
     const productos = await this.productoModel
       .find({ _id: { $in: productoIds } })
       .exec();
+    // Keyed by the canonical (lowercase) hex form so that a productoId sent
+    // in a different case (e.g. uppercase hex, still a valid @IsMongoId)
+    // resolves to the same producto instead of being reported as missing.
     const productosPorId = new Map<string, ProductoDocument>(
       productos.map((producto) => [producto._id.toString(), producto]),
     );
+    const almacenIdCanonico = new Types.ObjectId(almacenId).toHexString();
 
     for (const productoId of productoIds) {
-      const producto = productosPorId.get(productoId);
+      const productoIdCanonico = new Types.ObjectId(productoId).toHexString();
+      const producto = productosPorId.get(productoIdCanonico);
       if (!producto) {
         throw new BadRequestException(`El producto ${productoId} no existe`);
       }
-      if (producto.almacen && producto.almacen.toString() !== almacenId) {
+      if (
+        producto.almacen &&
+        producto.almacen.toString() !== almacenIdCanonico
+      ) {
         throw new BadRequestException(
           `El producto ${productoId} no pertenece al almacén seleccionado`,
         );

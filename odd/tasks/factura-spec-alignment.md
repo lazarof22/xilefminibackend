@@ -48,6 +48,7 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 ## Tasks
 - [x] T1 Roles: add `gerente`, `economico` to `UsuarioRol`
 - [x] T2 Warehouse code: unique `codigo` on `Almacen` (schema + DTOs); invoice references the warehouse (`almacenId`) and snapshots `almacenCodigo`; items must belong to that warehouse when the product has one
+- [x] T2b Warehouse code hardening (from T2 review warnings): reject whitespace-only `codigo`, reject `codigo: null` on update, normalize ObjectId comparison (uppercase hex), README error messages accurate
 - [ ] T3 Document data: issuer snapshot includes `ciudad` and `pais`; `metodoPago` validated against the `TipoPago` enum
 - [ ] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
 - [ ] T5 Participants: `despachadoPor`, `transportadoPor`, `recibidoPor` `{ nombre, ci, fecha }` (optional, editable while `edicion`)
@@ -87,9 +88,15 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
   - RED: `npx jest src/modules/inventario/almacen` -> 10 failed / 8 passed; `npx jest src/modules/factura` -> 9 failed / 80 passed.
   - GREEN: `npx jest src/modules/factura src/modules/inventario/almacen` -> 107 passed (11 suites) (parent re-ran: 107 passed). Full `npx jest` -> 297 passed, 1 failed (known). `npm run build` clean. eslint clean on touched files except 4 pre-existing non-prettier almacen files (4-space/double quotes, unused Swagger imports on base; left untouched to keep the diff focused). No `any`.
   - Decision: missing product -> 400 (item-level input error, same validation pass as the warehouse mismatch).
+  - Commit: `bde0e36` feat(factura): registra el codigo del almacen y valida los productos del almacen
+  - Native review: assess `high` (hot path update DTO, process boundary in spec), consent granted, 4 lenses, lineage `review-94d4d9990ed7e7e9` approved and acknowledged (burned). 12 non-blocking findings; the real defects became T2b. Reviewed boundary -> `bde0e36`.
+
+- T2b done (route: delegated direct, one writer). Almacen DTOs trim `codigo` via `@Transform` before validation (whitespace-only rejected); update DTO uses `@ValidateIf(v !== undefined)` so `codigo: null` is rejected; `validarProductosDelAlmacen` compares canonical lowercase hex (`new Types.ObjectId(id).toHexString()`), `findById` already case-insensitive (pinned by test); README explains the legacy 422 and the `PATCH /almacen/:id` fix.
+  - RED: `npx jest src/modules/factura/factura.service.spec.ts src/modules/inventario/almacen` -> 7 failed / 62 passed.
+  - GREEN: `npx jest src/modules/factura src/modules/inventario/almacen` -> 115 passed (parent re-ran: 115 passed). Full `npx jest` -> 305 passed, 1 failed (known). Build clean. No `any`.
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T3 document data (issuer ciudad/pais + TipoPago enum).
+T3 document data.

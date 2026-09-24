@@ -163,6 +163,8 @@ El servidor responde `400` (`property X should not exist`) si el cuerpo trae alg
 | Algún `items[].productoId` no corresponde a un producto existente | `400` | `El producto <productoId> no existe` |
 | Un producto tiene almacén asignado y no coincide con `almacenId` | `400` | `El producto <productoId> no pertenece al almacén seleccionado` |
 
+> El `422` de "no tiene código configurado" es lo esperado en un almacén creado antes de este contrato (todavía sin `codigo`): para poder facturar desde él, primero configurá su `codigo` con `PATCH /almacen/:id`.
+
 ### Ejemplo
 
 ```http

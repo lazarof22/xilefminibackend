@@ -452,6 +452,54 @@ describe('FacturaService', () => {
 
       await expect(service.create(baseDto())).resolves.toBeDefined();
     });
+
+    it('matches the producto almacen against an uppercase-hex almacenId using canonical ObjectId equality', async () => {
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([
+          {
+            _id: PRODUCTO_ID,
+            almacen: ALMACEN_ID,
+          } as unknown as ProductoDocument,
+        ]),
+      );
+      const dto = {
+        ...baseDto(),
+        almacenId: ALMACEN_ID.toUpperCase(),
+      };
+
+      await expect(service.create(dto)).resolves.toBeDefined();
+    });
+
+    it('finds the producto when productoId is sent in uppercase hex, matching the canonical stored _id', async () => {
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([
+          {
+            _id: PRODUCTO_ID,
+            almacen: undefined,
+          } as unknown as ProductoDocument,
+        ]),
+      );
+      const dto = {
+        ...baseDto(),
+        items: [{ ...itemBase, productoId: PRODUCTO_ID.toUpperCase() }],
+      };
+
+      await expect(service.create(dto)).resolves.toBeDefined();
+    });
+
+    it('loads the almacén by the exact almacenId given, letting Mongoose handle case-insensitive ObjectId casting', async () => {
+      const almacenIdMayuscula = ALMACEN_ID.toUpperCase();
+      const dto = {
+        ...baseDto(),
+        almacenId: almacenIdMayuscula,
+      };
+
+      await service.create(dto);
+
+      expect(almacenModelMock.findById).toHaveBeenCalledWith(
+        almacenIdMayuscula,
+      );
+    });
   });
 
   describe('no burned invoice numbers (T9)', () => {
