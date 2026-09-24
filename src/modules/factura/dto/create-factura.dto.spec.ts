@@ -381,5 +381,77 @@ describe('CreateFacturaDto (T2)', () => {
       const errores = await validate(instancia);
       expect(errores.length).toBeGreaterThan(0);
     });
+
+    it('rejects an explicit null instead of silently accepting it as absent (T6b)', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: null,
+          transportadoPor: null,
+          recibidoPor: null,
+        }),
+      );
+      const errores = await validate(instancia);
+      const propiedadesRechazadas = errores.map((e) => e.property);
+      expect(propiedadesRechazadas).toEqual(
+        expect.arrayContaining([
+          'despachadoPor',
+          'transportadoPor',
+          'recibidoPor',
+        ]),
+      );
+    });
+  });
+
+  describe('talonario (T6b)', () => {
+    it('is optional', async () => {
+      const instancia = plainToInstance(CreateFacturaDto, dtoValido());
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'talonario')).toBe(false);
+    });
+
+    it('trims surrounding whitespace', () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ talonario: '  T-001  ' }),
+      );
+      expect(instancia.talonario).toBe('T-001');
+    });
+
+    it('rejects an empty talonario when sent', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ talonario: '   ' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'talonario')).toBe(true);
+    });
+
+    it('rejects a talonario longer than 50 characters', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ talonario: 'T'.repeat(51) }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'talonario')).toBe(true);
+    });
+
+    it('rejects an explicit null instead of silently accepting it as absent', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ talonario: null }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'talonario')).toBe(true);
+    });
+
+    it('accepts a valid talonario', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ talonario: 'T-001' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores).toHaveLength(0);
+    });
   });
 });

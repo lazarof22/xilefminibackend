@@ -8,6 +8,7 @@ import {
   IsArray,
   ArrayMinSize,
   ValidateNested,
+  ValidateIf,
   IsEnum,
   IsPositive,
   Min,
@@ -252,11 +253,14 @@ export class CreateFacturaDto {
   @IsOptional()
   impreso?: boolean;
 
+  // No @IsOptional(): that also skips validation for `null`, which would
+  // let a request silently erase a participant with a null instead of
+  // just omitting it (same reasoning as UpdateAlmacenDto.codigo, T2b).
   @ApiPropertyOptional({
     type: ParticipanteFacturaDto,
     description: 'Despachado por',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @ValidateNested()
   @Type(() => ParticipanteFacturaDto)
   despachadoPor?: ParticipanteFacturaDto;
@@ -265,7 +269,7 @@ export class CreateFacturaDto {
     type: ParticipanteFacturaDto,
     description: 'Transportado por',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @ValidateNested()
   @Type(() => ParticipanteFacturaDto)
   transportadoPor?: ParticipanteFacturaDto;
@@ -274,8 +278,22 @@ export class CreateFacturaDto {
     type: ParticipanteFacturaDto,
     description: 'Recibido por',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @ValidateNested()
   @Type(() => ParticipanteFacturaDto)
   recibidoPor?: ParticipanteFacturaDto;
+
+  // Same @ValidateIf reasoning as the participants above: `null` must be
+  // rejected, not silently treated as absent.
+  @ApiPropertyOptional({
+    description: 'Numero de talonario / recibo asociado a la factura',
+  })
+  @ValidateIf((_, value) => value !== undefined)
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  talonario?: string;
 }

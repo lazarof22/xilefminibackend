@@ -1,4 +1,4 @@
-import { EstadoFactura } from '../factura.constants';
+import { EstadoFactura, TipoPago } from '../factura.constants';
 import { FacturaSchema } from './factura.schema';
 
 /**
@@ -26,6 +26,33 @@ describe('FacturaSchema (T6a)', () => {
   it('only accepts the EstadoFactura enum values on estado', () => {
     expect(FacturaSchema.path('estado').options.enum).toEqual(
       Object.values(EstadoFactura),
+    );
+  });
+});
+
+/**
+ * T6b: `talonario` (a free-text receipt-book reference) and `estadoLegado`
+ * (preserves the pre-migration `'ajustada'` value lost when
+ * `FacturaService.migrarEstadoAjustada` normalizes it to `confirmada`) are
+ * both optional so legacy invoices without them still load.
+ */
+describe('FacturaSchema (T6b)', () => {
+  it('has an optional talonario path', () => {
+    const path = FacturaSchema.path('talonario');
+    expect(path).toBeDefined();
+    expect(path.isRequired).toBeFalsy();
+  });
+
+  it('has an optional estadoLegado path restricted to "ajustada"', () => {
+    const path = FacturaSchema.path('estadoLegado');
+    expect(path).toBeDefined();
+    expect(path.isRequired).toBeFalsy();
+    expect(path.options.enum).toEqual(['ajustada']);
+  });
+
+  it('types metodoPago against the TipoPago enum values', () => {
+    expect(FacturaSchema.path('metodoPago').options.enum).toEqual(
+      Object.values(TipoPago),
     );
   });
 });

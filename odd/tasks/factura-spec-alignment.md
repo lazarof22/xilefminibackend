@@ -53,7 +53,7 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 - [x] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
 - T5 (no checkbox: merged into T3, tracked there) (same schema/DTO/README surface; per-state edit restriction lands with T6)
 - [x] T6a States and transitions: `EstadoFactura` enum (default `edicion`), pure transition table, endpoints `terminar`, `editar` (back to edicion), `confirmar`, `cancelar`, `anular` (+ `DELETE` alias) with conditional atomic updates, legacy `ajustada` -> `confirmada` migration, annulled-code-never-reused test
-- [ ] T6b Edit rules per state: `edicion` edits every business field (totals, warehouse/product checks and client link re-run server-side), `terminada` only `fecha` + `talonario` (new field), others 409; carry-overs: reject `null` participants, `metodoPago` typed `TipoPago`
+- [x] T6b Edit rules per state: `edicion` edits every business field (totals, warehouse/product checks and client link re-run server-side), `terminada` only `fecha` + `talonario` (new field), others 409; carry-overs: reject `null` participants, `metodoPago` typed `TipoPago`, `impreso` settable in every state except `anulada` (non-fiscal print flag), `ajustada` migration keeps `estadoLegado: 'ajustada'`
 - [ ] T7 Inventory movements (only invoices confirmed after this feature carry `inventarioAplicado: true`; cancelling a legacy `confirmada` must not add stock back): `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
 - [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
 
@@ -115,9 +115,17 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
 - T6a done (route: delegated direct, one writer). `EstadoFactura` enum (schema `type: String`, default `edicion`); pure `factura-estado.ts` (`esTransicionValida`, `origenesPermitidos`, `mensajeTransicionInvalida`) with an exhaustive 25-pair spec; service `transicionar(id, destino)` = one conditional `findOneAndUpdate` on `estado $in origenesPermitidos(destino)`, then 404/409 disambiguation; public `terminar`, `volverAEdicion`, `confirmar`, `cancelar`, `anular` (+ `DELETE` alias); new `PATCH :id/terminar|editar|confirmar|cancelar` with write roles; PATCH update only while `edicion` (T6b widens); `onModuleInit` migrates legacy `ajustada` -> `confirmada` idempotently; tests pin `id`/`numero` unique and that annulment never touches the counter. README: states, transition table + diagram, endpoints.
   - RED: `factura-estado.spec.ts` module not found; service spec 20 failed / 58 passed; controller spec 8 failed / 10 passed. (Disclosed: `schema/factura.schema.spec.ts` written as a pinning test, not RED-first, for uniqueness that pre-existed.)
   - GREEN: `npx jest src/modules/factura` -> 193 passed (parent re-ran: 193 passed). Full `npx jest` -> 406 passed, 1 failed (known). Build, eslint clean; no `any` (legacy filter uses a documented `as unknown as EstadoFactura` cast).
+  - Commit: `02eccc5` feat(factura): agrega el ciclo de estados de la factura con transiciones atomicas
+  - Native review: assess `high`, consent granted, 4 lenses, lineage `review-6af72d4dc4318b99` approved and acknowledged (burned). 11 advisories; carried into T6b: `impreso` can no longer be set once the invoice leaves `edicion` (R4/R3), `ajustada` migration is lossy (R4). Reviewed boundary -> `02eccc5`.
+
+- T6b done (route: delegated direct, one writer). Pure per-state field permissions in `factura-estado.ts` (`camposEditablesPorEstado`, `camposNoPermitidos`): edicion = every business field; terminada = `fecha`, `talonario`, `impreso`; confirmada/cancelada = `impreso`; anulada = nothing (409 names state + rejected fields). `UpdateFacturaDto` picks every business field; participants and `talonario` reject `null` (`@ValidateIf`) on create and update. `update()` reads once (404), checks fields (409), empty body = no-op, recomputes totals / re-validates warehouse+products / re-links client in edicion via helpers shared with create (`limpiarCampoTexto`, `resolverClienteId`), persists with one conditional `findOneAndUpdate({ id, estado })`, race -> 404/409. 422 when items change on a legacy invoice without warehouse. Schema: `metodoPago: TipoPago`, `talonario`, `estadoLegado`; the `ajustada` migration now sets `estadoLegado: 'ajustada'`.
+  - RED: estado helpers missing; schema spec 2 failed; service spec 23 failed.
+  - GREEN: `npx jest src/modules/factura` -> 238 passed (parent re-ran: 238 passed). Full `npx jest` -> 451 passed, 1 failed (known). Build, eslint clean; no `any`.
+  - Size: ~1270 authored lines (tests ~60%); not trimmed.
+  - Parent concern to verify in review: concurrent edits in `edicion` are only guarded by `estado`, so two simultaneous PATCHes could lose one update.
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T6b edit rules per state.
+T7 inventory movements.

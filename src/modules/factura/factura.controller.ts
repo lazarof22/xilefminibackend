@@ -83,7 +83,10 @@ export class FacturaController {
 
   @Patch(':id')
   @Roles(...ROLES_ESCRITURA)
-  @ApiOperation({ summary: 'Modificar una factura' })
+  @ApiOperation({
+    summary:
+      'Modificar una factura (que campos se aceptan depende del estado actual)',
+  })
   @ApiParam({ name: 'id', description: 'ID de la factura' })
   @ApiResponse({ status: 200, description: 'Factura modificada con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
@@ -93,7 +96,11 @@ export class FacturaController {
     description: 'Rol sin permiso para modificar',
   })
   @ApiResponse({ status: 404, description: 'No encontrada' })
-  @ApiResponse({ status: 409, description: 'La factura esta anulada' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Se envio un campo que el estado actual de la factura no permite modificar',
+  })
   update(@Param('id') id: string, @Body() updateFacturaDto: UpdateFacturaDto) {
     return this.facturaService.update(id, updateFacturaDto);
   }

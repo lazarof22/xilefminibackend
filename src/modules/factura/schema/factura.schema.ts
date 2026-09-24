@@ -186,8 +186,14 @@ export class Factura {
   @Prop({ type: Impuesto, _id: false })
   impuesto?: Impuesto;
 
-  @Prop({ required: true, enum: Object.values(TipoPago) })
-  metodoPago!: string;
+  @Prop({ type: String, required: true, enum: Object.values(TipoPago) })
+  metodoPago!: TipoPago;
+
+  // Free-text receipt-book reference (T6b, spec: "Terminada: se le pueden
+  // modificar la fecha o el talonario"). Optional so legacy invoices
+  // (created before this field existed) still load.
+  @Prop()
+  talonario?: string;
 
   @Prop({ type: [ItemFactura], required: true })
   items!: ItemFactura[];
@@ -239,6 +245,15 @@ export class Factura {
   // FacturaService.create.
   @Prop({ type: FacturadorFactura, _id: false })
   facturadoPor?: FacturadorFactura;
+
+  // Preserves the pre-migration value (T6b, carried over from a T6a
+  // review finding): FacturaService.migrarEstadoAjustada normalizes a
+  // legacy `estado: 'ajustada'` to `confirmada` so it passes the
+  // EstadoFactura enum, but that would otherwise lose the fact the
+  // invoice was originally 'ajustada'. Never set for invoices that were
+  // never 'ajustada'.
+  @Prop({ enum: ['ajustada'] })
+  estadoLegado?: 'ajustada';
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);

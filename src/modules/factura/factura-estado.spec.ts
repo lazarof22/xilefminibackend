@@ -1,6 +1,10 @@
 import { EstadoFactura } from './factura.constants';
 import {
+  CAMPOS_FACTURA_EDITABLES,
+  camposEditablesPorEstado,
+  camposNoPermitidos,
   esTransicionValida,
+  mensajeCamposNoPermitidos,
   mensajeTransicionInvalida,
   origenesPermitidos,
 } from './factura-estado';
@@ -84,6 +88,84 @@ describe('factura-estado (T6a)', () => {
       expect(mensaje).toContain('FAC-000005');
       expect(mensaje).toContain(EstadoFactura.CANCELADA);
       expect(mensaje).toContain(EstadoFactura.TERMINADA);
+    });
+  });
+
+  describe('camposEditablesPorEstado (T6b)', () => {
+    it('edicion allows every business field', () => {
+      expect(camposEditablesPorEstado(EstadoFactura.EDICION)).toEqual(
+        CAMPOS_FACTURA_EDITABLES,
+      );
+    });
+
+    it('terminada allows only fecha, talonario and impreso', () => {
+      expect(camposEditablesPorEstado(EstadoFactura.TERMINADA)).toEqual([
+        'fecha',
+        'talonario',
+        'impreso',
+      ]);
+    });
+
+    it('confirmada allows only impreso', () => {
+      expect(camposEditablesPorEstado(EstadoFactura.CONFIRMADA)).toEqual([
+        'impreso',
+      ]);
+    });
+
+    it('cancelada allows only impreso', () => {
+      expect(camposEditablesPorEstado(EstadoFactura.CANCELADA)).toEqual([
+        'impreso',
+      ]);
+    });
+
+    it('anulada allows nothing', () => {
+      expect(camposEditablesPorEstado(EstadoFactura.ANULADA)).toEqual([]);
+    });
+  });
+
+  describe('camposNoPermitidos (T6b)', () => {
+    it('returns an empty array when every sent field is allowed', () => {
+      expect(
+        camposNoPermitidos(EstadoFactura.TERMINADA, {
+          fecha: '2026-09-24',
+          talonario: 'T-001',
+        }),
+      ).toEqual([]);
+    });
+
+    it('names every rejected field for terminada', () => {
+      expect(
+        camposNoPermitidos(EstadoFactura.TERMINADA, {
+          concepto: 'x',
+          items: [],
+          fecha: '2026-09-24',
+        }),
+      ).toEqual(['concepto', 'items']);
+    });
+
+    it('rejects every field for anulada', () => {
+      expect(
+        camposNoPermitidos(EstadoFactura.ANULADA, { impreso: true }),
+      ).toEqual(['impreso']);
+    });
+
+    it('returns an empty array for an empty dto', () => {
+      expect(camposNoPermitidos(EstadoFactura.EDICION, {})).toEqual([]);
+    });
+  });
+
+  describe('mensajeCamposNoPermitidos', () => {
+    it('names the invoice id, its state and the rejected fields', () => {
+      const mensaje = mensajeCamposNoPermitidos(
+        'FAC-000005',
+        EstadoFactura.TERMINADA,
+        ['concepto', 'items'],
+      );
+
+      expect(mensaje).toContain('FAC-000005');
+      expect(mensaje).toContain(EstadoFactura.TERMINADA);
+      expect(mensaje).toContain('concepto');
+      expect(mensaje).toContain('items');
     });
   });
 });

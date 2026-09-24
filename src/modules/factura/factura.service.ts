@@ -46,6 +46,8 @@ import { calcularTotales } from './factura-totales';
 import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
 import {
+  camposNoPermitidos,
+  mensajeCamposNoPermitidos,
   mensajeTransicionInvalida,
   origenesPermitidos,
 } from './factura-estado';
@@ -94,13 +96,16 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
-   * One-time, idempotent migration (T6a): documents stored with the old
-   * `estado: 'ajustada'` (a value this service itself never wrote, but
-   * present in data imported before this enum existed) are normalized to
-   * `confirmada`, the closest current state. Runs before the counter seed
-   * so a legacy value never blocks Mongoose schema validation on a later
-   * write; existing `confirmada`/`anulada` documents are valid in the new
-   * enum as-is and need no migration.
+   * One-time, idempotent migration (T6a, `estadoLegado` added in T6b):
+   * documents stored with the old `estado: 'ajustada'` (a value this
+   * service itself never wrote, but present in data imported before this
+   * enum existed) are normalized to `confirmada`, the closest current
+   * state, while `estadoLegado: 'ajustada'` records the original value so
+   * it is not lost. Runs before the counter seed so a legacy value never
+   * blocks Mongoose schema validation on a later write; existing
+   * `confirmada`/`anulada` documents are valid in the new enum as-is and
+   * need no migration. Idempotent because the filter only ever matches
+   * `estado: 'ajustada'`, which no longer holds after the first run.
    */
   private async migrarEstadoAjustada(): Promise<void> {
     // 'ajustada' predates the EstadoFactura enum, so it is not one of its
@@ -110,7 +115,12 @@ export class FacturaService implements OnModuleInit {
     const resultado = await this.facturaModel
       .updateMany(
         { estado: estadoLegacyAjustada },
-        { $set: { estado: EstadoFactura.CONFIRMADA } },
+        {
+          $set: {
+            estado: EstadoFactura.CONFIRMADA,
+            estadoLegado: 'ajustada',
+          },
+        },
       )
       .exec();
     if (resultado.modifiedCount > 0) {
@@ -140,17 +150,13 @@ export class FacturaService implements OnModuleInit {
     const fecha =
       createFacturaDto.fecha ?? obtenerFechaEnZona(FACTURA_TIMEZONE);
 
-    const limpiar = (v?: string) => {
-      const t = (v ?? '').trim();
-      return t === FACTURA_CAMPO_VACIO_SENTINEL ? '' : t;
-    };
-
     const clienteNombre =
-      limpiar(createFacturaDto.cliente) || FACTURA_CLIENTE_NOMBRE_POR_DEFECTO;
-    const nit = limpiar(createFacturaDto.nit);
-    const direccion = limpiar(createFacturaDto.direccion);
-    const telefono = limpiar(createFacturaDto.telefono);
-    const email = limpiar(createFacturaDto.email);
+      this.limpiarCampoTexto(createFacturaDto.cliente) ||
+      FACTURA_CLIENTE_NOMBRE_POR_DEFECTO;
+    const nit = this.limpiarCampoTexto(createFacturaDto.nit);
+    const direccion = this.limpiarCampoTexto(createFacturaDto.direccion);
+    const telefono = this.limpiarCampoTexto(createFacturaDto.telefono);
+    const email = this.limpiarCampoTexto(createFacturaDto.email);
 
     const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
       calcularTotales(createFacturaDto.items, createFacturaDto.impuesto);
@@ -163,18 +169,13 @@ export class FacturaService implements OnModuleInit {
 
     const emisor = await this.obtenerEmisor();
 
-    let clienteId: Types.ObjectId | undefined;
-    if (nit || telefono || email) {
-      clienteId = (
-        await this.buscarOCrearCliente({
-          nombre: clienteNombre,
-          nit,
-          telefono,
-          email,
-          direccion,
-        })
-      )?._id;
-    }
+    const clienteId = await this.resolverClienteId({
+      nombre: clienteNombre,
+      nit,
+      telefono,
+      email,
+      direccion,
+    });
 
     const factura = new this.facturaModel({
       fecha,
@@ -199,6 +200,7 @@ export class FacturaService implements OnModuleInit {
       estado: EstadoFactura.EDICION,
       tipo: createFacturaDto.tipo ?? 'factura_normal',
       impreso: createFacturaDto.impreso ?? false,
+      talonario: createFacturaDto.talonario,
       despachadoPor: createFacturaDto.despachadoPor,
       transportadoPor: createFacturaDto.transportadoPor,
       recibidoPor: createFacturaDto.recibidoPor,
@@ -516,6 +518,37 @@ export class FacturaService implements OnModuleInit {
     }
   }
 
+  /**
+   * Trims a buyer text field and normalizes the "no value" sentinel some
+   * frontend forms send (an em dash) to `''`. Shared by `create` and
+   * `update` (T6b) so both apply the exact same cleanup to
+   * cliente/nit/direccion/telefono/email.
+   */
+  private limpiarCampoTexto(valor?: string): string {
+    const t = (valor ?? '').trim();
+    return t === FACTURA_CAMPO_VACIO_SENTINEL ? '' : t;
+  }
+
+  /**
+   * Resolves `clienteId` from already-cleaned buyer data: undefined when
+   * none of nit/telefono/email is present (venta al público), otherwise
+   * the matched-or-created client's id (`buscarOCrearCliente`). Shared by
+   * `create` and, when buyer fields change, `update` (T6b).
+   */
+  private async resolverClienteId(datos: {
+    nombre: string;
+    nit?: string;
+    telefono?: string;
+    email?: string;
+    direccion?: string;
+  }): Promise<Types.ObjectId | undefined> {
+    const { nit, telefono, email } = datos;
+    if (!nit && !telefono && !email) {
+      return undefined;
+    }
+    return (await this.buscarOCrearCliente(datos))?._id;
+  }
+
   /** Lists which of nit/email/telefono were provided, never their values. */
   private criteriosUsados(criterios: {
     nit?: string;
@@ -552,40 +585,252 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
-   * PATCH /facturas/:id (T6a): allowed only while the invoice is still in
-   * `edicion`. T6b will add the `terminada` fecha/talonario carve-out and
-   * full per-state editing on top of this atomic filter.
+   * PATCH /facturas/:id (T6b): which fields may be set depends on the
+   * invoice's current `estado` (`factura-estado.ts` —
+   * `camposEditablesPorEstado`/`camposNoPermitidos`): `edicion` accepts
+   * every business field (with items/impuesto/almacenId/cliente changes
+   * re-validated and recomputed server-side, see
+   * `construirActualizacion`); `terminada` only `fecha`/`talonario`/
+   * `impreso`; `confirmada`/`cancelada` only `impreso`; `anulada` nothing.
+   * Any other field present for the current state -> 409 naming both.
+   *
+   * Reads the invoice once (404 if missing) to decide what is allowed and
+   * to build the `$set`, then persists with exactly one conditional
+   * `findOneAndUpdate` keyed on the state just read — so a transition that
+   * lands between the read and the write can never silently apply a stale
+   * edit; `lanzarActualizacionConcurrente` re-disambiguates 404 vs 409 for
+   * that race, mirroring `lanzarTransicionInvalida`.
+   *
+   * An update with no fields at all is a no-op: nothing is rejected
+   * (there is nothing to check) and nothing is written, so the invoice is
+   * returned unchanged instead of issuing an empty `$set`.
    */
   async update(
     id: string,
     updateFacturaDto: UpdateFacturaDto,
   ): Promise<Factura> {
+    const factura = await this.facturaModel.findOne({ id }).exec();
+    if (!factura) {
+      throw new NotFoundException(`Factura con ID ${id} no encontrada`);
+    }
+
+    const estado = factura.estado;
+    const camposRechazados = camposNoPermitidos(estado, updateFacturaDto);
+    if (camposRechazados.length > 0) {
+      throw new ConflictException(
+        mensajeCamposNoPermitidos(id, estado, camposRechazados),
+      );
+    }
+
+    if (Object.keys(updateFacturaDto).length === 0) {
+      return factura;
+    }
+
+    const set = await this.construirActualizacion(
+      estado,
+      updateFacturaDto,
+      factura,
+    );
+
     const actualizada = await this.facturaModel
       .findOneAndUpdate(
-        { id, estado: EstadoFactura.EDICION },
-        updateFacturaDto,
+        { id, estado },
+        { $set: set },
         { new: true, runValidators: true },
       )
       .exec();
     if (actualizada) {
       return actualizada;
     }
-    return this.lanzarNoEditable(id);
+    return this.lanzarActualizacionConcurrente(id, estado);
   }
 
   /**
-   * Distinguishes 404 (no such invoice) from 409 (invoice exists but is
-   * not in `edicion`) after the conditional update above matched nothing.
-   * Always throws.
+   * Distinguishes 404 (invoice deleted) from 409 (a concurrent transition
+   * changed `estado` between `update`'s read and its conditional write)
+   * after that write matched nothing. Always throws.
    */
-  private async lanzarNoEditable(id: string): Promise<never> {
+  private async lanzarActualizacionConcurrente(
+    id: string,
+    estadoEsperado: EstadoFactura,
+  ): Promise<never> {
     const existente = await this.facturaModel.findOne({ id }).exec();
     if (!existente) {
       throw new NotFoundException(`Factura con ID ${id} no encontrada`);
     }
     throw new ConflictException(
-      `La factura ${id} esta en estado "${existente.estado}": solo se puede editar una factura en edición`,
+      `La factura ${id} cambio de estado "${estadoEsperado}" a "${existente.estado}" antes de aplicar la edicion; reintente`,
     );
+  }
+
+  /**
+   * Builds the `$set` for `update` from the fields `camposNoPermitidos`
+   * already confirmed are allowed for `estado`. `fecha`/`talonario`/
+   * `impreso` need no transformation and are valid in every editable
+   * state, so they are handled once up front; everything else is only
+   * reachable while `estado` is `edicion` (every other allowed state only
+   * permits that first group).
+   */
+  private async construirActualizacion(
+    estado: EstadoFactura,
+    dto: UpdateFacturaDto,
+    actual: Factura,
+  ): Promise<Record<string, unknown>> {
+    const set: Record<string, unknown> = {};
+
+    if (dto.fecha !== undefined) {
+      set.fecha = dto.fecha;
+    }
+    if (dto.talonario !== undefined) {
+      set.talonario = dto.talonario;
+    }
+    if (dto.impreso !== undefined) {
+      set.impreso = dto.impreso;
+    }
+
+    if (estado !== EstadoFactura.EDICION) {
+      return set;
+    }
+
+    if (dto.concepto !== undefined) {
+      set.concepto = dto.concepto;
+    }
+    if (dto.moneda !== undefined) {
+      set.moneda = dto.moneda;
+    }
+    if (dto.metodoPago !== undefined) {
+      set.metodoPago = dto.metodoPago;
+    }
+    if (dto.despachadoPor !== undefined) {
+      set.despachadoPor = dto.despachadoPor;
+    }
+    if (dto.transportadoPor !== undefined) {
+      set.transportadoPor = dto.transportadoPor;
+    }
+    if (dto.recibidoPor !== undefined) {
+      set.recibidoPor = dto.recibidoPor;
+    }
+
+    await this.aplicarCambiosDeItemsYAlmacen(dto, actual, set);
+    await this.aplicarCambiosDeCliente(dto, actual, set);
+
+    return set;
+  }
+
+  /**
+   * When `items` and/or `impuesto` change, recomputes every total with
+   * `calcularTotales` — using the stored items when only `impuesto`
+   * changed, and vice versa, exactly like `create`. When `items` or
+   * `almacenId` change, re-runs `obtenerAlmacenValido` +
+   * `validarProductosDelAlmacen` (against the new items when they
+   * changed, the stored ones otherwise) and refreshes `almacenId`/
+   * `almacenCodigo`. An invoice with no `almacenId` at all (legacy, from
+   * before T2) that changes its items without also sending `almacenId`
+   * has no warehouse to validate against, so it is rejected with 422
+   * instead of silently skipping the check.
+   */
+  private async aplicarCambiosDeItemsYAlmacen(
+    dto: UpdateFacturaDto,
+    actual: Factura,
+    set: Record<string, unknown>,
+  ): Promise<void> {
+    const itemsCambiaron = dto.items !== undefined;
+    const impuestoCambio = dto.impuesto !== undefined;
+
+    if (itemsCambiaron || impuestoCambio) {
+      const itemsEntrada = itemsCambiaron ? dto.items! : actual.items;
+      const impuestoEntrada = impuestoCambio ? dto.impuesto : actual.impuesto;
+      const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
+        calcularTotales(itemsEntrada, impuestoEntrada);
+      set.items = items;
+      set.subtotal = subtotal;
+      set.descuentoTotal = descuentoTotal;
+      set.recargoTotal = recargoTotal;
+      set.impuesto = impuesto;
+      set.total = total;
+    }
+
+    const almacenIdCambio = dto.almacenId !== undefined;
+    if (!itemsCambiaron && !almacenIdCambio) {
+      return;
+    }
+
+    const almacenId = almacenIdCambio
+      ? dto.almacenId!
+      : actual.almacenId?.toString();
+    if (!almacenId) {
+      throw new UnprocessableEntityException(
+        'La factura no tiene almacén asignado; envíe almacenId para modificar sus items',
+      );
+    }
+    const itemsParaValidar =
+      (set.items as { productoId: string }[] | undefined) ?? actual.items;
+    const almacen = await this.obtenerAlmacenValido(almacenId);
+    await this.validarProductosDelAlmacen(itemsParaValidar, almacenId);
+    set.almacenId = almacen._id;
+    set.almacenCodigo = almacen.codigo;
+  }
+
+  /**
+   * When any buyer field (`cliente`, `nit`, `direccion`, `telefono`,
+   * `email`) changes, merges the change with the invoice's stored values,
+   * cleans it exactly like `create` (`limpiarCampoTexto`), and re-runs the
+   * same client matching/creation (`resolverClienteId`) so `clienteId`
+   * always reflects the current buyer data.
+   */
+  private async aplicarCambiosDeCliente(
+    dto: UpdateFacturaDto,
+    actual: Factura,
+    set: Record<string, unknown>,
+  ): Promise<void> {
+    const camposCliente = [
+      'cliente',
+      'nit',
+      'direccion',
+      'telefono',
+      'email',
+    ] as const;
+    const algunoCambio = camposCliente.some(
+      (campo) => dto[campo] !== undefined,
+    );
+    if (!algunoCambio) {
+      return;
+    }
+
+    const clienteNombre =
+      dto.cliente !== undefined
+        ? this.limpiarCampoTexto(dto.cliente) ||
+          FACTURA_CLIENTE_NOMBRE_POR_DEFECTO
+        : actual.cliente;
+    const nit =
+      dto.nit !== undefined
+        ? this.limpiarCampoTexto(dto.nit)
+        : (actual.nit ?? '');
+    const direccion =
+      dto.direccion !== undefined
+        ? this.limpiarCampoTexto(dto.direccion)
+        : (actual.direccion ?? '');
+    const telefono =
+      dto.telefono !== undefined
+        ? this.limpiarCampoTexto(dto.telefono)
+        : (actual.telefono ?? '');
+    const email =
+      dto.email !== undefined
+        ? this.limpiarCampoTexto(dto.email)
+        : (actual.email ?? '');
+
+    set.cliente = clienteNombre;
+    set.nit = nit;
+    set.direccion = direccion;
+    set.telefono = telefono;
+    set.email = email;
+    set.clienteId = await this.resolverClienteId({
+      nombre: clienteNombre,
+      nit,
+      telefono,
+      email,
+      direccion,
+    });
   }
 
   /** `terminar` (T6a): closes edicion for the normal edit flow. */

@@ -13,7 +13,7 @@ Guía para conectar el frontend con los endpoints de `/facturas`: qué envía ca
 | `POST` | `/facturas` | Emitir una factura (nace en `edicion`) | `administrador`, `gerente`, `facturador` | `201` | `400`, `401`, `403`, `404`, `422` |
 | `GET` | `/facturas` | Listar facturas (paginado) | cualquier usuario autenticado | `200` | `400`, `401` |
 | `GET` | `/facturas/:id` | Ver una factura | cualquier usuario autenticado | `200` | `401`, `404` |
-| `PATCH` | `/facturas/:id` | Editar datos no fiscales (**solo en `edicion`**) | `administrador`, `gerente`, `facturador` | `200` | `400`, `401`, `403`, `404`, `409` |
+| `PATCH` | `/facturas/:id` | Editar la factura (**qué campos acepta depende del estado actual**, ver abajo) | `administrador`, `gerente`, `facturador` | `200` | `400`, `401`, `403`, `404`, `409` |
 | `PATCH` | `/facturas/:id/terminar` | `edicion` → `terminada` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
 | `PATCH` | `/facturas/:id/editar` | `terminada` → `edicion` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
 | `PATCH` | `/facturas/:id/confirmar` | `terminada` → `confirmada` | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409` |
@@ -39,17 +39,21 @@ Las rutas de **lectura** (`GET /facturas`, `GET /facturas/:id`) solo requieren e
 
 ---
 
-## Estados y transiciones de una factura (T6a)
+## Estados y transiciones de una factura (T6a/T6b)
 
 Toda factura tiene un `estado`, uno de `edicion`, `terminada`, `confirmada`, `cancelada`, `anulada`. Nace siempre en `edicion`.
 
-| Estado | Significado |
-|---|---|
-| `edicion` | Estado inicial. Todos los campos de negocio son editables (por ahora, vía `PATCH /facturas/:id`, ver más abajo; T6b ampliará qué se puede editar). No hay movimiento de inventario. |
-| `terminada` | Cerrada para el flujo normal de edición. Puede volver a `edicion`, confirmarse o anularse. Todavía no hay movimiento de inventario. |
-| `confirmada` | Factura en firme. Descuenta inventario (T7, todavía no implementado). |
-| `cancelada` | Reversa de una factura `confirmada`: aumenta inventario (T7, todavía no implementado). Estado terminal. |
-| `anulada` | Estado terminal. Su `numero`/`id` nunca se reutiliza: el contador correlativo nunca se decrementa al anular, así que ninguna factura futura puede recibir ese mismo código. |
+| Estado | Significado | Qué se puede editar (`PATCH /facturas/:id`) |
+|---|---|---|
+| `edicion` | Estado inicial. No hay movimiento de inventario. | **Todos** los campos de negocio (ver [tabla completa](#patch-facturasid--editar-una-factura)); items/impuesto/almacén/cliente se revalidan y recalculan server-side. |
+| `terminada` | Cerrada para el flujo normal de edición. Puede volver a `edicion`, confirmarse o anularse. Todavía no hay movimiento de inventario. | Solo `fecha`, `talonario` e `impreso`. |
+| `confirmada` | Factura en firme. Descuenta inventario (T7, todavía no implementado). | Solo `impreso` (marcarla como impresa no cambia nada fiscal). |
+| `cancelada` | Reversa de una factura `confirmada`: aumenta inventario (T7, todavía no implementado). Estado terminal. | Solo `impreso`. |
+| `anulada` | Estado terminal. Su `numero`/`id` nunca se reutiliza: el contador correlativo nunca se decrementa al anular, así que ninguna factura futura puede recibir ese mismo código. | Nada: una factura anulada es de solo lectura. |
+
+> Enviar en el `PATCH` un campo que el estado actual no permite modificar (por ejemplo `concepto` en `terminada`, o cualquier campo en `anulada`) devuelve `409`, nombrando el estado y los campos rechazados (ver [ejemplos](#formato-de-los-errores)). Un `PATCH` sin ningún campo no es error: devuelve la factura sin cambios.
+
+**Migración de facturas legadas (`ajustada`)**: las facturas que antes de este ciclo de estados tenían `estado: "ajustada"` se migran una sola vez a `confirmada` (el estado válido más cercano) al iniciar el servidor. Para no perder ese dato, guardan además `estadoLegado: "ajustada"`. Este campo es puramente informativo: no afecta transiciones ni permisos, y nunca aparece en una factura que nunca fue `ajustada`.
 
 **Transiciones permitidas** (cualquier otra combinación devuelve `409`):
 
@@ -156,6 +160,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
   "recargoTotal": 3,
   "total": 251.35,
   "estado": "edicion",
+  "talonario": "T-001",
   "tipo": "factura_normal",
   "impreso": false,
   "createdAt": "2026-09-23T02:11:34.262Z",
@@ -182,7 +187,9 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `facturadoPor` | `object` | El usuario (`Facturador`) autenticado que emitió la factura. Lo toma el servidor del token JWT, nunca del cuerpo de la petición (ver [Facturado por](#facturado-por)). Ausente solo en facturas emitidas antes de este campo (legado). |
 | `items[].total` | `number` | Lo calcula el servidor (ver [Cómo se calculan los totales](#cómo-se-calculan-los-totales)). |
 | `subtotal`, `descuentoTotal`, `recargoTotal`, `total` | `number` | Los calcula el servidor. Redondeados a 2 decimales. |
-| `estado` | `string` | `"edicion"`, `"terminada"`, `"confirmada"`, `"cancelada"` o `"anulada"`. Toda factura nueva nace `"edicion"` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6a)). |
+| `estado` | `string` | `"edicion"`, `"terminada"`, `"confirmada"`, `"cancelada"` o `"anulada"`. Toda factura nueva nace `"edicion"` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). |
+| `estadoLegado` | `string` | **Opcional:** solo `"ajustada"`, y solo presente en una factura migrada desde ese estado legado (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). Ausente en cualquier otra factura. |
+| `talonario` | `string` | **Opcional:** referencia libre al talonario/recibo asociado. Hasta 50 caracteres. |
 | `tipo` | `string` | `"factura_normal"` (por defecto) o `"ajuste"`. |
 | `impreso` | `boolean` | `false` por defecto. |
 
@@ -247,6 +254,9 @@ Si el token es válido pero el usuario ya no existe (por ejemplo, se borró la c
 | `despachadoPor` | `ParticipanteFactura` | No | Ver [Participantes](#participantes-despachado-por--transportado-por--recibido-por). |
 | `transportadoPor` | `ParticipanteFactura` | No | Ídem. |
 | `recibidoPor` | `ParticipanteFactura` | No | Ídem. |
+| `talonario` | `string` | No | Referencia libre al talonario/recibo. No vacío tras `trim`, máximo 50 caracteres. |
+
+> `despachadoPor`, `transportadoPor`, `recibidoPor` y `talonario` aceptan quedar **ausentes**, pero rechazan `null` explícito con `400` (no es lo mismo "no lo envié" que "bórralo con null").
 
 **Método de pago**
 
@@ -379,24 +389,39 @@ GET /facturas/FAC-000005
 
 ---
 
-## `PATCH /facturas/:id` — Editar datos no fiscales
+## `PATCH /facturas/:id` — Editar una factura
 
-Solo se puede editar una factura **en estado `edicion`** (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6a)); en cualquier otro estado devuelve `409`. Por ahora, **solo** se pueden editar estos campos (todos opcionales); T6b ampliará qué se puede editar en `edicion` y agregará el caso especial de `terminada` (solo `fecha`/`talonario`):
+Qué campos acepta un `PATCH` depende del **estado actual** de la factura (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)); enviar un campo que el estado actual no permite devuelve `409` (no `400`: la petición es válida, lo que no es válido es aplicarla ahora). Un `PATCH` sin ningún campo no es error: la factura se devuelve sin cambios.
 
-| Campo | Tipo |
+### Matriz de edición por estado
+
+| Campo | `edicion` | `terminada` | `confirmada` / `cancelada` | `anulada` |
+|---|:---:|:---:|:---:|:---:|
+| `fecha` | ✅ | ✅ | ❌ | ❌ |
+| `talonario` | ✅ | ✅ | ❌ | ❌ |
+| `impreso` | ✅ | ✅ | ✅ | ❌ |
+| `cliente`, `nit`, `direccion`, `telefono`, `email` | ✅ | ❌ | ❌ | ❌ |
+| `moneda`, `concepto` | ✅ | ❌ | ❌ | ❌ |
+| `almacenId` | ✅ | ❌ | ❌ | ❌ |
+| `impuesto`, `metodoPago`, `items` | ✅ | ❌ | ❌ | ❌ |
+| `despachadoPor`, `transportadoPor`, `recibidoPor` | ✅ | ❌ | ❌ | ❌ |
+
+`tipo`, y todos los campos server-controlados (`id`, `numero`, `estado`, totales, `emisor`, `facturadoPor`, `almacenCodigo`, `clienteId`) nunca son editables vía `PATCH`, en ningún estado (el pipe global los rechaza con `400` por no estar en la lista blanca).
+
+### Qué pasa al editar en `edicion`
+
+Editar en `edicion` no es solo "guardar el campo": algunos cambios disparan la misma validación que corre `POST /facturas`, para que la factura editada quede tan consistente como una recién creada:
+
+| Si cambia... | El servidor... |
 |---|---|
-| `concepto` | `string` |
-| `impreso` | `boolean` |
-| `direccion` | `string` |
-| `telefono` | `string` |
-| `email` | `string` |
-| `despachadoPor` | `ParticipanteFactura` |
-| `transportadoPor` | `ParticipanteFactura` |
-| `recibidoPor` | `ParticipanteFactura` |
+| `items` y/o `impuesto` | Recalcula **todos** los totales (`subtotal`, `descuentoTotal`, `recargoTotal`, `impuesto.importe`, `total`) con la misma fórmula que `POST` (ver [Cómo se calculan los totales](#cómo-se-calculan-los-totales)). Si solo cambia `impuesto`, usa los `items` ya guardados; si solo cambian `items`, usa el `impuesto` ya guardado. |
+| `items` y/o `almacenId` | Vuelve a validar el almacén (404/422) y que cada item pertenezca a él (400), igual que `POST`, y refresca `almacenCodigo`. |
+| `cliente`, `nit`, `direccion`, `telefono` y/o `email` | Vuelve a vincular el cliente con la misma prioridad que `POST` (`nit` → `email` → `telefono`, crea uno nuevo si no hay coincidencia) y refresca `clienteId`. Los campos que no se envían mantienen su valor actual (no hace falta reenviar todo el bloque del comprador para cambiar solo uno). |
+| `fecha` | Se valida igual que en `POST` (`YYYY-MM-DD`, fecha de calendario real). |
 
-Cualquier otro campo (`items`, `total`, `numero`, `estado`, `nit`, `fecha`, `almacenId`, `almacenCodigo`, `metodoPago`, etc.) devuelve `400`. El almacén y el método de pago de una factura no se pueden cambiar después de emitida. Para corregir importes, emití una factura de `tipo: "ajuste"`.
+> Si una factura no tiene `almacenId` (factura legada, de antes de que este campo existiera) y se le cambian los `items` sin enviar `almacenId`, el servidor responde `422`: no hay almacén contra el cual validar los productos.
 
-> Los participantes (`despachadoPor`/`transportadoPor`/`recibidoPor`) sí son editables vía `PATCH`: es habitual completarlos después de emitida la factura (por ejemplo, cuando se despacha o se entrega). Igual que en el `POST`, cada uno que se envíe debe traer `nombre`, `ci` y `fecha` completos (no se puede editar un solo subcampo).
+### Ejemplos
 
 ```http
 PATCH /facturas/FAC-000005
@@ -407,15 +432,30 @@ Authorization: Bearer <token>
 ```
 
 **Respuesta `200`:** la `Factura` actualizada.
-**Errores:** `400` (campo no permitido), `404` (no existe), `409` (la factura no está en `edicion`).
 
-> Uso típico: después de imprimir, enviar `{ "impreso": true }`.
+```http
+PATCH /facturas/FAC-000005
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ "concepto": "Venta mayorista corregida" }
+```
+
+Si `FAC-000005` está `terminada`, la respuesta es `409`:
+
+```json
+{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000005 esta en estado \"terminada\": no se puede modificar concepto" }
+```
+
+**Errores:** `400` (campo no whitelisteado, o dato inválido), `404` (no existe), `409` (el estado actual no permite modificar alguno de los campos enviados — el mensaje los nombra todos).
+
+> Uso típico: después de imprimir, enviar `{ "impreso": true }` (funciona en cualquier estado salvo `anulada`).
 
 ---
 
 ## `PATCH /facturas/:id/anular` — Anular una factura
 
-Sin cuerpo. Solo desde `edicion` o `terminada` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6a)). La factura **no se borra**: queda con `estado: "anulada"` para conservar el registro, y su `numero`/`id` no se vuelve a usar nunca.
+Sin cuerpo. Solo desde `edicion` o `terminada` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). La factura **no se borra**: queda con `estado: "anulada"` para conservar el registro, y su `numero`/`id` no se vuelve a usar nunca.
 
 ```http
 PATCH /facturas/FAC-000005/anular
@@ -451,7 +491,7 @@ Todos los errores siguen el formato estándar de NestJS:
 ```
 
 ```json
-{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000006 esta en estado \"terminada\": solo se puede editar una factura en edición" }
+{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000006 esta en estado \"terminada\": no se puede modificar concepto, items" }
 ```
 
 ```json
@@ -513,5 +553,6 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 - [ ] Paginar el listado con `page` y `limit` (máximo 500).
 - [ ] Manejar el `401` (sin sesión / sesión expirada) y el `403` (rol sin permiso: solo `administrador`, `gerente` y `facturador` pueden crear, editar o anular).
 - [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
-- [ ] Manejar el `409` al editar (solo vale en `edicion`) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
-- [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }`.
+- [ ] Antes de armar el formulario de edición, consultar la [matriz de edición por estado](#matriz-de-edición-por-estado): mostrar solo los campos editables en el `estado` actual de la factura.
+- [ ] Manejar el `409` al editar (el estado actual no permite alguno de los campos enviados) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
+- [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }` (funciona en cualquier estado salvo `anulada`).
