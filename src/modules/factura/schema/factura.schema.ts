@@ -1,6 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { FACTURA_CLIENTE_NOMBRE_POR_DEFECTO } from '../factura.constants';
+import {
+  FACTURA_CLIENTE_NOMBRE_POR_DEFECTO,
+  TipoPago,
+} from '../factura.constants';
 
 export type FacturaDocument = HydratedDocument<Factura>;
 
@@ -80,6 +83,30 @@ class EmisorDatos {
 
   @Prop()
   registroComercial?: string;
+
+  @Prop()
+  ciudad?: string;
+
+  @Prop()
+  pais?: string;
+}
+
+/**
+ * "Despachado por" / "Transportado por" / "Recibido por" (T3, spec "TABLA
+ * DE UNA FACTURA", signatures excluded). Free data (name, CI, date), not
+ * system users: there's no `almacenero` role, so these three are never
+ * resolved from a logged-in account.
+ */
+@Schema({ _id: false })
+class ParticipanteFactura {
+  @Prop({ required: true })
+  nombre!: string;
+
+  @Prop({ required: true })
+  ci!: string;
+
+  @Prop({ required: true })
+  fecha!: string;
 }
 
 @Schema({ timestamps: true, id: false })
@@ -134,7 +161,7 @@ export class Factura {
   @Prop({ type: Impuesto, _id: false })
   impuesto?: Impuesto;
 
-  @Prop({ required: true })
+  @Prop({ required: true, enum: Object.values(TipoPago) })
   metodoPago!: string;
 
   @Prop({ type: [ItemFactura], required: true })
@@ -168,6 +195,15 @@ export class Factura {
 
   @Prop({ required: true, default: false })
   impreso!: boolean;
+
+  @Prop({ type: ParticipanteFactura, _id: false })
+  despachadoPor?: ParticipanteFactura;
+
+  @Prop({ type: ParticipanteFactura, _id: false })
+  transportadoPor?: ParticipanteFactura;
+
+  @Prop({ type: ParticipanteFactura, _id: false })
+  recibidoPor?: ParticipanteFactura;
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);

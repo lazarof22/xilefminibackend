@@ -49,9 +49,9 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 - [x] T1 Roles: add `gerente`, `economico` to `UsuarioRol`
 - [x] T2 Warehouse code: unique `codigo` on `Almacen` (schema + DTOs); invoice references the warehouse (`almacenId`) and snapshots `almacenCodigo`; items must belong to that warehouse when the product has one
 - [x] T2b Warehouse code hardening (from T2 review warnings): reject whitespace-only `codigo`, reject `codigo: null` on update, normalize ObjectId comparison (uppercase hex), README error messages accurate
-- [ ] T3 Document data: issuer snapshot includes `ciudad` and `pais`; `metodoPago` validated against the `TipoPago` enum
+- [x] T3 Document data: issuer snapshot includes `ciudad` and `pais`; `metodoPago` validated against the `TipoPago` enum; participants `despachadoPor`, `transportadoPor`, `recibidoPor` `{ nombre, ci, fecha }` (merged from T5: same files, one coherent contract change)
 - [ ] T4 Auth + "Facturado por": JWT + roles guards on `FacturaController`; `facturadoPor { empleadoId, nombre, ci, fecha }` from the logged-in user
-- [ ] T5 Participants: `despachadoPor`, `transportadoPor`, `recibidoPor` `{ nombre, ci, fecha }` (optional, editable while `edicion`)
+- T5 (no checkbox: merged into T3, tracked there) (same schema/DTO/README surface; per-state edit restriction lands with T6)
 - [ ] T6 State machine: new `estado` enum, default `edicion`, transition endpoints (`terminar`, `editar`, `confirmar`, `cancelar`, `anular`), per-state edit rules, `talonario` field, legacy mapping, annulled-code uniqueness test
 - [ ] T7 Inventory movements: `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
 - [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
@@ -94,9 +94,16 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
 - T2b done (route: delegated direct, one writer). Almacen DTOs trim `codigo` via `@Transform` before validation (whitespace-only rejected); update DTO uses `@ValidateIf(v !== undefined)` so `codigo: null` is rejected; `validarProductosDelAlmacen` compares canonical lowercase hex (`new Types.ObjectId(id).toHexString()`), `findById` already case-insensitive (pinned by test); README explains the legacy 422 and the `PATCH /almacen/:id` fix.
   - RED: `npx jest src/modules/factura/factura.service.spec.ts src/modules/inventario/almacen` -> 7 failed / 62 passed.
   - GREEN: `npx jest src/modules/factura src/modules/inventario/almacen` -> 115 passed (parent re-ran: 115 passed). Full `npx jest` -> 305 passed, 1 failed (known). Build clean. No `any`.
+  - Commit: `e61d203` fix(almacen): rechaza codigos vacios o nulos y compara ids sin distinguir mayusculas
+  - Native review: assess `high`, consent granted, 4 lenses, lineage `review-61ec7edd40927ed4` approved and acknowledged (burned). 5 advisories (duplicated trim transform, test naming, trim persistence not proven end-to-end, absent-codigo update case); non-defect, left as notes. Reviewed boundary -> `e61d203`.
+
+- T3 done (route: delegated direct, one writer; also covers merged T5). `TipoPago` enum (`efectivo|transferencia|credito`) in `factura.constants.ts`, `@IsEnum` on `metodoPago` + schema enum (legacy strings still load: update validators only touch updated paths). `EmisorDatos` gains `ciudad`/`pais`; `EmpresaDatos.pais` is an ObjectId ref to the `Pais` nomenclador, so the service resolves `nombrePais` (undefined if unset or dangling, never blocks creation). `ParticipanteFactura { nombre, ci, fecha }` subdocument for `despachadoPor`/`transportadoPor`/`recibidoPor`, optional on create, editable via PATCH (per-state rules in T6). README updated.
+  - RED: `npx jest src/modules/factura` -> 13 failed / 101 passed.
+  - GREEN: same -> 114 passed (parent re-ran: 114 passed). Full `npx jest` -> 327 passed, 1 failed (known). Build clean, eslint + prettier clean, no `any`.
+  - Size: ~626 authored lines (over the ~400 heuristic because of DTO/service spec coverage for three features; not trimmed).
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T3 document data.
+T4 auth guards + facturadoPor.

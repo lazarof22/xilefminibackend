@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
@@ -12,11 +12,13 @@ import {
   IsPositive,
   Min,
   Max,
+  MaxLength,
   Matches,
   IsDateString,
   IsMongoId,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { TipoPago } from '../factura.constants';
 
 export class ItemFacturaDto {
   @ApiProperty({ description: 'Identificador local del item' })
@@ -96,6 +98,46 @@ export class ImpuestoDto {
   @Min(0)
   @IsOptional()
   importe?: number;
+}
+
+/**
+ * "Despachado por" / "Transportado por" / "Recibido por" (T3, spec "TABLA
+ * DE UNA FACTURA", signatures excluded). Free data (name, CI, date), not a
+ * system user reference: `ci` is only length-bounded, not the strict
+ * 11-digit Cuban CI format used for employees, because a transporter or
+ * receiver may be a foreigner with a different document.
+ */
+export class ParticipanteFacturaDto {
+  @ApiProperty({ description: 'Nombre completo' })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  nombre!: string;
+
+  @ApiProperty({
+    description:
+      'Carné de identidad u otro documento de identificación (puede ser extranjero)',
+  })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  ci!: string;
+
+  @ApiProperty({ description: 'Fecha (YYYY-MM-DD)' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'fecha debe tener el formato YYYY-MM-DD',
+  })
+  @IsDateString(
+    { strict: true },
+    { message: 'fecha debe ser una fecha de calendario valida' },
+  )
+  fecha!: string;
 }
 
 export class CreateFacturaDto {
@@ -180,10 +222,12 @@ export class CreateFacturaDto {
   @Type(() => ImpuestoDto)
   impuesto?: ImpuestoDto;
 
-  @ApiProperty({ description: 'Metodo de pago' })
-  @IsString()
-  @IsNotEmpty()
-  metodoPago!: string;
+  @ApiProperty({
+    description: 'Metodo de pago',
+    enum: TipoPago,
+  })
+  @IsEnum(TipoPago)
+  metodoPago!: TipoPago;
 
   @ApiProperty({ description: 'Items de la factura', type: [ItemFacturaDto] })
   @IsArray()
@@ -207,4 +251,31 @@ export class CreateFacturaDto {
   @IsBoolean()
   @IsOptional()
   impreso?: boolean;
+
+  @ApiPropertyOptional({
+    type: ParticipanteFacturaDto,
+    description: 'Despachado por',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ParticipanteFacturaDto)
+  despachadoPor?: ParticipanteFacturaDto;
+
+  @ApiPropertyOptional({
+    type: ParticipanteFacturaDto,
+    description: 'Transportado por',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ParticipanteFacturaDto)
+  transportadoPor?: ParticipanteFacturaDto;
+
+  @ApiPropertyOptional({
+    type: ParticipanteFacturaDto,
+    description: 'Recibido por',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ParticipanteFacturaDto)
+  recibidoPor?: ParticipanteFacturaDto;
 }

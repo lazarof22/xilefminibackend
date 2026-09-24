@@ -48,10 +48,27 @@ Todos los endpoints que devuelven una factura usan esta forma:
     "nit": "NIT-EMPRESA-DEV",
     "direccion": "Calle Dev 1",
     "telefono": "555000",
-    "email": "dev@empresa.test"
+    "email": "dev@empresa.test",
+    "ciudad": "La Habana",
+    "pais": "Cuba"
   },
   "impuesto": { "tipo": "IVA", "porciento": 10, "importe": 22.85 },
   "metodoPago": "efectivo",
+  "despachadoPor": {
+    "nombre": "Pedro Gómez",
+    "ci": "88070112345",
+    "fecha": "2026-09-22"
+  },
+  "transportadoPor": {
+    "nombre": "María Suárez",
+    "ci": "91020556789",
+    "fecha": "2026-09-22"
+  },
+  "recibidoPor": {
+    "nombre": "Ana Pérez",
+    "ci": "12345678901",
+    "fecha": "2026-09-23"
+  },
   "items": [
     {
       "id": "i1",
@@ -90,13 +107,34 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `clienteId` | `string` | **Opcional:** solo aparece si se envió `nit`, `telefono` o `email` (ver [Clientes](#clientes)). |
 | `almacenId` | `string` | El `_id` del almacén desde el que se factura. Lo valida el servidor a partir del `almacenId` enviado en el `POST`. |
 | `almacenCodigo` | `string` | El código del almacén, tomado del almacén en el momento de emitir (no se actualiza si el código del almacén cambia después). |
-| `emisor` | `object` | **Opcional:** se toma de los datos de la empresa (`/empresa`). No aparece si la empresa no está configurada. |
+| `emisor` | `object` | **Opcional:** se toma de los datos de la empresa (`/empresa`). No aparece si la empresa no está configurada. `ciudad` y `pais` son opcionales dentro de `emisor` (ver más abajo). |
 | `impuesto` | `object` | **Opcional:** `importe` siempre lo calcula el servidor cuando hay `porciento`. |
+| `metodoPago` | `string` | Uno de `"efectivo"`, `"transferencia"`, `"credito"` (enum `TipoPago`, ver más abajo). |
+| `despachadoPor`, `transportadoPor`, `recibidoPor` | `object` | **Opcionales:** ver [Participantes](#participantes-despachado-por--transportado-por--recibido-por). No incluyen firma (fuera de alcance). |
 | `items[].total` | `number` | Lo calcula el servidor (ver [Cómo se calculan los totales](#cómo-se-calculan-los-totales)). |
 | `subtotal`, `descuentoTotal`, `recargoTotal`, `total` | `number` | Los calcula el servidor. Redondeados a 2 decimales. |
 | `estado` | `string` | `"confirmada"` o `"anulada"`. Toda factura nueva nace `"confirmada"`. |
 | `tipo` | `string` | `"factura_normal"` (por defecto) o `"ajuste"`. |
 | `impreso` | `boolean` | `false` por defecto. |
+
+**`emisor.ciudad` / `emisor.pais`**
+
+Ambos son opcionales y se toman de los datos de la empresa (`/empresa`):
+
+- `ciudad` es una copia directa de `EmpresaDatos.ciudad` (texto libre).
+- `pais` es el **nombre** del país (`Pais.nombrePais`), resuelto server-side a partir del `EmpresaDatos.pais` configurado (que internamente es una referencia, no un texto). Si la empresa no tiene país configurado, o el país referenciado ya no existe, `pais` no aparece en `emisor`.
+
+### Participantes: "Despachado por" / "Transportado por" / "Recibido por"
+
+Cada uno, cuando está presente, es un objeto con esta forma (sin firma, excluida a pedido del cliente):
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `nombre` | `string` | Nombre completo. |
+| `ci` | `string` | Carné de identidad **u otro documento** (hasta 20 caracteres; no se exige el formato de 11 dígitos porque un transportista o receptor puede ser extranjero). |
+| `fecha` | `string` | `YYYY-MM-DD`, misma validación que la `fecha` de la factura. |
+
+Los tres son opcionales tanto al crear (`POST`) como al editar (`PATCH`, ver [Editar datos no fiscales](#patch-facturasid--editar-datos-no-fiscales)).
 
 > Los campos opcionales **no vienen en el JSON** cuando no tienen valor; no llegan como `null`. En TypeScript tipalos como `campo?: tipo`.
 
@@ -108,7 +146,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 
 | Campo | Tipo | Obligatorio | Reglas |
 |---|---|---|---|
-| `metodoPago` | `string` | **Sí** | No puede estar vacío. |
+| `metodoPago` | `string` | **Sí** | Uno de `"efectivo"`, `"transferencia"`, `"credito"` (ver [Método de pago](#método-de-pago)). |
 | `almacenId` | `string` | **Sí** | `_id` de Mongo de un almacén existente que tenga `codigo` configurado. |
 | `items` | `ItemFactura[]` | **Sí** | Al menos 1 item. |
 | `fecha` | `string` | No | `YYYY-MM-DD` y fecha real (`2026-02-30` se rechaza). |
@@ -122,6 +160,29 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `impuesto` | `Impuesto` | No | Ver abajo. |
 | `tipo` | `string` | No | `"factura_normal"` o `"ajuste"`. |
 | `impreso` | `boolean` | No | |
+| `despachadoPor` | `ParticipanteFactura` | No | Ver [Participantes](#participantes-despachado-por--transportado-por--recibido-por). |
+| `transportadoPor` | `ParticipanteFactura` | No | Ídem. |
+| `recibidoPor` | `ParticipanteFactura` | No | Ídem. |
+
+**Método de pago**
+
+`metodoPago` valida contra el enum `TipoPago`, los mismos tres métodos que ya maneja el módulo `pago`:
+
+| Valor | Significado |
+|---|---|
+| `"efectivo"` | Pago en efectivo. |
+| `"transferencia"` | Pago por transferencia bancaria. |
+| `"credito"` | Pago a crédito. |
+
+Cualquier otro valor se rechaza con `400`. Una factura vieja guardada con un valor fuera del enum sigue cargando sin problema (el `GET` no valida); solo no puede volver a guardarse con ese mismo valor fuera de enum porque `metodoPago` no es editable vía `PATCH`.
+
+**`ParticipanteFactura`** (`despachadoPor` / `transportadoPor` / `recibidoPor`)
+
+| Campo | Tipo | Obligatorio (si se envía el objeto) | Reglas |
+|---|---|---|---|
+| `nombre` | `string` | **Sí** | No vacío (se recorta con `trim`), máximo 200 caracteres. |
+| `ci` | `string` | **Sí** | No vacío (se recorta con `trim`), máximo 20 caracteres. No se exige formato de 11 dígitos: puede ser un documento extranjero. |
+| `fecha` | `string` | **Sí** | `YYYY-MM-DD` y fecha real, misma validación que la `fecha` de la factura. |
 
 **`ItemFactura`**
 
@@ -178,6 +239,11 @@ Content-Type: application/json
   "nit": "12345678901",
   "direccion": "Calle 1 #23",
   "impuesto": { "tipo": "IVA", "porciento": 10 },
+  "recibidoPor": {
+    "nombre": "Ana Pérez",
+    "ci": "12345678901",
+    "fecha": "2026-09-23"
+  },
   "items": [
     {
       "id": "i1",
@@ -239,8 +305,13 @@ Una factura emitida es un documento fiscal: **solo** se pueden editar estos camp
 | `direccion` | `string` |
 | `telefono` | `string` |
 | `email` | `string` |
+| `despachadoPor` | `ParticipanteFactura` |
+| `transportadoPor` | `ParticipanteFactura` |
+| `recibidoPor` | `ParticipanteFactura` |
 
-Cualquier otro campo (`items`, `total`, `numero`, `estado`, `nit`, `fecha`, `almacenId`, `almacenCodigo`, etc.) devuelve `400`. El almacén de una factura no se puede cambiar después de emitida. Para corregir importes, emití una factura de `tipo: "ajuste"`.
+Cualquier otro campo (`items`, `total`, `numero`, `estado`, `nit`, `fecha`, `almacenId`, `almacenCodigo`, `metodoPago`, etc.) devuelve `400`. El almacén y el método de pago de una factura no se pueden cambiar después de emitida. Para corregir importes, emití una factura de `tipo: "ajuste"`.
+
+> Los participantes (`despachadoPor`/`transportadoPor`/`recibidoPor`) sí son editables vía `PATCH`: es habitual completarlos después de emitida la factura (por ejemplo, cuando se despacha o se entrega). Igual que en el `POST`, cada uno que se envíe debe traer `nombre`, `ci` y `fecha` completos (no se puede editar un solo subcampo).
 
 ```http
 PATCH /facturas/FAC-000005

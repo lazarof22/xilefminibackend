@@ -26,6 +26,7 @@ import {
   Producto,
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
+import { Pais } from '../nomencladores/pais/schema/pais.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
   FACTURA_CAMPO_VACIO_SENTINEL,
@@ -53,6 +54,7 @@ export class FacturaService implements OnModuleInit {
     @InjectModel(Cliente.name) private clienteModel: Model<Cliente>,
     @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
+    @InjectModel(Pais.name) private paisModel: Model<Pais>,
     private readonly empresaDatosService: EmpresaDatosService,
   ) {}
 
@@ -151,6 +153,9 @@ export class FacturaService implements OnModuleInit {
       estado: 'confirmada',
       tipo: createFacturaDto.tipo ?? 'factura_normal',
       impreso: createFacturaDto.impreso ?? false,
+      despachadoPor: createFacturaDto.despachadoPor,
+      transportadoPor: createFacturaDto.transportadoPor,
+      recibidoPor: createFacturaDto.recibidoPor,
     });
 
     // numero/id are not set yet (allocated below), so they are excluded
@@ -249,7 +254,26 @@ export class FacturaService implements OnModuleInit {
       direccion: empresa.direccion,
       telefono: empresa.telefono,
       email: empresa.email,
+      ciudad: empresa.ciudad,
+      pais: await this.obtenerNombrePais(empresa.pais),
     };
+  }
+
+  /**
+   * Resolves the issuer's country name (T3) from the `Pais` nomenclador
+   * referenced by `EmpresaDatos.pais` (an ObjectId, unlike the other
+   * emisor fields which are already plain strings on EmpresaDatos).
+   * Returns undefined when the company has no país configured, or when
+   * the referenced Pais document no longer exists.
+   */
+  private async obtenerNombrePais(
+    paisId: Types.ObjectId | undefined,
+  ): Promise<string | undefined> {
+    if (!paisId) {
+      return undefined;
+    }
+    const pais = await this.paisModel.findById(paisId).exec();
+    return pais?.nombrePais;
   }
 
   /**

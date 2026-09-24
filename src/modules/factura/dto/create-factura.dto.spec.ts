@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateFacturaDto } from './create-factura.dto';
+import { CreateFacturaDto, ParticipanteFacturaDto } from './create-factura.dto';
 
 const PRODUCTO_ID_VALIDO = '507f1f77bcf86cd799439011';
 const ALMACEN_ID_VALIDO = '507f1f77bcf86cd799439012';
@@ -201,6 +201,185 @@ describe('CreateFacturaDto (T2)', () => {
       );
       const errores = await validate(instancia);
       expect(errores.some((e) => e.property === 'fecha')).toBe(true);
+    });
+  });
+
+  describe('metodoPago (T3)', () => {
+    it('accepts efectivo, transferencia and credito', async () => {
+      for (const metodoPago of ['efectivo', 'transferencia', 'credito']) {
+        const instancia = plainToInstance(
+          CreateFacturaDto,
+          dtoValido({ metodoPago }),
+        );
+        const errores = await validate(instancia);
+        expect(errores.some((e) => e.property === 'metodoPago')).toBe(false);
+      }
+    });
+
+    it('rejects a metodoPago outside the TipoPago enum', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ metodoPago: 'cheque' }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'metodoPago')).toBe(true);
+    });
+
+    it('rejects a missing metodoPago', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({ metodoPago: undefined }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'metodoPago')).toBe(true);
+    });
+  });
+
+  describe('participantes: despachadoPor / transportadoPor / recibidoPor (T3)', () => {
+    function participanteValido(
+      overrides: Record<string, unknown> = {},
+    ): Record<string, unknown> {
+      return {
+        nombre: 'Juan Perez',
+        ci: '12345678901',
+        fecha: '2026-09-22',
+        ...overrides,
+      };
+    }
+
+    it('are optional', async () => {
+      const instancia = plainToInstance(CreateFacturaDto, dtoValido());
+      const errores = await validate(instancia);
+      expect(
+        errores.some((e) =>
+          ['despachadoPor', 'transportadoPor', 'recibidoPor'].includes(
+            e.property,
+          ),
+        ),
+      ).toBe(false);
+    });
+
+    it('accepts a fully valid despachadoPor/transportadoPor/recibidoPor', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: participanteValido(),
+          transportadoPor: participanteValido({ nombre: 'Ana Lopez' }),
+          recibidoPor: participanteValido({ nombre: 'Luis Diaz' }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores).toHaveLength(0);
+    });
+
+    it('trims nombre and ci', () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: participanteValido({
+            nombre: '  Juan Perez  ',
+            ci: '  12345678901  ',
+          }),
+        }),
+      );
+      expect(instancia.despachadoPor?.nombre).toBe('Juan Perez');
+      expect(instancia.despachadoPor?.ci).toBe('12345678901');
+    });
+
+    it('rejects an empty nombre', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: participanteValido({ nombre: '   ' }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'despachadoPor')).toBe(true);
+    });
+
+    it('rejects a nombre longer than 200 characters', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: participanteValido({ nombre: 'a'.repeat(201) }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'despachadoPor')).toBe(true);
+    });
+
+    it('rejects an empty ci', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          transportadoPor: participanteValido({ ci: '' }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'transportadoPor')).toBe(true);
+    });
+
+    it('rejects a ci longer than 20 characters (still accepts non-digit foreign ids up to that length)', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          recibidoPor: participanteValido({ ci: 'X'.repeat(21) }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'recibidoPor')).toBe(true);
+    });
+
+    it('accepts a non-numeric ci (foreign document) up to 20 characters', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          recibidoPor: participanteValido({ ci: 'PASSPORT-AB1234' }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores).toHaveLength(0);
+    });
+
+    it('rejects a malformed fecha', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: participanteValido({ fecha: '22-09-2026' }),
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'despachadoPor')).toBe(true);
+    });
+
+    it('rejects a missing fecha', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: { nombre: 'Juan Perez', ci: '12345678901' },
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'despachadoPor')).toBe(true);
+    });
+
+    it('rejects a missing nombre', async () => {
+      const instancia = plainToInstance(
+        CreateFacturaDto,
+        dtoValido({
+          despachadoPor: { ci: '12345678901', fecha: '2026-09-22' },
+        }),
+      );
+      const errores = await validate(instancia);
+      expect(errores.some((e) => e.property === 'despachadoPor')).toBe(true);
+    });
+
+    it('ParticipanteFacturaDto standalone also rejects an incomplete payload', async () => {
+      const instancia = plainToInstance(ParticipanteFacturaDto, {
+        nombre: 'Juan Perez',
+      });
+      const errores = await validate(instancia);
+      expect(errores.length).toBeGreaterThan(0);
     });
   });
 });

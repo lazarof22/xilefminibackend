@@ -24,6 +24,7 @@ import {
   Producto,
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
+import { Pais, PaisDocument } from '../nomencladores/pais/schema/pais.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
@@ -89,6 +90,10 @@ type ProductoModelMock = {
   find: jest.Mock<QueryMock<ProductoDocument[]>, unknown[]>;
 };
 
+type PaisModelMock = {
+  findById: jest.Mock<QueryMock<PaisDocument | null>, unknown[]>;
+};
+
 /** Narrows an unknown record field, for the rare assertion that needs a nested shape. */
 function comoRegistro(valor: unknown): Record<string, unknown> {
   return valor as Record<string, unknown>;
@@ -101,6 +106,7 @@ describe('FacturaService', () => {
   let clienteModelMock: ClienteModelMock;
   let almacenModelMock: AlmacenModelMock;
   let productoModelMock: ProductoModelMock;
+  let paisModelMock: PaisModelMock;
   let savedFactura: Partial<Factura> & {
     save: jest.Mock;
     validate: jest.Mock<Promise<void>, [unknown?]>;
@@ -194,6 +200,15 @@ describe('FacturaService', () => {
       ]),
     );
 
+    // Default: no país resolved (undefined empresa.pais never even calls
+    // this). Individual T3 tests override it to a found/missing Pais doc.
+    paisModelMock = {
+      findById: jest.fn<QueryMock<PaisDocument | null>, unknown[]>(),
+    };
+    paisModelMock.findById.mockReturnValue(
+      crearQueryMock<PaisDocument | null>(null),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FacturaService,
@@ -205,6 +220,7 @@ describe('FacturaService', () => {
         { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
         { provide: getModelToken(Almacen.name), useValue: almacenModelMock },
         { provide: getModelToken(Producto.name), useValue: productoModelMock },
+        { provide: getModelToken(Pais.name), useValue: paisModelMock },
         { provide: EmpresaDatosService, useValue: empresaDatosServiceMock },
       ],
     }).compile();
@@ -350,6 +366,130 @@ describe('FacturaService', () => {
 
       const construidoCon = facturaModelMock.mock.calls[0][0];
       expect(construidoCon.emisor).toBeUndefined();
+    });
+
+    it('copies ciudad and resolves pais from the Pais nomenclador (T3)', async () => {
+      (empresaDatosServiceMock.obtener as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Empresa Real S.A.',
+        ruc_nit: '111-REAL',
+        direccion: 'Dir real',
+        telefono: '000',
+        email: 'real@empresa.com',
+        ciudad: 'La Habana',
+        pais: '507f1f77bcf86cd799439099',
+      });
+      paisModelMock.findById.mockReturnValue(
+        crearQueryMock<PaisDocument | null>({
+          _id: '507f1f77bcf86cd799439099',
+          nombrePais: 'Cuba',
+        } as PaisDocument),
+      );
+
+      await service.create(baseDto());
+
+      expect(paisModelMock.findById).toHaveBeenCalledWith(
+        '507f1f77bcf86cd799439099',
+      );
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.emisor)).toEqual({
+        nombre: 'Empresa Real S.A.',
+        nit: '111-REAL',
+        direccion: 'Dir real',
+        telefono: '000',
+        email: 'real@empresa.com',
+        ciudad: 'La Habana',
+        pais: 'Cuba',
+      });
+    });
+
+    it('leaves pais undefined when EmpresaDatos has no pais configured, without querying the Pais model', async () => {
+      (empresaDatosServiceMock.obtener as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Empresa Real S.A.',
+        ciudad: 'La Habana',
+      });
+
+      await service.create(baseDto());
+
+      expect(paisModelMock.findById).not.toHaveBeenCalled();
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.emisor).pais).toBeUndefined();
+    });
+
+    it('leaves pais undefined when the referenced Pais document no longer exists', async () => {
+      (empresaDatosServiceMock.obtener as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Empresa Real S.A.',
+        pais: '507f1f77bcf86cd799439099',
+      });
+      paisModelMock.findById.mockReturnValue(
+        crearQueryMock<PaisDocument | null>(null),
+      );
+
+      await service.create(baseDto());
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.emisor).pais).toBeUndefined();
+    });
+  });
+
+  describe('participantes: despachadoPor / transportadoPor / recibidoPor (T3)', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    it('persists despachadoPor, transportadoPor and recibidoPor on create', async () => {
+      const participante = {
+        nombre: 'Juan Perez',
+        ci: '12345678901',
+        fecha: '2026-09-22',
+      };
+      const dto = {
+        ...baseDto(),
+        despachadoPor: participante,
+        transportadoPor: { ...participante, nombre: 'Ana Lopez' },
+        recibidoPor: { ...participante, nombre: 'Luis Diaz' },
+      } as unknown as CreateFacturaDto;
+
+      await service.create(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.despachadoPor).toEqual(participante);
+      expect(comoRegistro(construidoCon.transportadoPor).nombre).toBe(
+        'Ana Lopez',
+      );
+      expect(comoRegistro(construidoCon.recibidoPor).nombre).toBe('Luis Diaz');
+    });
+
+    it('leaves the participants undefined when not sent', async () => {
+      await service.create(baseDto());
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.despachadoPor).toBeUndefined();
+      expect(construidoCon.transportadoPor).toBeUndefined();
+      expect(construidoCon.recibidoPor).toBeUndefined();
+    });
+
+    it('passes the participants through on update, like any other allowed field', async () => {
+      const actualizada = { id: 'FAC-000001' } as Factura;
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(actualizada),
+      );
+
+      const dto: UpdateFacturaDto = {
+        recibidoPor: {
+          nombre: 'Luis Diaz',
+          ci: '12345678901',
+          fecha: '2026-09-22',
+        },
+      };
+      await service.update('FAC-000001', dto);
+
+      expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: 'FAC-000001', estado: { $ne: 'anulada' } },
+        dto,
+        { new: true, runValidators: true },
+      );
     });
   });
 

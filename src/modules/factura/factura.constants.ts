@@ -52,3 +52,21 @@ export const FACTURA_CLIENTE_EMAIL_PLACEHOLDER_DOMINIO = 'xilef.local';
  * non-empty value, so an empty string would make the client creation fail).
  */
 export const FACTURA_CLIENTE_DIRECCION_PLACEHOLDER = 'Sin dirección';
+
+/**
+ * Payment methods an invoice can be settled with (T3), matching the
+ * methods already handled by the `pago` module (`Pago.metodoPago` /
+ * `PagoBaseDto`, see src/modules/inventario/pago).
+ *
+ * Update paths only run schema validators on the paths present in the
+ * update document (`runValidators: true` + Mongoose's default
+ * `pathsToSkip` behavior): `UpdateFacturaDto` never accepts `metodoPago`,
+ * so a legacy invoice stored with a value outside this enum keeps loading
+ * and being edited normally; it just can't have its `metodoPago` changed
+ * to another out-of-enum value going forward.
+ */
+export enum TipoPago {
+  EFECTIVO = 'efectivo',
+  TRANSFERENCIA = 'transferencia',
+  CREDITO = 'credito',
+}
