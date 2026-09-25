@@ -31,6 +31,7 @@ import { Pais } from '../nomencladores/pais/schema/pais.schema';
 import { Usuario } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import {
+  ESTADO_LEGADO_AJUSTADA,
   EstadoFactura,
   FACTURA_CAMPO_VACIO_SENTINEL,
   FACTURA_CLIENTE_DIRECCION_PLACEHOLDER,
@@ -46,7 +47,9 @@ import { calcularTotales } from './factura-totales';
 import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
 import {
+  camposEditablesPorEstado,
   camposNoPermitidos,
+  camposPresentes,
   mensajeCamposNoPermitidos,
   mensajeTransicionInvalida,
   origenesPermitidos,
@@ -108,17 +111,18 @@ export class FacturaService implements OnModuleInit {
    * `estado: 'ajustada'`, which no longer holds after the first run.
    */
   private async migrarEstadoAjustada(): Promise<void> {
-    // 'ajustada' predates the EstadoFactura enum, so it is not one of its
-    // values; the cast only widens the filter's type for this one legacy
-    // literal, it never bypasses runtime validation.
-    const estadoLegacyAjustada = 'ajustada' as unknown as EstadoFactura;
+    // ESTADO_LEGADO_AJUSTADA predates the EstadoFactura enum, so it is not
+    // one of its values; the cast only widens the filter's type for this
+    // one legacy literal, it never bypasses runtime validation.
+    const estadoLegacyAjustada =
+      ESTADO_LEGADO_AJUSTADA as unknown as EstadoFactura;
     const resultado = await this.facturaModel
       .updateMany(
         { estado: estadoLegacyAjustada },
         {
           $set: {
             estado: EstadoFactura.CONFIRMADA,
-            estadoLegado: 'ajustada',
+            estadoLegado: ESTADO_LEGADO_AJUSTADA,
           },
         },
       )
@@ -198,6 +202,7 @@ export class FacturaService implements OnModuleInit {
       recargoTotal,
       total,
       estado: EstadoFactura.EDICION,
+      revision: 0,
       tipo: createFacturaDto.tipo ?? 'factura_normal',
       impreso: createFacturaDto.impreso ?? false,
       talonario: createFacturaDto.talonario,
@@ -592,16 +597,27 @@ export class FacturaService implements OnModuleInit {
    * re-validated and recomputed server-side, see
    * `construirActualizacion`); `terminada` only `fecha`/`talonario`/
    * `impreso`; `confirmada`/`cancelada` only `impreso`; `anulada` nothing.
-   * Any other field present for the current state -> 409 naming both.
+   * Any other field actually present (`camposPresentes`, T6c) for the
+   * current state -> 409 naming both.
    *
    * Reads the invoice once (404 if missing) to decide what is allowed and
-   * to build the `$set`, then persists with exactly one conditional
-   * `findOneAndUpdate` keyed on the state just read — so a transition that
-   * lands between the read and the write can never silently apply a stale
-   * edit; `lanzarActualizacionConcurrente` re-disambiguates 404 vs 409 for
-   * that race, mirroring `lanzarTransicionInvalida`.
+   * to build the `$set`, then persists with one conditional
+   * `findOneAndUpdate` keyed on the `estado` AND `revision` (T6c) just
+   * read: matching only that exact `revision` closes the lost-update race
+   * left by matching `estado` alone (two concurrent PATCHes in `edicion`
+   * both read the same `estado` and could otherwise both match, one
+   * silently overwriting the other's derived totals/almacén/cliente). A
+   * legacy invoice (persisted before `revision` existed) reads back as
+   * `undefined` — never backfilled to `0`, see `factura.schema.ts` — so it
+   * is matched with `{ revision: { $exists: false } }` instead; either way
+   * the write also `$inc`s `revision`, so the very next PATCH always has a
+   * `revision` to match. When nothing matches (deleted, a concurrent
+   * transition, or a lost race on `revision`), `lanzarActualizacionConcurrente`
+   * re-disambiguates 404 vs 409, mirroring `lanzarTransicionInvalida`.
    *
-   * An update with no fields at all is a no-op: nothing is rejected
+   * An update with no fields actually present at all (`camposPresentes`,
+   * T6c — own keys with an `undefined` value, e.g. from
+   * `plainToInstance`, never count) is a no-op: nothing is rejected
    * (there is nothing to check) and nothing is written, so the invoice is
    * returned unchanged instead of issuing an empty `$set`.
    */
@@ -622,7 +638,7 @@ export class FacturaService implements OnModuleInit {
       );
     }
 
-    if (Object.keys(updateFacturaDto).length === 0) {
+    if (camposPresentes(updateFacturaDto).length === 0) {
       return factura;
     }
 
@@ -632,44 +648,71 @@ export class FacturaService implements OnModuleInit {
       factura,
     );
 
+    const revision = factura.revision;
+    const filtroRevision =
+      revision === undefined ? { revision: { $exists: false } } : { revision };
+
     const actualizada = await this.facturaModel
       .findOneAndUpdate(
-        { id, estado },
-        { $set: set },
+        { id, estado, ...filtroRevision },
+        { $set: set, $inc: { revision: 1 } },
         { new: true, runValidators: true },
       )
       .exec();
     if (actualizada) {
       return actualizada;
     }
-    return this.lanzarActualizacionConcurrente(id, estado);
+    return this.lanzarActualizacionConcurrente(id);
   }
 
   /**
-   * Distinguishes 404 (invoice deleted) from 409 (a concurrent transition
-   * changed `estado` between `update`'s read and its conditional write)
-   * after that write matched nothing. Always throws.
+   * After `update`'s conditional write (`estado` + `revision`, T6c)
+   * matches nothing, distinguishes 404 (invoice deleted) from 409 (some
+   * other change — a concurrent transition, or another concurrent PATCH
+   * that already advanced `revision` — landed between the read and the
+   * write). Both concurrent-write causes now share one generic message:
+   * unlike before `revision` existed, a mismatch can no longer be
+   * attributed to `estado` alone. Always throws.
    */
-  private async lanzarActualizacionConcurrente(
-    id: string,
-    estadoEsperado: EstadoFactura,
-  ): Promise<never> {
+  private async lanzarActualizacionConcurrente(id: string): Promise<never> {
     const existente = await this.facturaModel.findOne({ id }).exec();
     if (!existente) {
       throw new NotFoundException(`Factura con ID ${id} no encontrada`);
     }
     throw new ConflictException(
-      `La factura ${id} cambio de estado "${estadoEsperado}" a "${existente.estado}" antes de aplicar la edicion; reintente`,
+      `La factura ${id} cambio mientras se editaba; reintente`,
     );
   }
 
   /**
-   * Builds the `$set` for `update` from the fields `camposNoPermitidos`
-   * already confirmed are allowed for `estado`. `fecha`/`talonario`/
-   * `impreso` need no transformation and are valid in every editable
-   * state, so they are handled once up front; everything else is only
-   * reachable while `estado` is `edicion` (every other allowed state only
-   * permits that first group).
+   * Fields whose PATCH value can be copied into `$set` as-is, with no
+   * derived computation. Every other editable field (`items`, `impuesto`,
+   * `almacenId`, and the buyer fields `cliente`/`nit`/`direccion`/
+   * `telefono`/`email`) instead triggers derived recomputation, handled by
+   * `aplicarCambiosDeItemsYAlmacen` / `aplicarCambiosDeCliente`.
+   */
+  private static readonly CAMPOS_SIMPLES = [
+    'fecha',
+    'talonario',
+    'impreso',
+    'concepto',
+    'moneda',
+    'metodoPago',
+    'despachadoPor',
+    'transportadoPor',
+    'recibidoPor',
+  ] as const;
+
+  /**
+   * Builds the `$set` for `update` from the fields actually present
+   * (`camposPresentes`, T6c) that `camposNoPermitidos` already confirmed
+   * are allowed for `estado`. Which fields are allowed for `estado` is
+   * read once from `camposEditablesPorEstado` (`factura-estado.ts`) — the
+   * single source of truth also used to build the 409 — instead of
+   * duplicating that per-state field list here as a second hardcoded
+   * `estado` check (T6c readability fix): a field only reaches `$set` when
+   * it is both in `CAMPOS_SIMPLES` (or the items/cliente derived group)
+   * AND in `camposEditablesPorEstado(estado)`.
    */
   private async construirActualizacion(
     estado: EstadoFactura,
@@ -677,42 +720,22 @@ export class FacturaService implements OnModuleInit {
     actual: Factura,
   ): Promise<Record<string, unknown>> {
     const set: Record<string, unknown> = {};
+    const presentes = new Set(camposPresentes(dto));
+    const editables = camposEditablesPorEstado(estado);
+    const dtoRegistro = dto as unknown as Record<string, unknown>;
 
-    if (dto.fecha !== undefined) {
-      set.fecha = dto.fecha;
-    }
-    if (dto.talonario !== undefined) {
-      set.talonario = dto.talonario;
-    }
-    if (dto.impreso !== undefined) {
-      set.impreso = dto.impreso;
+    for (const campo of FacturaService.CAMPOS_SIMPLES) {
+      if (editables.includes(campo) && presentes.has(campo)) {
+        set[campo] = dtoRegistro[campo];
+      }
     }
 
-    if (estado !== EstadoFactura.EDICION) {
+    if (!editables.includes('items')) {
       return set;
     }
 
-    if (dto.concepto !== undefined) {
-      set.concepto = dto.concepto;
-    }
-    if (dto.moneda !== undefined) {
-      set.moneda = dto.moneda;
-    }
-    if (dto.metodoPago !== undefined) {
-      set.metodoPago = dto.metodoPago;
-    }
-    if (dto.despachadoPor !== undefined) {
-      set.despachadoPor = dto.despachadoPor;
-    }
-    if (dto.transportadoPor !== undefined) {
-      set.transportadoPor = dto.transportadoPor;
-    }
-    if (dto.recibidoPor !== undefined) {
-      set.recibidoPor = dto.recibidoPor;
-    }
-
-    await this.aplicarCambiosDeItemsYAlmacen(dto, actual, set);
-    await this.aplicarCambiosDeCliente(dto, actual, set);
+    await this.aplicarCambiosDeItemsYAlmacen(dto, actual, set, presentes);
+    await this.aplicarCambiosDeCliente(dto, actual, set, presentes);
 
     return set;
   }
@@ -733,9 +756,10 @@ export class FacturaService implements OnModuleInit {
     dto: UpdateFacturaDto,
     actual: Factura,
     set: Record<string, unknown>,
+    presentes: Set<string>,
   ): Promise<void> {
-    const itemsCambiaron = dto.items !== undefined;
-    const impuestoCambio = dto.impuesto !== undefined;
+    const itemsCambiaron = presentes.has('items');
+    const impuestoCambio = presentes.has('impuesto');
 
     if (itemsCambiaron || impuestoCambio) {
       const itemsEntrada = itemsCambiaron ? dto.items! : actual.items;
@@ -750,7 +774,7 @@ export class FacturaService implements OnModuleInit {
       set.total = total;
     }
 
-    const almacenIdCambio = dto.almacenId !== undefined;
+    const almacenIdCambio = presentes.has('almacenId');
     if (!itemsCambiaron && !almacenIdCambio) {
       return;
     }
@@ -782,6 +806,7 @@ export class FacturaService implements OnModuleInit {
     dto: UpdateFacturaDto,
     actual: Factura,
     set: Record<string, unknown>,
+    presentes: Set<string>,
   ): Promise<void> {
     const camposCliente = [
       'cliente',
@@ -790,34 +815,27 @@ export class FacturaService implements OnModuleInit {
       'telefono',
       'email',
     ] as const;
-    const algunoCambio = camposCliente.some(
-      (campo) => dto[campo] !== undefined,
-    );
+    const algunoCambio = camposCliente.some((campo) => presentes.has(campo));
     if (!algunoCambio) {
       return;
     }
 
-    const clienteNombre =
-      dto.cliente !== undefined
-        ? this.limpiarCampoTexto(dto.cliente) ||
-          FACTURA_CLIENTE_NOMBRE_POR_DEFECTO
-        : actual.cliente;
-    const nit =
-      dto.nit !== undefined
-        ? this.limpiarCampoTexto(dto.nit)
-        : (actual.nit ?? '');
-    const direccion =
-      dto.direccion !== undefined
-        ? this.limpiarCampoTexto(dto.direccion)
-        : (actual.direccion ?? '');
-    const telefono =
-      dto.telefono !== undefined
-        ? this.limpiarCampoTexto(dto.telefono)
-        : (actual.telefono ?? '');
-    const email =
-      dto.email !== undefined
-        ? this.limpiarCampoTexto(dto.email)
-        : (actual.email ?? '');
+    const clienteNombre = presentes.has('cliente')
+      ? this.limpiarCampoTexto(dto.cliente) ||
+        FACTURA_CLIENTE_NOMBRE_POR_DEFECTO
+      : actual.cliente;
+    const nit = presentes.has('nit')
+      ? this.limpiarCampoTexto(dto.nit)
+      : (actual.nit ?? '');
+    const direccion = presentes.has('direccion')
+      ? this.limpiarCampoTexto(dto.direccion)
+      : (actual.direccion ?? '');
+    const telefono = presentes.has('telefono')
+      ? this.limpiarCampoTexto(dto.telefono)
+      : (actual.telefono ?? '');
+    const email = presentes.has('email')
+      ? this.limpiarCampoTexto(dto.email)
+      : (actual.email ?? '');
 
     set.cliente = clienteNombre;
     set.nit = nit;
@@ -873,6 +891,12 @@ export class FacturaService implements OnModuleInit {
    * `$in` filter, so no other state can match. The invoice's `numero`/`id`
    * are never touched here (anular never releases or reuses them, see
    * `siguienteNumero`/`compensarNumeroTrasFalloDeGuardado`).
+   *
+   * Also `$inc`s `revision` (T6c), like `update`, so `revision` keeps
+   * advancing across every write to the invoice, not just PATCHes. The
+   * transition itself needs no `revision` match: `estado` alone is already
+   * an atomic, race-free filter here, since transitions never derive
+   * fields from the invoice's prior state the way `update` does.
    */
   private async transicionar(
     id: string,
@@ -881,7 +905,7 @@ export class FacturaService implements OnModuleInit {
     const actualizada = await this.facturaModel
       .findOneAndUpdate(
         { id, estado: { $in: origenesPermitidos(destino) } },
-        { $set: { estado: destino } },
+        { $set: { estado: destino }, $inc: { revision: 1 } },
         { new: true, runValidators: true },
       )
       .exec();

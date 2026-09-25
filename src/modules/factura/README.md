@@ -160,6 +160,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
   "recargoTotal": 3,
   "total": 251.35,
   "estado": "edicion",
+  "revision": 2,
   "talonario": "T-001",
   "tipo": "factura_normal",
   "impreso": false,
@@ -189,6 +190,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `subtotal`, `descuentoTotal`, `recargoTotal`, `total` | `number` | Los calcula el servidor. Redondeados a 2 decimales. |
 | `estado` | `string` | `"edicion"`, `"terminada"`, `"confirmada"`, `"cancelada"` o `"anulada"`. Toda factura nueva nace `"edicion"` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). |
 | `estadoLegado` | `string` | **Opcional:** solo `"ajustada"`, y solo presente en una factura migrada desde ese estado legado (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). Ausente en cualquier otra factura. |
+| `revision` | `number` | **Server-controlado, nunca en el `POST`/`PATCH`:** contador de concurrencia optimista (T6c). Se incrementa en cada `PATCH /facturas/:id` y en cada transición de estado. Ausente solo en una factura legada, de antes de que este campo existiera. Ver [Concurrencia al editar](#concurrencia-al-editar-revision-t6c). |
 | `talonario` | `string` | **Opcional:** referencia libre al talonario/recibo asociado. Hasta 50 caracteres. |
 | `tipo` | `string` | `"factura_normal"` (por defecto) o `"ajuste"`. |
 | `impreso` | `boolean` | `false` por defecto. |
@@ -447,9 +449,21 @@ Si `FAC-000005` está `terminada`, la respuesta es `409`:
 { "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000005 esta en estado \"terminada\": no se puede modificar concepto" }
 ```
 
-**Errores:** `400` (campo no whitelisteado, o dato inválido), `404` (no existe), `409` (el estado actual no permite modificar alguno de los campos enviados — el mensaje los nombra todos).
+**Errores:** `400` (campo no whitelisteado, o dato inválido), `404` (no existe), `409` (el estado actual no permite modificar alguno de los campos enviados — el mensaje los nombra todos; o la factura cambió mientras se editaba, ver abajo).
 
 > Uso típico: después de imprimir, enviar `{ "impreso": true }` (funciona en cualquier estado salvo `anulada`).
+
+### Concurrencia al editar (`revision`, T6c)
+
+Cada `PATCH /facturas/:id` valida internamente contra el `revision` que leyó al empezar (además del `estado`), no solo contra el `estado`: si dos ediciones concurrentes leen la misma factura y ambas intentan escribir, solo la primera tiene éxito. La segunda recibe `409`:
+
+```json
+{ "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000005 cambio mientras se editaba; reintente" }
+```
+
+Esto puede pasar aunque el `estado` no haya cambiado (por ejemplo, dos usuarios editando `concepto` en `edicion` al mismo tiempo): antes de esto, esa segunda escritura se aplicaba igual y pisaba silenciosamente los totales/almacén/cliente recalculados por la primera (lost update). Ante este `409`, el cliente debe volver a pedir `GET /facturas/:id` (para tener el `estado`/`revision`/datos actuales) y reintentar el `PATCH` con esa información fresca — nunca reintentar a ciegas con el cuerpo original.
+
+`revision` es enteramente server-controlado: nunca se envía en el `POST`/`PATCH`, y el cliente no necesita leerlo ni enviarlo de vuelta para que esta protección funcione.
 
 ---
 
@@ -554,5 +568,6 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 - [ ] Manejar el `401` (sin sesión / sesión expirada) y el `403` (rol sin permiso: solo `administrador`, `gerente` y `facturador` pueden crear, editar o anular).
 - [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
 - [ ] Antes de armar el formulario de edición, consultar la [matriz de edición por estado](#matriz-de-edición-por-estado): mostrar solo los campos editables en el `estado` actual de la factura.
-- [ ] Manejar el `409` al editar (el estado actual no permite alguno de los campos enviados) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
+- [ ] Manejar el `409` al editar (el estado actual no permite alguno de los campos enviados, o la factura cambió mientras se editaba — ver [Concurrencia al editar](#concurrencia-al-editar-revision-t6c)) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
+- [ ] Ante el `409` de concurrencia, volver a pedir `GET /facturas/:id` y reintentar el `PATCH` con los datos frescos, en vez de reintentar a ciegas con el cuerpo original.
 - [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }` (funciona en cualquier estado salvo `anulada`).

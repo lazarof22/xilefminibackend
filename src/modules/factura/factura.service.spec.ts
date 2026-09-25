@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+import { plainToInstance } from 'class-transformer';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import {
@@ -361,6 +363,13 @@ describe('FacturaService', () => {
       expect(construidoCon.estado).toBe(EstadoFactura.EDICION);
     });
 
+    it('sets revision to 0 explicitly for a new invoice (T6c optimistic concurrency)', async () => {
+      await crear(baseDto());
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(construidoCon.revision).toBe(0);
+    });
+
     it('computes tax importe from porciento server-side', async () => {
       const dto = {
         ...baseDto(),
@@ -541,8 +550,15 @@ describe('FacturaService', () => {
       await service.update('FAC-000001', dto);
 
       expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-        { id: 'FAC-000001', estado: EstadoFactura.EDICION },
-        { $set: { recibidoPor: dto.recibidoPor } },
+        {
+          id: 'FAC-000001',
+          estado: EstadoFactura.EDICION,
+          revision: { $exists: false },
+        },
+        {
+          $set: { recibidoPor: dto.recibidoPor },
+          $inc: { revision: 1 },
+        },
         { new: true, runValidators: true },
       );
     });
@@ -933,6 +949,30 @@ describe('FacturaService', () => {
         expect(resultado).toBe(existente);
         expect(facturaModelMock.findOneAndUpdate).not.toHaveBeenCalled();
       });
+
+      /**
+       * Regression (T6c): `plainToInstance(UpdateFacturaDto, {})` — a
+       * genuinely empty PATCH body — still gives every declared field an
+       * own `undefined`-valued key (`useDefineForClassFields`), so before
+       * this fix `Object.keys(dto).length === 0` was `false` and the
+       * no-op check could never trigger for a real request body; an empty
+       * `$set` would have been sent instead. Built with the real
+       * `plainToInstance`, not a plain object, so this fails pre-fix.
+       */
+      it('returns the invoice unchanged for a real plainToInstance({}) DTO (production regression)', async () => {
+        const existente = facturaGuardada();
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+
+        const dto = plainToInstance(UpdateFacturaDto, {});
+        expect(Object.keys(dto).length).toBeGreaterThan(0); // sanity: undefined-valued own keys
+
+        const resultado = await service.update('FAC-000001', dto);
+
+        expect(resultado).toBe(existente);
+        expect(facturaModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+      });
     });
 
     describe('edicion: every business field editable', () => {
@@ -951,8 +991,12 @@ describe('FacturaService', () => {
         });
 
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-          { id: 'FAC-000001', estado: EstadoFactura.EDICION },
-          { $set: { concepto: 'nuevo' } },
+          {
+            id: 'FAC-000001',
+            estado: EstadoFactura.EDICION,
+            revision: { $exists: false },
+          },
+          { $set: { concepto: 'nuevo' }, $inc: { revision: 1 } },
           { new: true, runValidators: true },
         );
         expect(resultado).toBe(actualizada);
@@ -1095,10 +1139,49 @@ describe('FacturaService', () => {
         });
 
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-          { id: 'FAC-000001', estado: EstadoFactura.TERMINADA },
-          { $set: { [campo]: valor } },
+          {
+            id: 'FAC-000001',
+            estado: EstadoFactura.TERMINADA,
+            revision: { $exists: false },
+          },
+          { $set: { [campo]: valor }, $inc: { revision: 1 } },
           { new: true, runValidators: true },
         );
+      });
+
+      /**
+       * Regression (T6c, confirmed by the parent on the built app): built
+       * with the real `plainToInstance` — never a plain object — so
+       * `useDefineForClassFields` (from `tsconfig.json`'s `target:
+       * ES2023`) reproduces the own `undefined`-valued keys
+       * (`despachadoPor`, `transportadoPor`, `recibidoPor`, `talonario`)
+       * that made `camposNoPermitidos` (pre-fix, `Object.keys()`-based)
+       * wrongly reject this PATCH with a 409 in production.
+       */
+      it('allows a real plainToInstance DTO with only { fecha } sent (production regression)', async () => {
+        const existente = facturaGuardada({ estado: EstadoFactura.TERMINADA });
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+
+        const dto = plainToInstance(UpdateFacturaDto, { fecha: '2026-09-24' });
+        expect(Object.keys(dto).length).toBeGreaterThan(1); // sanity: has undefined-valued own keys
+
+        const resultado = await service.update('FAC-000001', dto);
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+          {
+            id: 'FAC-000001',
+            estado: EstadoFactura.TERMINADA,
+            revision: { $exists: false },
+          },
+          { $set: { fecha: '2026-09-24' }, $inc: { revision: 1 } },
+          { new: true, runValidators: true },
+        );
+        expect(resultado).toBe(existente);
       });
 
       it('rejects any other field with a 409 naming the state and the field', async () => {
@@ -1131,8 +1214,8 @@ describe('FacturaService', () => {
           await service.update('FAC-000001', { impreso: true });
 
           expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-            { id: 'FAC-000001', estado },
-            { $set: { impreso: true } },
+            { id: 'FAC-000001', estado, revision: { $exists: false } },
+            { $set: { impreso: true }, $inc: { revision: 1 } },
             { new: true, runValidators: true },
           );
         });
@@ -1206,6 +1289,87 @@ describe('FacturaService', () => {
           service.update('FAC-000001', { concepto: 'x' }),
         ).rejects.toBeInstanceOf(ConflictException);
       });
+
+      it('the 409 message says the invoice changed while being edited, and to retry', async () => {
+        const existente = facturaGuardada();
+        facturaModelMock.findOne
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(existente))
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(existente));
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+
+        await expect(
+          service.update('FAC-000001', { concepto: 'x' }),
+        ).rejects.toThrow(/cambio mientras se editaba.*reintente/i);
+      });
+    });
+
+    /**
+     * T6c: closes the lost-update race left by matching only `estado` —
+     * two concurrent PATCHes in `edicion` both read the same `estado` and
+     * could otherwise both match the same conditional `findOneAndUpdate`,
+     * silently overwriting one edit's derived totals/almacén/cliente with
+     * the other's.
+     */
+    describe('optimistic concurrency via revision (T6c)', () => {
+      it('matches the exact revision it read when the invoice already has one', async () => {
+        const existente = facturaGuardada({ revision: 3 });
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+
+        await service.update('FAC-000001', { concepto: 'nuevo' });
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+          { id: 'FAC-000001', estado: EstadoFactura.EDICION, revision: 3 },
+          { $set: { concepto: 'nuevo' }, $inc: { revision: 1 } },
+          { new: true, runValidators: true },
+        );
+      });
+
+      it('matches { revision: { $exists: false } } for a legacy invoice with no revision field', async () => {
+        const existente = facturaGuardada(); // no `revision` key at all
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(existente),
+        );
+
+        await service.update('FAC-000001', { concepto: 'nuevo' });
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+          {
+            id: 'FAC-000001',
+            estado: EstadoFactura.EDICION,
+            revision: { $exists: false },
+          },
+          { $set: { concepto: 'nuevo' }, $inc: { revision: 1 } },
+          { new: true, runValidators: true },
+        );
+      });
+
+      it('throws 409 (lost update) when a concurrent edit already advanced revision, even though estado is unchanged', async () => {
+        // Both PATCHes read revision 3; the first one to write advances it
+        // to 4, so the second one's conditional write (still filtering on
+        // revision: 3) matches nothing even though estado never changed.
+        const leida = facturaGuardada({ revision: 3 });
+        const trasOtraEdicion = facturaGuardada({ revision: 4 });
+        facturaModelMock.findOne
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(leida))
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(trasOtraEdicion));
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+
+        await expect(
+          service.update('FAC-000001', { concepto: 'otro' }),
+        ).rejects.toThrow(/cambio mientras se editaba.*reintente/i);
+      });
     });
   });
 
@@ -1242,7 +1406,7 @@ describe('FacturaService', () => {
 
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
           { id: 'FAC-000001', estado: { $in: origenesPermitidos(destino) } },
-          { $set: { estado: destino } },
+          { $set: { estado: destino }, $inc: { revision: 1 } },
           { new: true, runValidators: true },
         );
         expect(resultado).toBe(actualizada);
@@ -1294,7 +1458,7 @@ describe('FacturaService', () => {
           id: 'FAC-000001',
           estado: { $in: origenesPermitidos(EstadoFactura.ANULADA) },
         },
-        { $set: { estado: EstadoFactura.ANULADA } },
+        { $set: { estado: EstadoFactura.ANULADA }, $inc: { revision: 1 } },
         { new: true, runValidators: true },
       );
       expect(resultado).toBe(anulada);

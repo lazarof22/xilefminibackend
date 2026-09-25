@@ -1,13 +1,17 @@
+import 'reflect-metadata';
+import { plainToInstance } from 'class-transformer';
 import { EstadoFactura } from './factura.constants';
 import {
   CAMPOS_FACTURA_EDITABLES,
   camposEditablesPorEstado,
   camposNoPermitidos,
+  camposPresentes,
   esTransicionValida,
   mensajeCamposNoPermitidos,
   mensajeTransicionInvalida,
   origenesPermitidos,
 } from './factura-estado';
+import { UpdateFacturaDto } from './dto/update-factura.dto';
 
 const TODOS_LOS_ESTADOS = Object.values(EstadoFactura);
 
@@ -151,6 +155,71 @@ describe('factura-estado (T6a)', () => {
 
     it('returns an empty array for an empty dto', () => {
       expect(camposNoPermitidos(EstadoFactura.EDICION, {})).toEqual([]);
+    });
+  });
+
+  describe('camposPresentes (T6c)', () => {
+    it('returns only own keys whose value is not undefined', () => {
+      expect(
+        camposPresentes({ fecha: '2026-09-24', talonario: undefined }),
+      ).toEqual(['fecha']);
+    });
+
+    it('returns an empty array when every own key is undefined', () => {
+      expect(
+        camposPresentes({ fecha: undefined, talonario: undefined }),
+      ).toEqual([]);
+    });
+
+    it('returns an empty array for an object with no own keys', () => {
+      expect(camposPresentes({})).toEqual([]);
+    });
+
+    /**
+     * Regression (T6c, confirmed by the parent on the built app): with
+     * `tsconfig.json`'s `target: ES2023`, `useDefineForClassFields`
+     * defaults to `true`, so `plainToInstance(UpdateFacturaDto, { fecha })`
+     * gives every OTHER declared field of `UpdateFacturaDto` an own key
+     * with value `undefined` (`despachadoPor`, `transportadoPor`,
+     * `recibidoPor`, `talonario`, etc.) — `Object.keys()` on that instance
+     * is NOT the set of fields the caller actually sent. Before this fix,
+     * `camposNoPermitidos` used `Object.keys()` directly and rejected
+     * those undefined-valued fields for `terminada`, so a bare `{ fecha }`
+     * PATCH on a `terminada` invoice returned 409 in production even
+     * though `fecha` alone is allowed. Building the DTO with the real
+     * `plainToInstance` (not a plain object) is what makes this fail on
+     * the pre-fix code — a plain object never has those extra own keys.
+     */
+    it('reproduces the terminada + { fecha } production bug: a real plainToInstance DTO has undefined-valued own keys that are not "sent"', () => {
+      const dto = plainToInstance(UpdateFacturaDto, { fecha: '2026-09-24' });
+
+      expect(Object.keys(dto)).toEqual(
+        expect.arrayContaining([
+          'despachadoPor',
+          'transportadoPor',
+          'recibidoPor',
+          'talonario',
+        ]),
+      );
+      expect(camposPresentes(dto)).toEqual(['fecha']);
+    });
+  });
+
+  describe('camposNoPermitidos with a real plainToInstance DTO (T6c regression)', () => {
+    it('terminada + { fecha } via plainToInstance(UpdateFacturaDto) rejects nothing', () => {
+      const dto = plainToInstance(UpdateFacturaDto, { fecha: '2026-09-24' });
+
+      expect(camposNoPermitidos(EstadoFactura.TERMINADA, dto)).toEqual([]);
+    });
+
+    it('edicion + a full plainToInstance DTO with every field sent rejects nothing', () => {
+      const dto = plainToInstance(UpdateFacturaDto, {
+        fecha: '2026-09-24',
+        concepto: 'x',
+        talonario: 'T-001',
+      });
+
+      expect(camposNoPermitidos(EstadoFactura.EDICION, dto)).toEqual([]);
     });
   });
 

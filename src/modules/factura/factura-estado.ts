@@ -119,19 +119,33 @@ export function camposEditablesPorEstado(
 }
 
 /**
- * Own-enumerable keys of `dto` that are not editable while the invoice is
- * in `estado` (used by `FacturaService.update` to build the 409). `dto` is
- * always the already-validated, whitelisted `UpdateFacturaDto` instance
- * (or, in tests, a plain object of the same shape), so every key present
- * on it was actually sent by the caller — there are no `undefined`-valued
- * own keys to filter out first.
+ * Own-enumerable keys of `dto` whose value is not `undefined` (T6c). With
+ * `tsconfig.json`'s `target: ES2023`, `useDefineForClassFields` defaults to
+ * `true`, so every declared class field of a `class-transformer`
+ * `plainToInstance`d DTO (e.g. `UpdateFacturaDto`) becomes an own property
+ * at construction time, even when the caller never sent it — its value is
+ * simply `undefined`. Own keys are therefore NOT the same thing as "fields
+ * the caller actually sent"; this helper is the single source of truth for
+ * that distinction, used everywhere update reasons about "sent fields"
+ * (`camposNoPermitidos`, `FacturaService.update`'s empty-body check and
+ * `$set` builder).
+ */
+export function camposPresentes(dto: object): string[] {
+  const registro = dto as Record<string, unknown>;
+  return Object.keys(dto).filter((campo) => registro[campo] !== undefined);
+}
+
+/**
+ * Fields of `dto` that are actually present (`camposPresentes`) and not
+ * editable while the invoice is in `estado` (used by `FacturaService.update`
+ * to build the 409).
  */
 export function camposNoPermitidos(
   estado: EstadoFactura,
   dto: object,
 ): string[] {
   const permitidos = new Set(camposEditablesPorEstado(estado));
-  return Object.keys(dto).filter((campo) => !permitidos.has(campo));
+  return camposPresentes(dto).filter((campo) => !permitidos.has(campo));
 }
 
 /**

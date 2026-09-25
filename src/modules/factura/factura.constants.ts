@@ -92,3 +92,12 @@ export enum EstadoFactura {
   CANCELADA = 'cancelada',
   ANULADA = 'anulada',
 }
+
+/**
+ * Legacy `estado` value predating the `EstadoFactura` enum (T6a/T6b), never
+ * written by this service but present in data imported before the enum
+ * existed. Named constant (T6c readability fix) so the literal is not
+ * duplicated between `FacturaService.migrarEstadoAjustada` (the filter and
+ * the `estadoLegado` value it sets) and `Factura.estadoLegado`'s type.
+ */
+export const ESTADO_LEGADO_AJUSTADA = 'ajustada' as const;

@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import {
+  ESTADO_LEGADO_AJUSTADA,
   EstadoFactura,
   FACTURA_CLIENTE_NOMBRE_POR_DEFECTO,
   TipoPago,
@@ -252,8 +253,28 @@ export class Factura {
   // EstadoFactura enum, but that would otherwise lose the fact the
   // invoice was originally 'ajustada'. Never set for invoices that were
   // never 'ajustada'.
-  @Prop({ enum: ['ajustada'] })
-  estadoLegado?: 'ajustada';
+  @Prop({ type: String, enum: [ESTADO_LEGADO_AJUSTADA] })
+  estadoLegado?: typeof ESTADO_LEGADO_AJUSTADA;
+
+  // Optimistic concurrency counter (T6c, fixes the lost-update race in
+  // `edicion`: two concurrent PATCHes both reading the same `estado` could
+  // otherwise both match the same conditional `findOneAndUpdate` and one
+  // would silently overwrite the other's derived fields). Incremented by
+  // every `FacturaService.update` and `transicionar` call; `update`'s
+  // conditional write also matches the `revision` it read, so a write that
+  // lands between another update's read and write never matches and is
+  // disambiguated into a 409 instead of being lost.
+  //
+  // Deliberately has NO schema `default`: a `default` would make Mongoose
+  // backfill it to 0 in memory even for a document whose stored bytes have
+  // no `revision` field at all (verified empirically), which would make a
+  // truly legacy document (persisted before this field existed)
+  // indistinguishable from a `revision: 0` document and break the
+  // `{ revision: { $exists: false } }` legacy-match branch in `update`.
+  // New invoices always get an explicit `revision: 0` from
+  // `FacturaService.create`.
+  @Prop({ type: Number })
+  revision?: number;
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);
