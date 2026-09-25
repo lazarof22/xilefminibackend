@@ -9,7 +9,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, QueryFilter, Types } from 'mongoose';
+import { Model, QueryFilter, Types, UpdateQuery } from 'mongoose';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import { ListarFacturasQueryDto } from './dto/listar-facturas-query.dto';
@@ -864,77 +864,138 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
-   * Confirms the invoice and decreases its stock (T7). The claim also sets
-   * `inventarioAplicado`, so only one concurrent confirm can win and stock
-   * is never decreased twice. If the stock cannot be decreased (the
-   * collaborator has already compensated its own writes), the invoice goes
-   * back to `terminada` and the error (409 naming the product) is rethrown.
+   * Confirms the invoice and decreases its stock (T7). The claim sets
+   * `inventarioAplicado` (so only one concurrent confirm can win and stock
+   * is never decreased twice) and the `inventarioEnProceso` marker (T7b),
+   * which keeps `cancelar` from claiming while stock is still moving. The
+   * marker is cleared in the same conditional write that finalizes: on
+   * success it is just removed; on a stock failure (the collaborator has
+   * already compensated what it knows it applied) the invoice goes back to
+   * `terminada` and the original error is rethrown.
    */
   async confirmar(id: string): Promise<Factura> {
     const reclamada = await this.transicionar(id, EstadoFactura.CONFIRMADA, {
-      inventarioAplicado: true,
+      camposExtra: { inventarioAplicado: true, inventarioEnProceso: true },
     });
     try {
       await this.inventario.rebajarStock(reclamada);
     } catch (error) {
-      await this.revertirConfirmacion(reclamada);
+      await this.revertirConfirmacion(reclamada, error);
       throw error;
     }
-    return reclamada;
+    const finalizada = await this.limpiarMarcadorInventario(
+      reclamada,
+      EstadoFactura.CONFIRMADA,
+      { $unset: { inventarioEnProceso: 1 }, $inc: { revision: 1 } },
+      'stock ya rebajado',
+    );
+    return finalizada ?? reclamada;
   }
 
   /**
    * Undoes the confirm claim after a failed stock decrease. Matches the
-   * `revision` the claim produced, so it never overwrites a later write;
-   * without transactions a mismatch cannot be fixed here, only logged.
+   * marker the claim set (only this confirm owns it: `cancelar` cannot
+   * claim while it is set), so a concurrent `impreso` PATCH does not make
+   * it miss. Never throws: a revert that fails or matches nothing is
+   * logged with full context and the caller rethrows the ORIGINAL error.
    */
-  private async revertirConfirmacion(reclamada: Factura): Promise<void> {
-    const revertida = await this.facturaModel
-      .findOneAndUpdate(
-        {
-          id: reclamada.id,
-          estado: EstadoFactura.CONFIRMADA,
-          revision: reclamada.revision,
-        },
-        {
-          $set: { estado: EstadoFactura.TERMINADA },
-          $unset: { inventarioAplicado: 1 },
-          $inc: { revision: 1 },
-        },
-        { new: true },
-      )
-      .exec();
-    if (!revertida) {
+  private async revertirConfirmacion(
+    reclamada: Factura,
+    errorOriginal: unknown,
+  ): Promise<void> {
+    const contexto = `factura ${reclamada.id}, revision ${reclamada.revision}; el stock descontado ya se compensó salvo lo registrado como ambiguo o fallido en el log; error original: ${String(errorOriginal)}`;
+    try {
+      const revertida = await this.facturaModel
+        .findOneAndUpdate(
+          {
+            id: reclamada.id,
+            estado: EstadoFactura.CONFIRMADA,
+            inventarioEnProceso: true,
+          },
+          {
+            $set: { estado: EstadoFactura.TERMINADA },
+            $unset: { inventarioAplicado: 1, inventarioEnProceso: 1 },
+            $inc: { revision: 1 },
+          },
+          { new: true },
+        )
+        .exec();
+      if (!revertida) {
+        this.logger.error(
+          `La factura quedó confirmada sin rebaja de stock (no coincidió al revertirla a terminada), corregir a mano: ${contexto}`,
+        );
+      }
+    } catch (errorReversion) {
       this.logger.error(
-        `La factura ${reclamada.id} quedó confirmada sin rebaja de stock (cambió antes de revertirla a terminada, revision ${reclamada.revision}); corregir a mano`,
+        `No se pudo revertir la factura a terminada tras fallar la rebaja de stock, corregir a mano (queda confirmada con inventarioEnProceso): ${contexto}; error al revertir: ${String(errorReversion)}`,
       );
     }
   }
 
   /**
-   * Rolls a confirmed invoice back (T7). Stock is restored (Kardex
-   * `devolucion`) only when this feature's `confirmar` decreased it:
-   * legacy `confirmada` invoices (no `inventarioAplicado`) are cancelled
-   * without touching stock or Kardex. `cancelada` is terminal and the claim
-   * only matches `confirmada`, so the restore runs at most once.
+   * Rolls a confirmed invoice back (T7). The claim sets `cancelada` plus
+   * the `inventarioEnProceso` marker and refuses to match while a confirm
+   * still holds the marker (409 "se está confirmando; reintente"). Stock is
+   * restored (Kardex `devolucion`) only when this feature's `confirmar`
+   * decreased it: legacy `confirmada` invoices (no `inventarioAplicado`)
+   * are cancelled without touching stock or Kardex. The claim only matches
+   * `confirmada` and `cancelada` is terminal, so the restore runs at most
+   * once; the final write clears the marker (and records
+   * `inventarioRevertido` when stock was restored).
    */
   async cancelar(id: string): Promise<Factura> {
-    const reclamada = await this.transicionar(id, EstadoFactura.CANCELADA);
-    if (
-      reclamada.inventarioAplicado !== true ||
-      reclamada.inventarioRevertido === true
-    ) {
-      return reclamada;
+    const reclamada = await this.transicionar(id, EstadoFactura.CANCELADA, {
+      camposExtra: { inventarioEnProceso: true },
+      filtroExtra: { inventarioEnProceso: { $ne: true } },
+    });
+    const restaurar = reclamada.inventarioAplicado === true;
+    if (restaurar) {
+      await this.inventario.restaurarStock(reclamada);
     }
-    await this.inventario.restaurarStock(reclamada);
-    const marcada = await this.facturaModel
-      .findOneAndUpdate(
-        { id, estado: EstadoFactura.CANCELADA },
-        { $set: { inventarioRevertido: true }, $inc: { revision: 1 } },
-        { new: true },
-      )
-      .exec();
+    const marcada = await this.limpiarMarcadorInventario(
+      reclamada,
+      EstadoFactura.CANCELADA,
+      restaurar
+        ? {
+            $set: { inventarioRevertido: true },
+            $unset: { inventarioEnProceso: 1 },
+            $inc: { revision: 1 },
+          }
+        : { $unset: { inventarioEnProceso: 1 }, $inc: { revision: 1 } },
+      restaurar ? 'stock ya restaurado' : 'sin movimiento de stock',
+    );
     return marcada ?? reclamada;
+  }
+
+  /**
+   * Final write of a confirm/cancel: clears `inventarioEnProceso` while
+   * the invoice is still in `estado` with the marker set. Stock already
+   * moved, so a failure here is only logged (the marker stays set and
+   * blocks `cancelar` until it is cleared by hand) and `null` is returned.
+   */
+  private async limpiarMarcadorInventario(
+    reclamada: Factura,
+    estado: EstadoFactura.CONFIRMADA | EstadoFactura.CANCELADA,
+    cambios: UpdateQuery<Factura>,
+    situacionStock: string,
+  ): Promise<Factura | null> {
+    const aviso = `La factura ${reclamada.id} (${estado}, revision ${reclamada.revision}) quedó con inventarioEnProceso; ${situacionStock}. Quitar el marcador a mano`;
+    try {
+      const actualizada = await this.facturaModel
+        .findOneAndUpdate(
+          { id: reclamada.id, estado, inventarioEnProceso: true },
+          cambios,
+          { new: true },
+        )
+        .exec();
+      if (!actualizada) {
+        this.logger.error(`${aviso} (no coincidió al finalizar)`);
+      }
+      return actualizada;
+    } catch (error) {
+      this.logger.error(`${aviso}: ${String(error)}`);
+      return null;
+    }
   }
 
   async anular(id: string): Promise<Factura> {
@@ -958,11 +1019,19 @@ export class FacturaService implements OnModuleInit {
   private async transicionar(
     id: string,
     destino: EstadoFactura,
-    camposExtra: Partial<Pick<Factura, 'inventarioAplicado'>> = {},
+    {
+      camposExtra = {},
+      filtroExtra = {},
+    }: {
+      camposExtra?: Partial<
+        Pick<Factura, 'inventarioAplicado' | 'inventarioEnProceso'>
+      >;
+      filtroExtra?: { inventarioEnProceso?: { $ne: true } };
+    } = {},
   ): Promise<Factura> {
     const actualizada = await this.facturaModel
       .findOneAndUpdate(
-        { id, estado: { $in: origenesPermitidos(destino) } },
+        { id, estado: { $in: origenesPermitidos(destino) }, ...filtroExtra },
         { $set: { estado: destino, ...camposExtra }, $inc: { revision: 1 } },
         { new: true, runValidators: true },
       )
@@ -985,6 +1054,16 @@ export class FacturaService implements OnModuleInit {
     const existente = await this.facturaModel.findOne({ id }).exec();
     if (!existente) {
       throw new NotFoundException(`Factura con ID ${id} no encontrada`);
+    }
+    if (
+      existente.inventarioEnProceso === true &&
+      origenesPermitidos(destino).includes(existente.estado)
+    ) {
+      // Only a `confirmada` invoice whose confirm is still moving stock
+      // gets here (T7b): the transition is legal, just not yet.
+      throw new ConflictException(
+        `La factura ${id} se está confirmando; reintente`,
+      );
     }
     throw new ConflictException(
       mensajeTransicionInvalida(id, existente.estado, destino),

@@ -94,7 +94,7 @@ Authorization: Bearer <token>
 - **`confirmar`**: descuenta de `Producto.stock_inicial` (el stock vivo, el mismo que usa Ventas) la cantidad de cada producto de la factura (si un producto aparece en varios items, se suman) y registra un movimiento Kardex `venta` por producto, con `motivo: "Factura FAC-000012 confirmada"`, `referencia: "FAC-000012"` y el stock resultante. La factura queda con `inventarioAplicado: true`.
 - **`cancelar`**: si la factura tiene `inventarioAplicado: true`, devuelve esas cantidades al stock, registra un Kardex `devolucion` por producto (`motivo: "Factura FAC-000012 cancelada"`) y marca `inventarioRevertido: true`. Un producto que ya no existe se omite (queda en el log del servidor) y se sigue con el resto.
 
-Si algún producto no puede descontarse (stock insuficiente, no existe, está inactivo o pertenece a otro almacén que el de la factura), **no se descuenta nada**: se revierten los descuentos ya hechos, la factura sigue en `terminada` y la respuesta es `409`:
+Si algún producto no puede descontarse (stock insuficiente, no existe, está inactivo o pertenece a otro almacén que el de la factura), se revierten los descuentos ya hechos, la factura vuelve a `terminada` y la respuesta es `409`. El mensaje se arma leyendo el producto **después** del fallo: dice si el producto no existe, si está inactivo, si ya no pertenece al almacén de la factura (se movió), o el stock disponible frente al solicitado; si al releerlo el stock ya alcanza (otro proceso lo cambió), dice que el stock cambió durante la confirmación y pide reintentar:
 
 ```json
 { "statusCode": 409, "error": "Conflict", "message": "No se puede confirmar la factura FAC-000012: stock insuficiente para el producto \"Tornillo\" (665f1c...): disponible 1, solicitado 3" }
@@ -102,9 +102,22 @@ Si algún producto no puede descontarse (stock insuficiente, no existe, está in
 
 Dos `confirmar` simultáneos sobre la misma factura: solo uno la reclama; el otro recibe el `409` de transición inválida, así que el stock nunca se descuenta dos veces.
 
+**Marcador `inventarioEnProceso` (T7b):** mientras `confirmar` o `cancelar` mueven stock, la factura lleva `inventarioEnProceso: true`; se quita en la misma escritura condicional que termina la operación (éxito, o vuelta a `terminada` si la confirmación falla). Un `cancelar` que llega mientras una confirmación todavía está descontando stock **no** puede reclamar la factura y recibe `409` `"La factura FAC-000012 se está confirmando; reintente"`, sin tocar el stock. Así nunca se devuelve stock que todavía no se descontó.
+
+**Qué garantiza `terminada` tras un `confirmar` fallido:** que la factura no quedó confirmada y que se intentó compensar cada descuento que se sabe aplicado. No garantiza que el stock quedó exacto si alguna escritura fue ambigua o alguna compensación falló: esos casos quedan en el log (ver abajo).
+
 **Facturas legadas:** una factura que ya estaba `confirmada` antes de esta funcionalidad no tiene `inventarioAplicado` (nunca descontó stock), así que al cancelarla **no** se toca el stock ni el Kardex.
 
-**Limitación conocida (sin transacciones):** MongoDB corre sin replica set, así que no hay transacciones multi-documento. Cada escritura de stock es atómica y condicional, y los fallos se compensan, pero si el proceso se cae entre dos pasos (por ejemplo, con parte del stock ya descontado) puede quedar un estado parcial. El stock es la fuente de verdad: si el Kardex no se puede escribir después de mover el stock, el stock **no** se revierte. En todos esos casos el servidor escribe una línea de log de error con la factura, el producto y la cantidad, que es lo que hay que corregir a mano.
+**Limitaciones conocidas (sin transacciones):** MongoDB corre sin replica set, así que no hay transacciones multi-documento. Cada escritura de stock es atómica y condicional, y los fallos se compensan, pero:
+
+- **Caída del proceso a mitad de camino:** puede quedar parte del stock descontado (o restaurado) y la factura con `inventarioEnProceso: true`. Se reconoce porque la factura tiene el marcador puesto y no hay una petición en curso (una confirmación normal dura milisegundos); mientras siga puesto, `cancelar` responde siempre "se está confirmando; reintente". Arreglo manual: comparar el stock con el Kardex `venta`/`devolucion` de esa `referencia`, corregir el stock y quitar el campo (`$unset: { inventarioEnProceso: 1 }`) o devolver la factura a `terminada`.
+- **Escritura ambigua:** si el descuento de un producto lanza un error (timeout, red), no se sabe si se aplicó. Ese producto **no** se compensa (sumarle a ciegas podría crear stock); se compensan solo los que se sabe aplicados, la confirmación falla con el error original y el log dice `Rebaja de stock ambigua (factura ..., producto ..., cantidad ...): pudo aplicarse o no, conciliar a mano`.
+- **Reversión fallida:** si tras un fallo de stock la factura no puede volver a `terminada`, se responde con el error de stock original (nunca con el de la reversión) y el log dice `No se pudo revertir la factura a terminada ...` o `La factura quedó confirmada sin rebaja de stock ...`, con la factura, la `revision` y el error original.
+- **Marcador sin quitar:** si la escritura final falla después de mover el stock, el log dice `La factura FAC-... (confirmada|cancelada, revision N) quedó con inventarioEnProceso; ...`. El stock ya es correcto; solo hay que quitar el marcador.
+- **Kardex:** el stock es la fuente de verdad; si el Kardex no se puede escribir después de mover el stock, el stock **no** se revierte. Las filas se insertan sin orden (`ordered: false`), así que una fila inválida no impide las demás, y el log lista exactamente las filas que faltan (`N de M filas`). El Kardex acepta cantidades fraccionarias (mayores que 0), igual que los items.
+- **Stock en 0:** un producto que se queda sin stock no pasa a inactivo (igual que en Ventas).
+
+En todos los casos el log de error del servidor nombra la factura, el producto y la cantidad a corregir a mano.
 
 ---
 
@@ -212,6 +225,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `revision` | `number` | **Server-controlado, nunca en el `POST`/`PATCH`:** contador de concurrencia optimista (T6c). Se incrementa en cada `PATCH /facturas/:id` y en cada transición de estado. Ausente solo en una factura legada, de antes de que este campo existiera. Ver [Concurrencia al editar](#concurrencia-al-editar-revision-t6c). |
 | `inventarioAplicado` | `boolean` | **Server-controlado:** `true` solo si al confirmar esta factura se descontó el stock (T7). Ausente en facturas legadas confirmadas antes de esta funcionalidad. |
 | `inventarioRevertido` | `boolean` | **Server-controlado:** `true` cuando al cancelar se devolvió ese stock (T7). |
+| `inventarioEnProceso` | `boolean` | **Server-controlado:** `true` solo mientras `confirmar`/`cancelar` mueven stock (T7b). Si queda puesto sin una petición en curso, ver [Limitaciones conocidas](#movimientos-de-inventario-al-confirmar--cancelar-t7). |
 | `talonario` | `string` | **Opcional:** referencia libre al talonario/recibo asociado. Hasta 50 caracteres. |
 | `tipo` | `string` | `"factura_normal"` (por defecto) o `"ajuste"`. |
 | `impreso` | `boolean` | `false` por defecto. |

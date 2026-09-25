@@ -21,6 +21,8 @@ const ALMACEN_ID = '507f1f77bcf86cd799439011';
 const PRODUCTO_A = '507f1f77bcf86cd7994390aa';
 const PRODUCTO_B = '507f1f77bcf86cd7994390bb';
 const ESTADO_INACTIVO_ID = '507f1f77bcf86cd7994390ee';
+/** Unordered, so one invalid Kardex row never drops the rest (T7b). */
+const OPCIONES_KARDEX = { ordered: false, throwOnValidationError: true };
 
 interface QueryMock<T> {
   exec: jest.Mock<Promise<T>, []>;
@@ -139,6 +141,12 @@ describe('FacturaInventarioService', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  /** First message logged with `Logger.error`. */
+  function primerError(): string {
+    const llamada = errorSpy.mock.calls[0] as unknown[] | undefined;
+    return String(llamada?.[0]);
+  }
+
   /** Resolves each guarded decrement in call order. */
   function decrementosDevuelven(
     ...resultados: (ProductoDocument | null)[]
@@ -191,24 +199,27 @@ describe('FacturaInventarioService', () => {
 
       await service.rebajarStock(facturaBase());
 
-      expect(kardexModelMock.insertMany).toHaveBeenCalledWith([
-        {
-          productoId: new Types.ObjectId(PRODUCTO_A),
-          tipo: KardexTipo.VENTA,
-          cantidad: 2,
-          stock: 8,
-          motivo: 'Factura FAC-000012 confirmada',
-          referencia: 'FAC-000012',
-        },
-        {
-          productoId: new Types.ObjectId(PRODUCTO_B),
-          tipo: KardexTipo.VENTA,
-          cantidad: 3,
-          stock: 0,
-          motivo: 'Factura FAC-000012 confirmada',
-          referencia: 'FAC-000012',
-        },
-      ]);
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          {
+            productoId: new Types.ObjectId(PRODUCTO_A),
+            tipo: KardexTipo.VENTA,
+            cantidad: 2,
+            stock: 8,
+            motivo: 'Factura FAC-000012 confirmada',
+            referencia: 'FAC-000012',
+          },
+          {
+            productoId: new Types.ObjectId(PRODUCTO_B),
+            tipo: KardexTipo.VENTA,
+            cantidad: 3,
+            stock: 0,
+            motivo: 'Factura FAC-000012 confirmada',
+            referencia: 'FAC-000012',
+          },
+        ],
+        OPCIONES_KARDEX,
+      );
     });
 
     it('aggregates a productoId repeated across items into a single decrement', async () => {
@@ -404,17 +415,120 @@ describe('FacturaInventarioService', () => {
       );
     });
 
-    it('logs a Kardex write failure without rolling back the stock', async () => {
+    it('logs a thrown decrement as ambiguous and never compensates that product, only the ones known applied', async () => {
+      productoModelMock.findOneAndUpdate
+        .mockReturnValueOnce(crearQueryMock(producto(PRODUCTO_A)))
+        .mockReturnValueOnce(
+          crearQueryFallida<ProductoDocument | null>(new Error('timeout')),
+        );
+
+      await expect(service.rebajarStock(facturaBase())).rejects.toThrow(
+        'timeout',
+      );
+
+      expect(productoModelMock.updateOne).toHaveBeenCalledTimes(1);
+      expect(productoModelMock.updateOne).not.toHaveBeenCalledWith(
+        { _id: PRODUCTO_B },
+        expect.anything(),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          new RegExp(
+            `ambigua.*factura FAC-000012, producto ${PRODUCTO_B}, cantidad 3.*conciliar a mano`,
+          ),
+        ),
+      );
+      expect(kardexModelMock.insertMany).not.toHaveBeenCalled();
+    });
+
+    it('logs every row when the Kardex write fails without row detail, without rolling back the stock', async () => {
       decrementosDevuelven(producto(PRODUCTO_A), producto(PRODUCTO_B));
-      kardexModelMock.insertMany.mockRejectedValue(new Error('validacion'));
+      kardexModelMock.insertMany.mockRejectedValue(new Error('red caida'));
 
       await expect(service.rebajarStock(facturaBase())).resolves.toBe(
         undefined,
       );
 
       expect(productoModelMock.updateOne).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Kardex venta de la factura FAC-000012'),
+      const mensaje = primerError();
+      expect(mensaje).toContain('Kardex venta de la factura FAC-000012');
+      expect(mensaje).toContain('2 de 2');
+      expect(mensaje).toContain(PRODUCTO_A);
+      expect(mensaje).toContain(PRODUCTO_B);
+    });
+
+    it('writes a fractional quantity to the Kardex as is', async () => {
+      decrementosDevuelven(producto(PRODUCTO_A, { stock_inicial: 1.5 }));
+
+      await service.rebajarStock(
+        facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 0.5 }] }),
+      );
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [expect.objectContaining({ cantidad: 0.5, stock: 1.5 })],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('logs exactly the Kardex rows that failed; the other rows are still written (unordered)', async () => {
+      decrementosDevuelven(producto(PRODUCTO_A), producto(PRODUCTO_B));
+      kardexModelMock.insertMany.mockRejectedValue(
+        Object.assign(new Error('insertMany failed with 1 validation error'), {
+          validationErrors: [
+            Object.assign(new Error('cantidad invalida'), { index: 1 }),
+          ],
+        }),
+      );
+
+      await expect(service.rebajarStock(facturaBase())).resolves.toBe(
+        undefined,
+      );
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        expect.any(Array),
+        OPCIONES_KARDEX,
+      );
+      const mensaje = primerError();
+      expect(mensaje).toContain('1 de 2');
+      expect(mensaje).toContain(PRODUCTO_B);
+      expect(mensaje).not.toContain(PRODUCTO_A);
+      expect(mensaje).toContain('cantidad invalida');
+    });
+
+    it('logs server-side write errors by row index too', async () => {
+      decrementosDevuelven(producto(PRODUCTO_A), producto(PRODUCTO_B));
+      kardexModelMock.insertMany.mockRejectedValue(
+        Object.assign(new Error('E11000'), {
+          writeErrors: [{ index: 0, errmsg: 'duplicado' }],
+        }),
+      );
+
+      await service.rebajarStock(facturaBase());
+
+      const mensaje = primerError();
+      expect(mensaje).toContain('1 de 2');
+      expect(mensaje).toContain(PRODUCTO_A);
+      expect(mensaje).not.toContain(PRODUCTO_B);
+    });
+
+    it('says the stock changed (not "insuficiente") when the read after the failure shows enough stock', async () => {
+      decrementosDevuelven(null);
+      productoModelMock.findById.mockReturnValue(
+        crearQueryMock<ProductoDocument | null>(
+          producto(PRODUCTO_A, {
+            nombre_producto: 'Tornillo',
+            stock_inicial: 9,
+          }),
+        ),
+      );
+
+      const promesa = service.rebajarStock(
+        facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 2 }] }),
+      );
+
+      await expect(promesa).rejects.toBeInstanceOf(ConflictException);
+      await expect(promesa).rejects.toThrow(
+        `el stock del producto "Tornillo" (${PRODUCTO_A}) cambió durante la confirmación (disponible ahora 9, solicitado 2); reintente`,
       );
     });
   });
@@ -432,24 +546,27 @@ describe('FacturaInventarioService', () => {
         [{ _id: PRODUCTO_A }, { $inc: { stock_inicial: 2 } }, { new: true }],
         [{ _id: PRODUCTO_B }, { $inc: { stock_inicial: 3 } }, { new: true }],
       ]);
-      expect(kardexModelMock.insertMany).toHaveBeenCalledWith([
-        {
-          productoId: new Types.ObjectId(PRODUCTO_A),
-          tipo: KardexTipo.DEVOLUCION,
-          cantidad: 2,
-          stock: 10,
-          motivo: 'Factura FAC-000012 cancelada',
-          referencia: 'FAC-000012',
-        },
-        {
-          productoId: new Types.ObjectId(PRODUCTO_B),
-          tipo: KardexTipo.DEVOLUCION,
-          cantidad: 3,
-          stock: 3,
-          motivo: 'Factura FAC-000012 cancelada',
-          referencia: 'FAC-000012',
-        },
-      ]);
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          {
+            productoId: new Types.ObjectId(PRODUCTO_A),
+            tipo: KardexTipo.DEVOLUCION,
+            cantidad: 2,
+            stock: 10,
+            motivo: 'Factura FAC-000012 cancelada',
+            referencia: 'FAC-000012',
+          },
+          {
+            productoId: new Types.ObjectId(PRODUCTO_B),
+            tipo: KardexTipo.DEVOLUCION,
+            cantidad: 3,
+            stock: 3,
+            motivo: 'Factura FAC-000012 cancelada',
+            referencia: 'FAC-000012',
+          },
+        ],
+        OPCIONES_KARDEX,
+      );
     });
 
     it('warns about a product that no longer exists and continues with the rest', async () => {
@@ -462,12 +579,15 @@ describe('FacturaInventarioService', () => {
           `factura FAC-000012, producto ${PRODUCTO_A}, cantidad 2`,
         ),
       );
-      expect(kardexModelMock.insertMany).toHaveBeenCalledWith([
-        expect.objectContaining({
-          productoId: new Types.ObjectId(PRODUCTO_B),
-          cantidad: 3,
-        }),
-      ]);
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            productoId: new Types.ObjectId(PRODUCTO_B),
+            cantidad: 3,
+          }),
+        ],
+        OPCIONES_KARDEX,
+      );
     });
 
     it('logs a failed increase write and continues with the rest', async () => {

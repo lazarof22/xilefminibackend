@@ -52,6 +52,47 @@ export function agregarCantidadesPorProducto(
     .map(([productoId, cantidad]) => ({ productoId, cantidad }));
 }
 
+/** Row-level detail a Mongoose/driver `insertMany` error may carry. */
+interface ErrorInsercionKardex {
+  validationErrors?: { index?: number; message?: string }[];
+  writeErrors?: { index?: number; errmsg?: string }[];
+}
+
+function comoErrorInsercion(error: unknown): ErrorInsercionKardex {
+  return typeof error === 'object' && error !== null ? error : {};
+}
+
+/**
+ * Indexes of the Kardex rows an unordered `insertMany` did not write:
+ * Mongoose validation errors and server write errors both carry the row
+ * index. An error without row detail (e.g. network) means any row may be
+ * missing, so every row is reported.
+ */
+export function filasKardexFallidas(error: unknown, total: number): number[] {
+  const { validationErrors = [], writeErrors = [] } = comoErrorInsercion(error);
+  const indices = new Set(
+    [...validationErrors, ...writeErrors]
+      .map((fallo) => fallo.index)
+      .filter(
+        (indice): indice is number =>
+          typeof indice === 'number' && indice >= 0 && indice < total,
+      ),
+  );
+  if (indices.size === 0) {
+    return [...Array(total).keys()];
+  }
+  return [...indices].sort((a, b) => a - b);
+}
+
+function detalleErroresKardex(error: unknown): string {
+  const { validationErrors = [], writeErrors = [] } = comoErrorInsercion(error);
+  const detalles = [
+    ...validationErrors.map((fallo) => `fila ${fallo.index}: ${fallo.message}`),
+    ...writeErrors.map((fallo) => `fila ${fallo.index}: ${fallo.errmsg}`),
+  ];
+  return detalles.length > 0 ? ` (${detalles.join('; ')})` : '';
+}
+
 /**
  * Inventory side effects of the invoice lifecycle (T7): `confirmar`
  * decreases stock (Kardex `venta`), `cancelar` restores it (Kardex
@@ -78,8 +119,13 @@ export class FacturaInventarioService {
    * Decreases the stock of every product of the invoice. Each decrement is
    * guarded (enough stock, not inactive, same warehouse when the product
    * has one); on the first one that does not match, every decrement already
-   * applied is compensated and a 409 naming the product is thrown. A write
-   * error is compensated the same way and rethrown as is.
+   * applied is compensated and a 409 naming the product is thrown.
+   *
+   * A decrement write that throws (timeout, network) is ambiguous: it may
+   * or may not have been applied. That product is never compensated (a
+   * blind `+cantidad` could create stock); it is logged for manual
+   * reconciliation, the decrements known applied are compensated, and the
+   * original error is rethrown.
    */
   async rebajarStock(factura: FacturaParaInventario): Promise<void> {
     const estadoInactivoId = await this.obtenerEstadoInactivoId();
@@ -98,6 +144,9 @@ export class FacturaInventarioService {
               .exec()
           : null;
       } catch (error) {
+        this.logger.error(
+          `Rebaja de stock ambigua (${this.detalle(factura, linea)}): pudo aplicarse o no, conciliar a mano; no se compensa: ${String(error)}`,
+        );
         await this.compensarRebajas(factura, aplicados);
         throw error;
       }
@@ -214,6 +263,11 @@ export class FacturaInventarioService {
     ) {
       return `el producto ${nombre} no pertenece al almacén de la factura`;
     }
+    if (producto.stock_inicial >= linea.cantidad) {
+      // Another writer raised the stock between the failed decrement and
+      // this read, so "insuficiente" would contradict the numbers shown.
+      return `el stock del producto ${nombre} cambió durante la confirmación (disponible ahora ${producto.stock_inicial}, solicitado ${linea.cantidad}); reintente`;
+    }
     return `stock insuficiente para el producto ${nombre}: disponible ${producto.stock_inicial}, solicitado ${linea.cantidad}`;
   }
 
@@ -266,11 +320,18 @@ export class FacturaInventarioService {
       referencia: factura.id,
     }));
     try {
-      await this.kardexModel.insertMany(entradas);
+      // Unordered: an invalid row is skipped and the valid ones still land.
+      // `throwOnValidationError` reports the skipped rows instead of
+      // silently returning only the inserted ones.
+      await this.kardexModel.insertMany(entradas, {
+        ordered: false,
+        throwOnValidationError: true,
+      });
     } catch (error) {
       // Stock already changed and is the source of truth: never rolled back.
+      const fallidas = filasKardexFallidas(error, entradas.length);
       this.logger.error(
-        `No se pudo registrar el Kardex ${tipo} de la factura ${factura.id}; el stock ya se aplicó, registrar a mano: ${JSON.stringify(entradas)}: ${String(error)}`,
+        `No se pudo registrar el Kardex ${tipo} de la factura ${factura.id} (${fallidas.length} de ${entradas.length} filas); el stock ya se aplicó, registrar a mano: ${JSON.stringify(fallidas.map((i) => entradas[i]))}: ${String(error)}${detalleErroresKardex(error)}`,
       );
     }
   }

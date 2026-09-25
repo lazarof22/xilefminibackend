@@ -279,13 +279,19 @@ export class Factura {
   // Inventory bookkeeping (T7). `inventarioAplicado` is true only when
   // `FacturaService.confirmar` decreased stock for this invoice; legacy
   // `confirmada` invoices never carry it, so cancelling them never adds
-  // stock back. `inventarioRevertido` is set once `cancelar` restored that
-  // stock, so it is never restored twice. No defaults: absent means "no".
+  // stock back. `inventarioRevertido` records (audit) that `cancelar`
+  // restored that stock. `inventarioEnProceso` (T7b) is set while
+  // `confirmar` or `cancelar` is moving stock and cleared in the same write
+  // that finalizes it; `cancelar` refuses to claim while it is set. A crash
+  // mid-movement leaves it set (see README). No defaults: absent means "no".
   @Prop({ type: Boolean })
   inventarioAplicado?: boolean;
 
   @Prop({ type: Boolean })
   inventarioRevertido?: boolean;
+
+  @Prop({ type: Boolean })
+  inventarioEnProceso?: boolean;
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);

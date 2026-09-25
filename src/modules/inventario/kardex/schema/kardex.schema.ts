@@ -24,7 +24,16 @@ export class Kardex {
   @Prop({ required: true, enum: KardexTipo })
   tipo!: KardexTipo;
 
-  @Prop({ required: true, min: 1 })
+  // Greater than 0, fractions allowed (T7b): invoice items may sell 0.5
+  // units. Every other writer (compra, transferencia, manual Kardex) writes
+  // quantities >= 1, which still pass.
+  @Prop({
+    required: true,
+    validate: {
+      validator: (valor: number) => valor > 0,
+      message: 'La cantidad debe ser mayor que 0',
+    },
+  })
   cantidad!: number;
 
   @Prop({ required: true, min: 0 })
