@@ -275,6 +275,17 @@ export class Factura {
   // `FacturaService.create`.
   @Prop({ type: Number })
   revision?: number;
+
+  // Inventory bookkeeping (T7). `inventarioAplicado` is true only when
+  // `FacturaService.confirmar` decreased stock for this invoice; legacy
+  // `confirmada` invoices never carry it, so cancelling them never adds
+  // stock back. `inventarioRevertido` is set once `cancelar` restored that
+  // stock, so it is never restored twice. No defaults: absent means "no".
+  @Prop({ type: Boolean })
+  inventarioAplicado?: boolean;
+
+  @Prop({ type: Boolean })
+  inventarioRevertido?: boolean;
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);

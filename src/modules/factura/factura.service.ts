@@ -30,6 +30,7 @@ import {
 import { Pais } from '../nomencladores/pais/schema/pais.schema';
 import { Usuario } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
+import { FacturaInventarioService } from './factura-inventario.service';
 import {
   ESTADO_LEGADO_AJUSTADA,
   EstadoFactura,
@@ -69,6 +70,7 @@ export class FacturaService implements OnModuleInit {
     @InjectModel(Pais.name) private paisModel: Model<Pais>,
     @InjectModel(Usuario.name) private usuarioModel: Model<Usuario>,
     private readonly empresaDatosService: EmpresaDatosService,
+    private readonly inventario: FacturaInventarioService,
   ) {}
 
   /**
@@ -862,22 +864,77 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
-   * Confirms the invoice (T6a: state only). T7 adds the inventory
-   * decrease + Kardex `venta` movement here, with compensation on partial
-   * failure; kept as its own method now so that side effect has one clear
-   * place to land.
+   * Confirms the invoice and decreases its stock (T7). The claim also sets
+   * `inventarioAplicado`, so only one concurrent confirm can win and stock
+   * is never decreased twice. If the stock cannot be decreased (the
+   * collaborator has already compensated its own writes), the invoice goes
+   * back to `terminada` and the error (409 naming the product) is rethrown.
    */
   async confirmar(id: string): Promise<Factura> {
-    return this.transicionar(id, EstadoFactura.CONFIRMADA);
+    const reclamada = await this.transicionar(id, EstadoFactura.CONFIRMADA, {
+      inventarioAplicado: true,
+    });
+    try {
+      await this.inventario.rebajarStock(reclamada);
+    } catch (error) {
+      await this.revertirConfirmacion(reclamada);
+      throw error;
+    }
+    return reclamada;
   }
 
   /**
-   * Rolls a confirmed invoice back (T6a: state only). T7 adds the
-   * inventory increase + Kardex `devolucion` movement here, mirroring
-   * `confirmar`.
+   * Undoes the confirm claim after a failed stock decrease. Matches the
+   * `revision` the claim produced, so it never overwrites a later write;
+   * without transactions a mismatch cannot be fixed here, only logged.
+   */
+  private async revertirConfirmacion(reclamada: Factura): Promise<void> {
+    const revertida = await this.facturaModel
+      .findOneAndUpdate(
+        {
+          id: reclamada.id,
+          estado: EstadoFactura.CONFIRMADA,
+          revision: reclamada.revision,
+        },
+        {
+          $set: { estado: EstadoFactura.TERMINADA },
+          $unset: { inventarioAplicado: 1 },
+          $inc: { revision: 1 },
+        },
+        { new: true },
+      )
+      .exec();
+    if (!revertida) {
+      this.logger.error(
+        `La factura ${reclamada.id} quedó confirmada sin rebaja de stock (cambió antes de revertirla a terminada, revision ${reclamada.revision}); corregir a mano`,
+      );
+    }
+  }
+
+  /**
+   * Rolls a confirmed invoice back (T7). Stock is restored (Kardex
+   * `devolucion`) only when this feature's `confirmar` decreased it:
+   * legacy `confirmada` invoices (no `inventarioAplicado`) are cancelled
+   * without touching stock or Kardex. `cancelada` is terminal and the claim
+   * only matches `confirmada`, so the restore runs at most once.
    */
   async cancelar(id: string): Promise<Factura> {
-    return this.transicionar(id, EstadoFactura.CANCELADA);
+    const reclamada = await this.transicionar(id, EstadoFactura.CANCELADA);
+    if (
+      reclamada.inventarioAplicado !== true ||
+      reclamada.inventarioRevertido === true
+    ) {
+      return reclamada;
+    }
+    await this.inventario.restaurarStock(reclamada);
+    const marcada = await this.facturaModel
+      .findOneAndUpdate(
+        { id, estado: EstadoFactura.CANCELADA },
+        { $set: { inventarioRevertido: true }, $inc: { revision: 1 } },
+        { new: true },
+      )
+      .exec();
+    return marcada ?? reclamada;
   }
 
   async anular(id: string): Promise<Factura> {
@@ -901,11 +958,12 @@ export class FacturaService implements OnModuleInit {
   private async transicionar(
     id: string,
     destino: EstadoFactura,
+    camposExtra: Partial<Pick<Factura, 'inventarioAplicado'>> = {},
   ): Promise<Factura> {
     const actualizada = await this.facturaModel
       .findOneAndUpdate(
         { id, estado: { $in: origenesPermitidos(destino) } },
-        { $set: { estado: destino }, $inc: { revision: 1 } },
+        { $set: { estado: destino, ...camposExtra }, $inc: { revision: 1 } },
         { new: true, runValidators: true },
       )
       .exec();

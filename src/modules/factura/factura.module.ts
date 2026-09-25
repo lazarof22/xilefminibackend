@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { FacturaService } from './factura.service';
 import { FacturaController } from './factura.controller';
+import { FacturaInventarioService } from './factura-inventario.service';
 import { Factura, FacturaSchema } from './schema/factura.schema';
 import {
   FacturaContador,
@@ -21,6 +22,14 @@ import {
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais, PaisSchema } from '../nomencladores/pais/schema/pais.schema';
 import { Usuario, UsuarioSchema } from '../auth/schemas/empleado.schema';
+import {
+  Kardex,
+  KardexSchema,
+} from '../inventario/kardex/schema/kardex.schema';
+import {
+  Estado,
+  EstadoSchema,
+} from '../nomencladores/estado/schema/estado.schema';
 import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos.module';
 
 @Module({
@@ -33,11 +42,13 @@ import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos
       { name: Producto.name, schema: ProductoSchema },
       { name: Pais.name, schema: PaisSchema },
       { name: Usuario.name, schema: UsuarioSchema },
+      { name: Kardex.name, schema: KardexSchema },
+      { name: Estado.name, schema: EstadoSchema },
     ]),
     EmpresaDatosModule,
   ],
   controllers: [FacturaController],
-  providers: [FacturaService],
+  providers: [FacturaService, FacturaInventarioService],
   exports: [MongooseModule],
 })
 export class FacturaModule {}

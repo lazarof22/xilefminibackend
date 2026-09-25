@@ -47,8 +47,8 @@ Toda factura tiene un `estado`, uno de `edicion`, `terminada`, `confirmada`, `ca
 |---|---|---|
 | `edicion` | Estado inicial. No hay movimiento de inventario. | **Todos** los campos de negocio (ver [tabla completa](#patch-facturasid--editar-una-factura)); items/impuesto/almacén/cliente se revalidan y recalculan server-side. |
 | `terminada` | Cerrada para el flujo normal de edición. Puede volver a `edicion`, confirmarse o anularse. Todavía no hay movimiento de inventario. | Solo `fecha`, `talonario` e `impreso`. |
-| `confirmada` | Factura en firme. Descuenta inventario (T7, todavía no implementado). | Solo `impreso` (marcarla como impresa no cambia nada fiscal). |
-| `cancelada` | Reversa de una factura `confirmada`: aumenta inventario (T7, todavía no implementado). Estado terminal. | Solo `impreso`. |
+| `confirmada` | Factura en firme. Descuenta inventario (ver [Movimientos de inventario](#movimientos-de-inventario-al-confirmar--cancelar-t7)). | Solo `impreso` (marcarla como impresa no cambia nada fiscal). |
+| `cancelada` | Reversa de una factura `confirmada`: devuelve al inventario lo que se descontó al confirmar. Estado terminal. | Solo `impreso`. |
 | `anulada` | Estado terminal. Su `numero`/`id` nunca se reutiliza: el contador correlativo nunca se decrementa al anular, así que ninguna factura futura puede recibir ese mismo código. | Nada: una factura anulada es de solo lectura. |
 
 > Enviar en el `PATCH` un campo que el estado actual no permite modificar (por ejemplo `concepto` en `terminada`, o cualquier campo en `anulada`) devuelve `409`, nombrando el estado y los campos rechazados (ver [ejemplos](#formato-de-los-errores)). Un `PATCH` sin ningún campo no es error: devuelve la factura sin cambios.
@@ -86,6 +86,25 @@ Authorization: Bearer <token>
 ```json
 { "statusCode": 409, "error": "Conflict", "message": "La factura FAC-000005 esta en estado \"confirmada\" y no puede pasar a \"terminada\"" }
 ```
+
+### Movimientos de inventario al confirmar / cancelar (T7)
+
+`terminar`, `editar` y `anular` nunca tocan el inventario. Solo lo hacen:
+
+- **`confirmar`**: descuenta de `Producto.stock_inicial` (el stock vivo, el mismo que usa Ventas) la cantidad de cada producto de la factura (si un producto aparece en varios items, se suman) y registra un movimiento Kardex `venta` por producto, con `motivo: "Factura FAC-000012 confirmada"`, `referencia: "FAC-000012"` y el stock resultante. La factura queda con `inventarioAplicado: true`.
+- **`cancelar`**: si la factura tiene `inventarioAplicado: true`, devuelve esas cantidades al stock, registra un Kardex `devolucion` por producto (`motivo: "Factura FAC-000012 cancelada"`) y marca `inventarioRevertido: true`. Un producto que ya no existe se omite (queda en el log del servidor) y se sigue con el resto.
+
+Si algún producto no puede descontarse (stock insuficiente, no existe, está inactivo o pertenece a otro almacén que el de la factura), **no se descuenta nada**: se revierten los descuentos ya hechos, la factura sigue en `terminada` y la respuesta es `409`:
+
+```json
+{ "statusCode": 409, "error": "Conflict", "message": "No se puede confirmar la factura FAC-000012: stock insuficiente para el producto \"Tornillo\" (665f1c...): disponible 1, solicitado 3" }
+```
+
+Dos `confirmar` simultáneos sobre la misma factura: solo uno la reclama; el otro recibe el `409` de transición inválida, así que el stock nunca se descuenta dos veces.
+
+**Facturas legadas:** una factura que ya estaba `confirmada` antes de esta funcionalidad no tiene `inventarioAplicado` (nunca descontó stock), así que al cancelarla **no** se toca el stock ni el Kardex.
+
+**Limitación conocida (sin transacciones):** MongoDB corre sin replica set, así que no hay transacciones multi-documento. Cada escritura de stock es atómica y condicional, y los fallos se compensan, pero si el proceso se cae entre dos pasos (por ejemplo, con parte del stock ya descontado) puede quedar un estado parcial. El stock es la fuente de verdad: si el Kardex no se puede escribir después de mover el stock, el stock **no** se revierte. En todos esos casos el servidor escribe una línea de log de error con la factura, el producto y la cantidad, que es lo que hay que corregir a mano.
 
 ---
 
@@ -191,6 +210,8 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `estado` | `string` | `"edicion"`, `"terminada"`, `"confirmada"`, `"cancelada"` o `"anulada"`. Toda factura nueva nace `"edicion"` (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). |
 | `estadoLegado` | `string` | **Opcional:** solo `"ajustada"`, y solo presente en una factura migrada desde ese estado legado (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura-t6at6b)). Ausente en cualquier otra factura. |
 | `revision` | `number` | **Server-controlado, nunca en el `POST`/`PATCH`:** contador de concurrencia optimista (T6c). Se incrementa en cada `PATCH /facturas/:id` y en cada transición de estado. Ausente solo en una factura legada, de antes de que este campo existiera. Ver [Concurrencia al editar](#concurrencia-al-editar-revision-t6c). |
+| `inventarioAplicado` | `boolean` | **Server-controlado:** `true` solo si al confirmar esta factura se descontó el stock (T7). Ausente en facturas legadas confirmadas antes de esta funcionalidad. |
+| `inventarioRevertido` | `boolean` | **Server-controlado:** `true` cuando al cancelar se devolvió ese stock (T7). |
 | `talonario` | `string` | **Opcional:** referencia libre al talonario/recibo asociado. Hasta 50 caracteres. |
 | `tipo` | `string` | `"factura_normal"` (por defecto) o `"ajuste"`. |
 | `impreso` | `boolean` | `false` por defecto. |
@@ -569,5 +590,6 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 - [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
 - [ ] Antes de armar el formulario de edición, consultar la [matriz de edición por estado](#matriz-de-edición-por-estado): mostrar solo los campos editables en el `estado` actual de la factura.
 - [ ] Manejar el `409` al editar (el estado actual no permite alguno de los campos enviados, o la factura cambió mientras se editaba — ver [Concurrencia al editar](#concurrencia-al-editar-revision-t6c)) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
+- [ ] Al confirmar, manejar el `409` de stock insuficiente / producto inactivo / de otro almacén (la factura sigue en `terminada`, ver [Movimientos de inventario](#movimientos-de-inventario-al-confirmar--cancelar-t7)).
 - [ ] Ante el `409` de concurrencia, volver a pedir `GET /facturas/:id` y reintentar el `PATCH` con los datos frescos, en vez de reintentar a ciegas con el cuerpo original.
 - [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }` (funciona en cualquier estado salvo `anulada`).

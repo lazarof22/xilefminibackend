@@ -55,7 +55,7 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 - [x] T6a States and transitions: `EstadoFactura` enum (default `edicion`), pure transition table, endpoints `terminar`, `editar` (back to edicion), `confirmar`, `cancelar`, `anular` (+ `DELETE` alias) with conditional atomic updates, legacy `ajustada` -> `confirmada` migration, annulled-code-never-reused test
 - [x] T6b Edit rules per state: `edicion` edits every business field (totals, warehouse/product checks and client link re-run server-side), `terminada` only `fecha` + `talonario` (new field), others 409; carry-overs: reject `null` participants, `metodoPago` typed `TipoPago`, `impreso` settable in every state except `anulada` (non-fiscal print flag), `ajustada` migration keeps `estadoLegado: 'ajustada'`
 - [x] T6c Fix T6b defects: (1) ignore `undefined`-valued keys everywhere in update (field check, empty-body check, `$set` builder) and test with real `plainToInstance` DTO instances; (2) optimistic concurrency: `revision` counter `$inc`'d by every update/transition and matched by update's conditional write (lost update R1/R3); (3) review readability warnings: single source for the state/field table, accurate concurrency comments
-- [ ] T7 Inventory movements (only invoices confirmed after this feature carry `inventarioAplicado: true`; cancelling a legacy `confirmada` must not add stock back): `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
+- [x] T7 Inventory movements (only invoices confirmed after this feature carry `inventarioAplicado: true`; cancelling a legacy `confirmada` must not add stock back): `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
 - [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
 
 ## Route
@@ -133,10 +133,17 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
   - RED: `npx jest src/modules/factura/factura-estado.spec.ts src/modules/factura/factura.service.spec.ts` -> 24 failed / 124 passed (real `plainToInstance` DTOs).
   - GREEN: `npx jest src/modules/factura src/modules/inventario/almacen` -> 274 passed. Full -> 464 passed, 1 failed (known). Parent re-ran factura tests and the `dist` reproduction: `terminada` + `{ fecha }` -> `[]`.
 
+  - Commits: `1e6a16c` fix(factura): ignora campos no enviados al editar y evita perder ediciones concurrentes; `68a5777` test(factura): corrige los tipos de los mocks del spec del servicio
+  - Native review (range `fe21b9f..68a5777`): assess `high`, consent granted, 4 lenses, lineage `review-fabb5ea0458dc9a4` approved and acknowledged (burned). 6 suggestions/warnings, readability only (items proxy gate naming, parallel `CAMPOS_SIMPLES` list, test name). Reviewed boundary -> `68a5777`.
 - T6c follow-up: `npx tsc --noEmit` showed 7 type errors in `factura.service.spec.ts` accumulated since T2 (ts-jest `isolatedModules` does not type-check): mock casts now go through `unknown`, `metodoPago` fixture uses `TipoPago.EFECTIVO`. `npx tsc --noEmit` -> 0 errors; factura tests 251 passed. `tsc --noEmit` added to every task's verification from now on.
+
+- T7 done (route: delegated direct, one writer on opus: highest-consequence task). New collaborator `FacturaInventarioService` (`rebajarStock`, `restaurarStock`, pure `agregarCantidadesPorProducto` sorted by canonical productoId). `confirmar` claims `confirmada` + `inventarioAplicado: true` + `$inc revision`, then decrements each product with a guarded `findOneAndUpdate` (`stock_inicial $gte`, same warehouse or none, not inactive); on first failure compensates applied decrements, reverts to `terminada` (matching the claimed revision) and throws 409 naming the product (missing / inactive / other warehouse / disponible vs solicitado). Kardex `venta` via one `insertMany` with `referencia`; Kardex failure logged, stock not rolled back. `cancelar` restores stock + Kardex `devolucion` only when `inventarioAplicado && !inventarioRevertido`; legacy confirmed invoices cancel without touching stock. Inactive estado read-only lookup (`/^inactivo$/i`, never created). Kardex schema gains optional `referencia` (file reformatted with prettier: it was not prettier-clean).
+  - RED: stub collaborator -> `npx jest src/modules/factura` 23 failed / 256 passed.
+  - GREEN: `npx jest src/modules/factura src/modules/inventario` -> 302 passed (parent re-ran). Full -> 492 passed, 1 failed (known). Build clean, `tsc --noEmit` 0 errors (parent re-ran), eslint clean, no `any`.
+  - Known limitations (documented in README, candidates for follow-up): (1) a `cancelar` landing inside the window of a `confirmar` that then fails could restore stock that was never decreased (revert then logs an error); closing it needs an in-progress marker. (2) Kardex `cantidad` has `min: 1` while item `cantidad` allows fractions: a 0.5 unit moves stock but its Kardex write fails (logged). (3) Stock reaching 0 does not flip the product to inactive (same as `VentaService`).
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T7 inventory movements.
+T8 final contract review + runtime smoke test.

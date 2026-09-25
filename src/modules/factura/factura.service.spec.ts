@@ -30,6 +30,7 @@ import {
 import { Pais, PaisDocument } from '../nomencladores/pais/schema/pais.schema';
 import { Usuario, UsuarioDocument } from '../auth/schemas/empleado.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
+import { FacturaInventarioService } from './factura-inventario.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import {
@@ -109,6 +110,11 @@ type UsuarioModelMock = {
   findById: jest.Mock<QueryMock<UsuarioDocument | null>, unknown[]>;
 };
 
+type InventarioMock = {
+  rebajarStock: jest.Mock<Promise<void>, unknown[]>;
+  restaurarStock: jest.Mock<Promise<void>, unknown[]>;
+};
+
 /** Narrows an unknown record field, for the rare assertion that needs a nested shape. */
 function comoRegistro(valor: unknown): Record<string, unknown> {
   return valor as Record<string, unknown>;
@@ -123,6 +129,7 @@ describe('FacturaService', () => {
   let productoModelMock: ProductoModelMock;
   let paisModelMock: PaisModelMock;
   let usuarioModelMock: UsuarioModelMock;
+  let inventarioMock: InventarioMock;
   let savedFactura: Partial<Factura> & {
     save: jest.Mock;
     validate: jest.Mock<Promise<void>, [unknown?]>;
@@ -246,9 +253,19 @@ describe('FacturaService', () => {
       } as unknown as UsuarioDocument),
     );
 
+    inventarioMock = {
+      rebajarStock: jest
+        .fn<Promise<void>, unknown[]>()
+        .mockResolvedValue(undefined),
+      restaurarStock: jest
+        .fn<Promise<void>, unknown[]>()
+        .mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FacturaService,
+        { provide: FacturaInventarioService, useValue: inventarioMock },
         { provide: getModelToken(Factura.name), useValue: facturaModelMock },
         {
           provide: getModelToken(FacturaContador.name),
@@ -1387,6 +1404,7 @@ describe('FacturaService', () => {
       {
         metodo: 'confirmar' as const,
         destino: EstadoFactura.CONFIRMADA,
+        setExtra: { inventarioAplicado: true },
       },
       {
         metodo: 'cancelar' as const,
@@ -1396,7 +1414,7 @@ describe('FacturaService', () => {
         metodo: 'anular' as const,
         destino: EstadoFactura.ANULADA,
       },
-    ])('$metodo', ({ metodo, destino }) => {
+    ])('$metodo', ({ metodo, destino, setExtra = {} }) => {
       it(`claims the transition to ${destino} with a single conditional findOneAndUpdate`, async () => {
         const actualizada = { id: 'FAC-000001', estado: destino } as Factura;
         facturaModelMock.findOneAndUpdate.mockReturnValue(
@@ -1407,7 +1425,7 @@ describe('FacturaService', () => {
 
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
           { id: 'FAC-000001', estado: { $in: origenesPermitidos(destino) } },
-          { $set: { estado: destino }, $inc: { revision: 1 } },
+          { $set: { estado: destino, ...setExtra }, $inc: { revision: 1 } },
           { new: true, runValidators: true },
         );
         expect(resultado).toBe(actualizada);
@@ -1464,6 +1482,187 @@ describe('FacturaService', () => {
       );
       expect(resultado).toBe(anulada);
     });
+  });
+
+  describe('inventory movements on confirmar / cancelar (T7)', () => {
+    function facturaReclamada(campos: Partial<Factura>): Factura {
+      return {
+        id: 'FAC-000012',
+        items: [{ ...itemBase, total: 200 }],
+        ...campos,
+      } as unknown as Factura;
+    }
+
+    describe('confirmar', () => {
+      it('decreases stock for the claimed invoice and returns it', async () => {
+        const reclamada = facturaReclamada({
+          estado: EstadoFactura.CONFIRMADA,
+          inventarioAplicado: true,
+          revision: 4,
+        });
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(reclamada),
+        );
+
+        await expect(service.confirmar('FAC-000012')).resolves.toBe(reclamada);
+
+        expect(inventarioMock.rebajarStock).toHaveBeenCalledWith(reclamada);
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      it('reverts the invoice to terminada (matching the claimed revision) and rethrows when stock cannot be decreased', async () => {
+        const reclamada = facturaReclamada({
+          estado: EstadoFactura.CONFIRMADA,
+          inventarioAplicado: true,
+          revision: 4,
+        });
+        facturaModelMock.findOneAndUpdate
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(reclamada))
+          .mockReturnValueOnce(
+            crearQueryMock<Factura | null>(
+              facturaReclamada({ estado: EstadoFactura.TERMINADA }),
+            ),
+          );
+        const conflicto = new ConflictException('stock insuficiente');
+        inventarioMock.rebajarStock.mockRejectedValue(conflicto);
+
+        await expect(service.confirmar('FAC-000012')).rejects.toBe(conflicto);
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenLastCalledWith(
+          {
+            id: 'FAC-000012',
+            estado: EstadoFactura.CONFIRMADA,
+            revision: 4,
+          },
+          {
+            $set: { estado: EstadoFactura.TERMINADA },
+            $unset: { inventarioAplicado: 1 },
+            $inc: { revision: 1 },
+          },
+          { new: true },
+        );
+      });
+
+      it('logs an error when the invoice revert no longer matches, and still rethrows', async () => {
+        facturaModelMock.findOneAndUpdate
+          .mockReturnValueOnce(
+            crearQueryMock<Factura | null>(
+              facturaReclamada({
+                estado: EstadoFactura.CONFIRMADA,
+                inventarioAplicado: true,
+                revision: 4,
+              }),
+            ),
+          )
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(null));
+        const conflicto = new ConflictException('stock insuficiente');
+        inventarioMock.rebajarStock.mockRejectedValue(conflicto);
+
+        const errorSpy = jest.spyOn(Logger.prototype, 'error');
+
+        await expect(service.confirmar('FAC-000012')).rejects.toBe(conflicto);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('FAC-000012'),
+        );
+      });
+
+      it('a concurrent second confirm whose claim does not match gets 409 and never touches stock', async () => {
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(null),
+        );
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(
+            facturaReclamada({ estado: EstadoFactura.CONFIRMADA }),
+          ),
+        );
+
+        await expect(service.confirmar('FAC-000012')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+        expect(inventarioMock.rebajarStock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('cancelar', () => {
+      it('restores stock and marks inventarioRevertido when this feature decreased it', async () => {
+        const reclamada = facturaReclamada({
+          estado: EstadoFactura.CANCELADA,
+          inventarioAplicado: true,
+        });
+        const marcada = facturaReclamada({
+          estado: EstadoFactura.CANCELADA,
+          inventarioAplicado: true,
+          inventarioRevertido: true,
+        });
+        facturaModelMock.findOneAndUpdate
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(reclamada))
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(marcada));
+
+        await expect(service.cancelar('FAC-000012')).resolves.toBe(marcada);
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
+          1,
+          {
+            id: 'FAC-000012',
+            estado: { $in: origenesPermitidos(EstadoFactura.CANCELADA) },
+          },
+          { $set: { estado: EstadoFactura.CANCELADA }, $inc: { revision: 1 } },
+          { new: true, runValidators: true },
+        );
+        expect(inventarioMock.restaurarStock).toHaveBeenCalledWith(reclamada);
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
+          2,
+          { id: 'FAC-000012', estado: EstadoFactura.CANCELADA },
+          { $set: { inventarioRevertido: true }, $inc: { revision: 1 } },
+          { new: true },
+        );
+      });
+
+      it('cancels a legacy confirmada invoice (no inventarioAplicado) without touching stock or Kardex', async () => {
+        const legado = facturaReclamada({ estado: EstadoFactura.CANCELADA });
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(legado),
+        );
+
+        await expect(service.cancelar('FAC-000012')).resolves.toBe(legado);
+
+        expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      it('never restores stock twice for an invoice already marked inventarioRevertido', async () => {
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(
+            facturaReclamada({
+              estado: EstadoFactura.CANCELADA,
+              inventarioAplicado: true,
+              inventarioRevertido: true,
+            }),
+          ),
+        );
+
+        await service.cancelar('FAC-000012');
+
+        expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
+      });
+    });
+
+    it.each(['terminar', 'volverAEdicion', 'anular'] as const)(
+      '%s never touches inventory',
+      async (metodo) => {
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(
+            facturaReclamada({ estado: EstadoFactura.TERMINADA }),
+          ),
+        );
+
+        await service[metodo]('FAC-000012');
+
+        expect(inventarioMock.rebajarStock).not.toHaveBeenCalled();
+        expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
+        expect(productoModelMock.find).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('annulled numero/id are never reused (T6a)', () => {
