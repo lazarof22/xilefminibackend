@@ -100,6 +100,8 @@ Si algún producto no puede descontarse (stock insuficiente, no existe, está in
 { "statusCode": 409, "error": "Conflict", "message": "No se puede confirmar la factura FAC-000012: stock insuficiente para el producto \"Tornillo\" (665f1c...): disponible 1, solicitado 3" }
 ```
 
+**Ids guardados como texto (T7c):** `Producto.almacen` puede estar guardado como ObjectId o como el texto hex que envió el cliente (por ejemplo, productos creados con `POST /producto`). Las comprobaciones de almacén y de estado inactivo (al crear/editar la factura y al confirmar) aceptan el ObjectId y su hex en minúsculas o mayúsculas, así que un producto del mismo almacén nunca recibe un `409` falso. Un hex con mayúsculas y minúsculas mezcladas no se reconoce al confirmar.
+
 Dos `confirmar` simultáneos sobre la misma factura: solo uno la reclama; el otro recibe el `409` de transición inválida, así que el stock nunca se descuenta dos veces.
 
 **Marcador `inventarioEnProceso` (T7b):** mientras `confirmar` o `cancelar` mueven stock, la factura lleva `inventarioEnProceso: true`; se quita en la misma escritura condicional que termina la operación (éxito, o vuelta a `terminada` si la confirmación falla). Un `cancelar` que llega mientras una confirmación todavía está descontando stock **no** puede reclamar la factura y recibe `409` `"La factura FAC-000012 se está confirmando; reintente"`, sin tocar el stock. Así nunca se devuelve stock que todavía no se descontó.

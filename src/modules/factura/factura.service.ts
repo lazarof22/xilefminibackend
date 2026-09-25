@@ -47,6 +47,7 @@ import {
 import { calcularTotales } from './factura-totales';
 import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
+import { mismoId } from './factura-ids';
 import {
   camposEditablesPorEstado,
   camposNoPermitidos,
@@ -364,7 +365,9 @@ export class FacturaService implements OnModuleInit {
    * canonical (lowercase) hex form of the ObjectId: `producto._id` and
    * `producto.almacen` come back lowercase from Mongo, but `productoId` and
    * `almacenId` are raw strings validated only with `@IsMongoId`, so a
-   * client sending uppercase hex must still match.
+   * client sending uppercase hex must still match. `producto.almacen` is a
+   * `Mixed` path (T7c): it may be an ObjectId or a hex string in any case,
+   * so it goes through `mismoId` too.
    */
   private async validarProductosDelAlmacen(
     items: { productoId: string }[],
@@ -380,7 +383,6 @@ export class FacturaService implements OnModuleInit {
     const productosPorId = new Map<string, ProductoDocument>(
       productos.map((producto) => [producto._id.toString(), producto]),
     );
-    const almacenIdCanonico = new Types.ObjectId(almacenId).toHexString();
 
     for (const productoId of productoIds) {
       const productoIdCanonico = new Types.ObjectId(productoId).toHexString();
@@ -388,10 +390,7 @@ export class FacturaService implements OnModuleInit {
       if (!producto) {
         throw new BadRequestException(`El producto ${productoId} no existe`);
       }
-      if (
-        producto.almacen &&
-        producto.almacen.toString() !== almacenIdCanonico
-      ) {
+      if (producto.almacen && !mismoId(producto.almacen, almacenId)) {
         throw new BadRequestException(
           `El producto ${productoId} no pertenece al almacén seleccionado`,
         );

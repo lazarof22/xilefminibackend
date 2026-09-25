@@ -13,7 +13,7 @@ import {
 import { FacturaService } from './factura.service';
 import { Factura } from './schema/factura.schema';
 import { FacturaContador } from './schema/factura-contador.schema';
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import {
   Cliente,
   ClienteDocument,
@@ -727,6 +727,25 @@ describe('FacturaService', () => {
 
       await expect(crear(dto)).resolves.toBeDefined();
     });
+
+    it.each([
+      ['a real ObjectId', () => new Types.ObjectId(ALMACEN_ID)],
+      ['an uppercase hex string', () => ALMACEN_ID.toUpperCase()],
+    ])(
+      'allows the producto when its almacen is stored as %s of the invoice almacén (Mixed path, T7c)',
+      async (_forma, almacenGuardado) => {
+        productoModelMock.find.mockReturnValue(
+          crearQueryMock<ProductoDocument[]>([
+            {
+              _id: PRODUCTO_ID,
+              almacen: almacenGuardado(),
+            } as unknown as ProductoDocument,
+          ]),
+        );
+
+        await expect(crear(baseDto())).resolves.toBeDefined();
+      },
+    );
 
     it('finds the producto when productoId is sent in uppercase hex, matching the canonical stored _id', async () => {
       productoModelMock.find.mockReturnValue(

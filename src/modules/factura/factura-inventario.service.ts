@@ -4,11 +4,13 @@ import { Model, QueryFilter, Types } from 'mongoose';
 import { Producto } from '../inventario/producto/schemas/producto.schema';
 import { Kardex, KardexTipo } from '../inventario/kardex/schema/kardex.schema';
 import { Estado } from '../nomencladores/estado/schema/estado.schema';
+import { mismoId, variantesHex, variantesId } from './factura-ids';
 
 /** The part of an invoice the inventory movements need. */
 export interface FacturaParaInventario {
   id: string;
-  almacenId?: Types.ObjectId;
+  /** Written by factura as an ObjectId; a string is tolerated (T7c). */
+  almacenId?: Types.ObjectId | string;
   items: { productoId: string; cantidad: number }[];
 }
 
@@ -226,16 +228,20 @@ export class FacturaInventarioService {
     factura: FacturaParaInventario,
     estadoInactivoId: string | null,
   ): QueryFilter<Producto> {
+    // `_id` is a real ObjectId path (Mongoose casts the string). `almacen`
+    // is `Mixed` (never cast), so it may hold the ObjectId or its hex string
+    // (T7c): every form is listed. `estado` is a String path (always a
+    // string), so only its hex forms are listed.
     const filtro: QueryFilter<Producto> = {
       _id: linea.productoId,
       stock_inicial: { $gte: linea.cantidad },
     };
     if (estadoInactivoId) {
-      filtro.estado = { $ne: estadoInactivoId };
+      filtro.estado = { $nin: variantesHex(estadoInactivoId) };
     }
     if (factura.almacenId) {
       // A product without an assigned warehouse matches any invoice (T2).
-      filtro.almacen = { $in: [null, factura.almacenId] };
+      filtro.almacen = { $in: [null, ...variantesId(factura.almacenId)] };
     }
     return filtro;
   }
@@ -253,13 +259,15 @@ export class FacturaInventarioService {
       return `el producto ${linea.productoId} no existe`;
     }
     const nombre = `"${producto.nombre_producto}" (${linea.productoId})`;
-    if (estadoInactivoId && producto.estado?.toString() === estadoInactivoId) {
+    // Compared in canonical form: the stored value may be an ObjectId or a
+    // hex string in any case (T7c).
+    if (estadoInactivoId && mismoId(producto.estado, estadoInactivoId)) {
       return `el producto ${nombre} está inactivo`;
     }
     if (
       factura.almacenId &&
       producto.almacen &&
-      producto.almacen.toString() !== factura.almacenId.toString()
+      !mismoId(producto.almacen, factura.almacenId)
     ) {
       return `el producto ${nombre} no pertenece al almacén de la factura`;
     }

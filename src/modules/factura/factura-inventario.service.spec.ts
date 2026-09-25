@@ -21,6 +21,20 @@ const ALMACEN_ID = '507f1f77bcf86cd799439011';
 const PRODUCTO_A = '507f1f77bcf86cd7994390aa';
 const PRODUCTO_B = '507f1f77bcf86cd7994390bb';
 const ESTADO_INACTIVO_ID = '507f1f77bcf86cd7994390ee';
+/**
+ * `Producto.almacen` is a `Mixed` path (T7c): it may hold the ObjectId or its
+ * hex string, so the guards match every stored representation.
+ */
+const ALMACEN_VARIANTES = [
+  new Types.ObjectId(ALMACEN_ID),
+  ALMACEN_ID,
+  ALMACEN_ID.toUpperCase(),
+];
+/** `Producto.estado` is a String path: only the hex string forms. */
+const ESTADO_INACTIVO_VARIANTES = [
+  ESTADO_INACTIVO_ID,
+  ESTADO_INACTIVO_ID.toUpperCase(),
+];
 /** Unordered, so one invalid Kardex row never drops the rest (T7b). */
 const OPCIONES_KARDEX = { ordered: false, throwOnValidationError: true };
 
@@ -167,13 +181,12 @@ describe('FacturaInventarioService', () => {
 
       await service.rebajarStock(facturaBase());
 
-      const almacenId = new Types.ObjectId(ALMACEN_ID);
       expect(productoModelMock.findOneAndUpdate.mock.calls).toEqual([
         [
           {
             _id: PRODUCTO_A,
             stock_inicial: { $gte: 2 },
-            almacen: { $in: [null, almacenId] },
+            almacen: { $in: [null, ...ALMACEN_VARIANTES] },
           },
           { $inc: { stock_inicial: -2 } },
           { new: true },
@@ -182,7 +195,7 @@ describe('FacturaInventarioService', () => {
           {
             _id: PRODUCTO_B,
             stock_inicial: { $gte: 3 },
-            almacen: { $in: [null, almacenId] },
+            almacen: { $in: [null, ...ALMACEN_VARIANTES] },
           },
           { $inc: { stock_inicial: -3 } },
           { new: true },
@@ -257,7 +270,9 @@ describe('FacturaInventarioService', () => {
       });
       expect(estadoModelMock.create).not.toHaveBeenCalled();
       expect(productoModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ estado: { $ne: ESTADO_INACTIVO_ID } }),
+        expect.objectContaining({
+          estado: { $nin: ESTADO_INACTIVO_VARIANTES },
+        }),
         expect.anything(),
         expect.anything(),
       );
@@ -342,6 +357,89 @@ describe('FacturaInventarioService', () => {
           facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 1 }] }),
         ),
       ).rejects.toThrow(`el producto "Tornillo" (${PRODUCTO_A}) está inactivo`);
+    });
+
+    it('matches a warehouse stored as an ObjectId or as a hex string, also for an invoice whose almacenId is a string', async () => {
+      decrementosDevuelven(producto(PRODUCTO_A), producto(PRODUCTO_B));
+
+      await service.rebajarStock(
+        facturaBase({ almacenId: ALMACEN_ID.toUpperCase() }),
+      );
+
+      expect(productoModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          almacen: { $in: [null, ...ALMACEN_VARIANTES] },
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('names a product whose estado is stored as the inactive id string (any case) as inactive', async () => {
+      estadoModelMock.findOne.mockReturnValue(
+        crearQueryMock<EstadoDocument | null>({
+          _id: new Types.ObjectId(ESTADO_INACTIVO_ID),
+        } as unknown as EstadoDocument),
+      );
+      decrementosDevuelven(null);
+      productoModelMock.findById.mockReturnValue(
+        crearQueryMock<ProductoDocument | null>(
+          producto(PRODUCTO_A, {
+            nombre_producto: 'Tornillo',
+            stock_inicial: 50,
+            estado: ESTADO_INACTIVO_ID.toUpperCase(),
+            almacen: ALMACEN_ID,
+          }),
+        ),
+      );
+
+      await expect(
+        service.rebajarStock(
+          facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 1 }] }),
+        ),
+      ).rejects.toThrow(`el producto "Tornillo" (${PRODUCTO_A}) está inactivo`);
+    });
+
+    it('does not report a product whose warehouse is stored as the same id string (other case) as from another warehouse', async () => {
+      decrementosDevuelven(null);
+      productoModelMock.findById.mockReturnValue(
+        crearQueryMock<ProductoDocument | null>(
+          producto(PRODUCTO_A, {
+            nombre_producto: 'Tornillo',
+            stock_inicial: 0,
+            almacen: ALMACEN_ID.toUpperCase(),
+          }),
+        ),
+      );
+
+      await expect(
+        service.rebajarStock(
+          facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 1 }] }),
+        ),
+      ).rejects.toThrow(
+        `stock insuficiente para el producto "Tornillo" (${PRODUCTO_A}): disponible 0, solicitado 1`,
+      );
+    });
+
+    it('names a product whose warehouse is stored as another id string as from another warehouse', async () => {
+      decrementosDevuelven(null);
+      productoModelMock.findById.mockReturnValue(
+        crearQueryMock<ProductoDocument | null>(
+          producto(PRODUCTO_A, {
+            nombre_producto: 'Tornillo',
+            stock_inicial: 50,
+            almacen: new Types.ObjectId().toHexString(),
+          }),
+        ),
+      );
+
+      await expect(
+        service.rebajarStock(
+          facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 1 }] }),
+        ),
+      ).rejects.toThrow(
+        `el producto "Tornillo" (${PRODUCTO_A}) no pertenece al almacén de la factura`,
+      );
     });
 
     it('names a product from another warehouse in the 409', async () => {
