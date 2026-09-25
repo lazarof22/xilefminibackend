@@ -73,7 +73,7 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
 - Slices (PR -> commits): recorded as tasks close.
 
 ## Acceptance
-- `npx jest` green, `npm run build` green, `npx eslint` clean on touched files, no `any`.
+- `npx jest` green, `npm run build` green, `npx tsc --noEmit` clean, `npx eslint` clean on touched files, no `any`.
 - Every spec item above (except signatures) is covered by code and tests.
 
 ## Progress / Evidence
@@ -132,6 +132,8 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
   - Evidence (writer, throwaway local mongod, Mongoose 9.1.5): Mongoose strips `undefined` keys from update documents, so `AlmacenService.update` passing a DTO with undefined `codigo` does not erase it (safe, no change). A schema `default: 0` would backfill reads and break legacy matching, hence no default.
   - RED: `npx jest src/modules/factura/factura-estado.spec.ts src/modules/factura/factura.service.spec.ts` -> 24 failed / 124 passed (real `plainToInstance` DTOs).
   - GREEN: `npx jest src/modules/factura src/modules/inventario/almacen` -> 274 passed. Full -> 464 passed, 1 failed (known). Parent re-ran factura tests and the `dist` reproduction: `terminada` + `{ fecha }` -> `[]`.
+
+- T6c follow-up: `npx tsc --noEmit` showed 7 type errors in `factura.service.spec.ts` accumulated since T2 (ts-jest `isolatedModules` does not type-check): mock casts now go through `unknown`, `metodoPago` fixture uses `TipoPago.EFECTIVO`. `npx tsc --noEmit` -> 0 errors; factura tests 251 passed. `tsc --noEmit` added to every task's verification from now on.
 
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).

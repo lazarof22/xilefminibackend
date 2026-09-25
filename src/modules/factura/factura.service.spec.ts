@@ -38,6 +38,7 @@ import {
   FACTURA_CONTADOR_ID,
   FACTURA_LISTADO_LIMITE_DEFECTO,
   FACTURA_TIMEZONE,
+  TipoPago,
 } from './factura.constants';
 import { origenesPermitidos } from './factura-estado';
 import { obtenerFechaEnZona } from './factura-fecha';
@@ -210,7 +211,7 @@ describe('FacturaService', () => {
         _id: ALMACEN_ID,
         nombreAlmacen: 'Almacén Central',
         codigo: 'ALM-001',
-      } as AlmacenDocument),
+      } as unknown as AlmacenDocument),
     );
 
     productoModelMock = {
@@ -242,7 +243,7 @@ describe('FacturaService', () => {
         _id: USER_ID,
         nombre_empleado: 'Juan Pérez',
         ci_empleado: '12345678901',
-      } as UsuarioDocument),
+      } as unknown as UsuarioDocument),
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -271,7 +272,7 @@ describe('FacturaService', () => {
 
   function baseDto(): CreateFacturaDto {
     return {
-      metodoPago: 'efectivo',
+      metodoPago: TipoPago.EFECTIVO,
       almacenId: ALMACEN_ID,
       items: [{ ...itemBase }],
     };
@@ -439,7 +440,7 @@ describe('FacturaService', () => {
         crearQueryMock<PaisDocument | null>({
           _id: '507f1f77bcf86cd799439099',
           nombrePais: 'Cuba',
-        } as PaisDocument),
+        } as unknown as PaisDocument),
       );
 
       await crear(baseDto());
@@ -619,7 +620,7 @@ describe('FacturaService', () => {
           _id: ALMACEN_ID,
           nombreAlmacen: 'Almacén Sin Código',
           codigo: undefined,
-        } as AlmacenDocument),
+        } as unknown as AlmacenDocument),
       );
 
       await expect(crear(baseDto())).rejects.toBeInstanceOf(
@@ -855,7 +856,7 @@ describe('FacturaService', () => {
           _id: USER_ID,
           nombre_empleado: 'María López',
           ci_empleado: '98765432109',
-        } as UsuarioDocument),
+        } as unknown as UsuarioDocument),
       );
 
       await crear(baseDto(), USER_ID);
@@ -1068,7 +1069,7 @@ describe('FacturaService', () => {
             _id: otroAlmacenId,
             nombreAlmacen: 'Otro almacén',
             codigo: 'ALM-002',
-          } as AlmacenDocument),
+          } as unknown as AlmacenDocument),
         );
         facturaModelMock.findOneAndUpdate.mockReturnValue(
           crearQueryMock<Factura | null>(existente),
