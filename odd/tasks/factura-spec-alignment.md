@@ -58,7 +58,7 @@ Today the invoice module is disconnected from inventory, users/roles and warehou
 - [x] T7 Inventory movements (only invoices confirmed after this feature carry `inventarioAplicado: true`; cancelling a legacy `confirmada` must not add stock back): `confirmar` decreases stock + Kardex `venta`; `cancelar` increases stock + Kardex `devolucion`; Kardex gets a `referencia` to the invoice; compensation on partial failure
 - [x] T7b Inventory hardening (T7 review): in-progress marker so `cancelar` cannot claim while a confirm is applying stock; revert failure never masks the original error; ambiguous decrement write errors logged for manual reconciliation; Kardex accepts fractional quantities and writes unordered so one bad row never drops the batch; accurate messages/README; drop dead guard
 - [x] T7c Inventory guard tolerant to `Mixed` ObjectId paths (found by T8): match `almacen` / `estado` / `_id` both as ObjectId and as string, and write Kardex/other refs as real ObjectIds
-- [ ] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
+- [x] T8 Final frontend contract review + runtime smoke test against local MongoDB (if available); each task already updates `src/modules/factura/README.md`
 
 ## Route
 Delegated direct, one bounded writer per task (writer trigger: every task touches 2+ non-trivial files: schema, DTO, service, specs). The parent reviews, spot-checks and commits.
@@ -161,8 +161,23 @@ Delegated direct, one bounded writer per task (writer trigger: every task touche
   - GREEN: `npx jest src/modules/factura src/modules/inventario` -> 332 passed (parent re-ran). Full -> 522 passed, 1 failed (known). Build clean, `tsc` 0 errors (parent re-ran), eslint clean.
   - Runtime proof (throwaway mongod 8.0.28, port 27123, built service, raw-inserted products): almacen stored as string / uppercase string / ObjectId -> all decrement (stock 7); inactive-as-string -> 409 inactivo; other warehouse -> 409; Kardex productoId stored as ObjectId; pre-T7c filter matches string-stored product 0, T7c filter 1. mongod stopped, dbpath deleted.
 
+  - Commit: `8b2f11b` fix(factura): reconoce ids guardados como texto u ObjectId al mover el inventario
+  - Native review: assess `high`, consent granted, 4 lenses, lineage `review-639318bdcf180d98` approved and acknowledged (burned). 6 suggestions only. Reviewed boundary -> `8b2f11b`.
+- T8 closed: runtime smoke test (17 scenarios) passed; the only defect it found (Mixed ObjectId paths) is fixed for factura in T7c and proven against a throwaway mongod. README verified against observed behavior.
+- Final verification (parent, HEAD `8b2f11b`): `npx jest` -> 522 passed, 1 failed (known, pre-existing); `npm run build` clean; `npx tsc --noEmit` 0 errors. Branch total vs `d4bd1df` (excluding `odd/`): 34 files, +5777/-256 (majority tests), 12 commits.
+
+## Follow-ups (out of scope, need a user decision)
+- Project-wide: 22 schema files use `@Prop({ type: Types.ObjectId })`, which Mongoose 9 turns into `Mixed` paths (no casting, ids stored as strings by some writers). Proper fix: `mongoose.Schema.Types.ObjectId` + a data migration converting string ids.
+- `Producto` schema: `categoria_producto` and `estado` marked `unique: true` (only one product per category/estado).
+- Inventory report "reserved" stock and IPV report from the same client document.
+- Log-accuracy advisories from the T7b review (Kardex failed-row index shape, stuck-marker 409 wording).
+- Pre-existing failing test `usuarios.service.spec.ts` (mock lacks `toObject`).
+
+## Delivery
+- Chain strategy `feature-branch-chain`. Suggested PR slices (≈ review units already reviewed natively): (1) T1+T2+T2b roles & warehouse, (2) T3+T4 document data & auth, (3) T6a+T6b+T6c states & edit rules, (4) T7+T7b+T7c inventory. Push / PR creation are the user's decision.
+
 ## Known environmental failures
 - `src/modules/configuracion/usuarios/usuarios.service.spec.ts` › `UsuariosService › create › should create a user with hashed password` (fails on base `d4bd1df`).
 
 ## Next step
-T8 final contract review + runtime smoke test.
+Feature complete. Awaiting the user's decisions on delivery (push/PRs) and follow-ups.
