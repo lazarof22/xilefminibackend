@@ -9,11 +9,11 @@ export type ContenedorDocument = HydratedDocument<Contenedor>;
 
 export class Contenedor {
 
+    @Prop({ required: true, unique: true })
+    codigoContenedor!: string;
+
     @Prop({ required: true })
     nombreContenedor!: string;
-
-    @Prop({ required: true, min: 0, default: 0 })
-    cantidadProductos!: number;
 
     @Prop({ type: Types.ObjectId, ref: 'Almacen', required: true })
     almacen!: Types.ObjectId;

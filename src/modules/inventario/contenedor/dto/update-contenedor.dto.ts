@@ -12,9 +12,8 @@ export class UpdateContenedorDto extends PartialType(CreateContenedorDto) {
 
     
     @IsOptional()
-    @IsNumber({}, { message: 'La cantidad de productos debe ser un número' })
-    @Min(0, { message: 'La cantidad de productos no puede ser negativa' })
-    cantidadProductos?: number;
+    @IsString({ message: 'El código del contenedor debe ser una cadena de texto' })
+    codigoContenedor?: string;
 
     
     @IsOptional()

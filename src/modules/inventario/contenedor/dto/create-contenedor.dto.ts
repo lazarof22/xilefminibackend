@@ -9,11 +9,9 @@ export class CreateContenedorDto {
     @IsString({ message: 'El nombre del contenedor debe ser una cadena de texto' })
     nombreContenedor!: string;
 
-   
-    @IsOptional()
-    @IsNumber({}, { message: 'La cantidad de productos debe ser un número' })
-    @Min(0, { message: 'La cantidad de productos no puede ser negativa' })
-    cantidadProductos?: number;
+    @IsNotEmpty({ message: 'El código del contenedor no puede estar vacío' })
+    @IsString({ message: 'El código del contenedor debe ser una cadena de texto' })
+    codigoContenedor!: string;
 
     
     @IsNotEmpty({ message: 'El almacén es obligatorio' })
