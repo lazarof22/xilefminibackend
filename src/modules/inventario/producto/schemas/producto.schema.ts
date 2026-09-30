@@ -12,7 +12,7 @@ export class Producto {
     @Prop({ required: true })
     nombre_producto!: string;
 
-    @Prop({ required: true, unique:true })
+    @Prop({ required: true })
     categoria_producto!: string;
 
     @Prop({ required: true })
@@ -27,7 +27,7 @@ export class Producto {
     @Prop({ required: true })
     stock_minimo!: number; // cantidad minima que debe haber
 
-    @Prop({ required: true,unique:true })
+    @Prop({ required: true })
     estado!: string;
 
     @Prop({ type: Types.ObjectId, ref: 'Almacen' })
