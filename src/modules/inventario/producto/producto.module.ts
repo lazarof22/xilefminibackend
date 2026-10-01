@@ -2,26 +2,58 @@ import { Module } from '@nestjs/common';
 import { ProductoService } from './producto.service';
 import { ProductoController } from './producto.controller';
 import { MongooseModule } from '@nestjs/mongoose';
-import { Producto, ProductoSchema } from './schemas/producto.schema';
-import { Estado, EstadoSchema } from 'src/modules/nomencladores/estado/schema/estado.schema';
-import { Categoria, CategoriaSchema } from 'src/modules/nomencladores/categoria/schema/categoria.schema';
-import { Almacen, AlmacenSchema } from '../almacen/schema/almacen.schema';
-import { Contenedor, ContenedorSchema } from '../contenedor/schema/contenedor.schema';
+
+import { Producto, ProductoSchema, } from './schemas/producto.schema';
+
+import { Estado, EstadoSchema, } from 'src/modules/nomencladores/estado/schema/estado.schema';
+
+import { Categoria, CategoriaSchema, } from 'src/modules/nomencladores/categoria/schema/categoria.schema';
+
+import { Almacen, AlmacenSchema, } from '../almacen/schema/almacen.schema';
+
+import { Contenedor, ContenedorSchema, } from '../contenedor/schema/contenedor.schema';
+
 import { NomencladorHelperModule } from '../../configuracion/nomenclador-helper/nomenclador-helper.module';
+
+import { ExistenciaModule } from '../exitencia/existencia.module';
 
 @Module({
   controllers: [ProductoController],
+
   providers: [ProductoService],
 
-  imports: [MongooseModule.forFeature([
-    { name: Producto.name, schema: ProductoSchema },
-    { name: Estado.name, schema: EstadoSchema },
-    { name: Categoria.name, schema: CategoriaSchema },
-    { name: Almacen.name, schema: AlmacenSchema },
-    { name: Contenedor.name, schema: ContenedorSchema },
-  ]),
-  NomencladorHelperModule,
-],
-  exports: [MongooseModule],
+  imports: [
+    MongooseModule.forFeature([
+      {
+        name: Producto.name,
+        schema: ProductoSchema,
+      },
+      {
+        name: Estado.name,
+        schema: EstadoSchema,
+      },
+      {
+        name: Categoria.name,
+        schema: CategoriaSchema,
+      },
+      {
+        name: Almacen.name,
+        schema: AlmacenSchema,
+      },
+      {
+        name: Contenedor.name,
+        schema: ContenedorSchema,
+      },
+    ]),
+
+    NomencladorHelperModule,
+
+    ExistenciaModule,
+  ],
+
+  exports: [
+    MongooseModule,
+  ],
 })
 export class ProductoModule { }
+

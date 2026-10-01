@@ -9,6 +9,7 @@ import { Categoria } from '../../nomencladores/categoria/schema/categoria.schema
 import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { NomencladorHelper } from '../../configuracion/nomenclador-helper/nomenclador-helper.service';
+import { ExistenciaService } from '../exitencia/existencia.service';
 
 
 @Injectable()
@@ -20,6 +21,7 @@ export class ProductoService {
     @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
     @InjectModel(Contenedor.name) private contenedorModel: Model<Contenedor>,
     private readonly nomencladorHelper: NomencladorHelper,
+    private readonly existenciaService: ExistenciaService,
   ) { }
 
   /**
@@ -48,12 +50,21 @@ export class ProductoService {
     });
   }
 
-
-  //Crear un producto
   async create(
     createProductoDto: CreateProductoDto,
   ): Promise<Producto> {
-    const { codigo_producto, nombre_producto, categoria_producto, precio_compra, precio_venta, stock_inicial, stock_minimo, estado, almacen, contenedor } = createProductoDto;
+    const {
+      codigo_producto,
+      nombre_producto,
+      categoria_producto,
+      precio_compra,
+      precio_venta,
+      stock_inicial,
+      stock_minimo,
+      estado,
+      almacen,
+      contenedor,
+    } = createProductoDto;
 
     // Validar que el producto no exista
     const existProducto = await this.productoModel.findOne({
@@ -61,33 +72,87 @@ export class ProductoService {
     });
 
     if (existProducto) {
-      throw new BadRequestException('Ya existe el producto');
+      throw new BadRequestException(
+        'Ya existe el producto',
+      );
     }
 
     if (almacen) {
       if (!Types.ObjectId.isValid(almacen)) {
-        throw new BadRequestException('El ID del almacén no es válido');
+        throw new BadRequestException(
+          'El ID del almacén no es válido',
+        );
       }
-      const almacenExist = await this.almacenModel.findById(almacen);
+
+      const almacenExist =
+        await this.almacenModel.findById(almacen);
+
       if (!almacenExist) {
-        throw new NotFoundException('El almacén no existe');
+        throw new NotFoundException(
+          'El almacén no existe',
+        );
       }
     }
 
     if (contenedor) {
       if (!Types.ObjectId.isValid(contenedor)) {
-        throw new BadRequestException('El ID del contenedor no es válido');
+        throw new BadRequestException(
+          'El ID del contenedor no es válido',
+        );
       }
-      const contenedorExist = await this.contenedorModel.findById(contenedor);
+
+      const contenedorExist =
+        await this.contenedorModel.findById(
+          contenedor,
+        );
+
       if (!contenedorExist) {
-        throw new NotFoundException('El contenedor no existe');
+        throw new NotFoundException(
+          'El contenedor no existe',
+        );
+      }
+
+      // El contenedor debe pertenecer al almacén seleccionado
+      if (
+        almacen &&
+        contenedorExist.almacen.toString() !==
+        almacen.toString()
+      ) {
+        throw new BadRequestException(
+          'El contenedor no pertenece al almacén seleccionado',
+        );
       }
     }
 
     // Crear el producto
-    const nuevoProducto = new this.productoModel(createProductoDto);
-    return nuevoProducto.save();
+    const nuevoProducto =
+      new this.productoModel(createProductoDto);
+
+    const productoGuardado =
+      await nuevoProducto.save();
+
+    /**
+     * Si el producto tiene una ubicación inicial,
+     * crear también su existencia física.
+     */
+    if (
+      almacen &&
+      contenedor &&
+      stock_inicial !== undefined &&
+      stock_inicial >= 0
+    ) {
+      await this.existenciaService.crearExistenciaInicial(
+        productoGuardado._id,
+        almacen.toString(),
+        contenedor.toString(),
+        stock_inicial,
+      );
+    }
+
+    return productoGuardado;
   }
+
+
 
 
 
@@ -149,8 +214,8 @@ export class ProductoService {
     return producto.save();
   }
 
-  
-  
+
+
   //Eliminar un producto
 
   async remove(id: string): Promise<void> {

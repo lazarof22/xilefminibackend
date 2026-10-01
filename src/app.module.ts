@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { VentaModule } from './modules/inventario/venta/venta.module';
 import { PagoModule } from './modules/inventario/pago/pago.module';
 import { CuadreCajaModule } from './modules/inventario/cuadre_caja/cuadre_caja.module';
+import { ExistenciaModule } from './modules/inventario/exitencia/existencia.module';
 import { ExtraccionModule } from './modules/inventario/extraccion/extraccion.module';
 import { ReportePlusModule } from './modules/inventario/reporte_plus/reporte_plus.module';
 import { KardexModule } from './modules/inventario/kardex/kardex.module';
@@ -38,6 +39,7 @@ import { FacturaModule } from './modules/factura/factura.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
 import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 
+
 @Module({
   imports: [
     ConfigModule.forRoot(),
@@ -60,6 +62,7 @@ import { NomencladoresModule } from './modules/nomencladore generales/nomenclado
     VentaModule,
     PagoModule,
     CuadreCajaModule,
+    ExistenciaModule,
     ExtraccionModule,
     ReportePlusModule,
     KardexModule,
