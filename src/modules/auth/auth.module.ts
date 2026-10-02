@@ -11,11 +11,13 @@ import { JwtStrategy } from './strategies/jwt.strategies';
 import { RolesGuard } from './guards/roles.guard';
 import { CargoEmpleado, CargoEmpleadoSchema } from '../nomencladores/cargo_empleado/schema/cargo_empleado.schema';
 import { Departamento, DepartamentoSchema } from '../nomencladores/departamento/schema/departamento.schema';
+import { LicenciaModule } from '../licencia/licencia.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Usuario.name, schema: UsuarioSchema }, { name: CargoEmpleado.name, schema: CargoEmpleadoSchema }, { name: Departamento.name, schema: DepartamentoSchema }]),
     PassportModule,
+    LicenciaModule,
     JwtModule.register({
       secret: JWT_SECRET,
       signOptions: { expiresIn: '1h' },

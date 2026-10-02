@@ -8,6 +8,7 @@ import { Usuario } from './schemas/empleado.schema';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { CargoEmpleado } from '../nomencladores/cargo_empleado/schema/cargo_empleado.schema';
 import { Departamento } from '../nomencladores/departamento/schema/departamento.schema';
+import { LicenciaService } from '../licencia/licencia.service';
 
 @Injectable()
 export class AuthService {
@@ -15,6 +16,7 @@ export class AuthService {
     @InjectModel(Usuario.name) private userModel: Model<Usuario>,
     @InjectModel(Departamento.name) private departamentoModel: Model<Departamento>,@InjectModel(CargoEmpleado.name) private cargoModel: Model<CargoEmpleado>,
     private jwtService: JwtService,
+    private readonly licenciaService: LicenciaService,
   ) { }
 
 
@@ -28,6 +30,7 @@ export class AuthService {
 
   async register(createAuthDto: CreateAuthDto): Promise<{ access_token: string }> {
     const { ci_empleado, nombre_empleado, correo_empleado, contraseña, departamento, cargo, salario, rol, empresa_id } = createAuthDto;
+    await this.assertCupoUsuarios(empresa_id?.toString());
     const hashedPassword = await bcrypt.hash(contraseña, 10);
     const user = new this.userModel({
       ci_empleado,
@@ -50,6 +53,17 @@ export class AuthService {
     });
 
     return { access_token };
+  }
+
+  /**
+   * Enforces the license `max_usuarios` cap before creating a user. Counts the
+   * users of the empresa (or of the whole install when no empresa is given).
+   * Only enforced when a valid license exists (see LicenciaService).
+   */
+  private async assertCupoUsuarios(empresaId: string | undefined): Promise<void> {
+    const filter = empresaId ? { empresa_id: empresaId } : {};
+    const usuariosActuales = await this.userModel.countDocuments(filter).exec();
+    await this.licenciaService.assertCupoUsuarios(empresaId, usuariosActuales);
   }
 
   async validateUser(correo_empleado: string, contraseña: string): Promise<any> {
