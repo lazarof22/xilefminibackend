@@ -9,7 +9,6 @@ export class Existencia {
         type: Types.ObjectId,
         ref: 'Producto',
         required: true,
-        index: true,
     })
     producto!: Types.ObjectId;
 
@@ -17,7 +16,6 @@ export class Existencia {
         type: Types.ObjectId,
         ref: 'Almacen',
         required: true,
-        index: true,
     })
     almacen!: Types.ObjectId;
 
@@ -25,7 +23,6 @@ export class Existencia {
         type: Types.ObjectId,
         ref: 'Contenedor',
         required: true,
-        index: true,
     })
     contenedor!: Types.ObjectId;
 
@@ -36,7 +33,8 @@ export class Existencia {
     cantidad!: number;
 }
 
-export const ExistenciaSchema = SchemaFactory.createForClass(Existencia);
+export const ExistenciaSchema =
+    SchemaFactory.createForClass(Existencia);
 
 /**
  * Una combinación producto + almacén + contenedor
