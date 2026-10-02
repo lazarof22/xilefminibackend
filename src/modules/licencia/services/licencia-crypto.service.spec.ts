@@ -1,227 +1,185 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import * as crypto from 'crypto';
+import { Logger } from '@nestjs/common';
 import { LicenciaCryptoService } from './licencia-crypto.service';
+import { buildCanonicalPayload, LicenciaPayloadV3 } from './payload-builder';
+import { LICENCIA_DEV_PUBLIC_KEY } from '../constants/licencia.constants';
 
-// Firma válida precalculada con la clave privada de DEV sobre el payload
-// 'test-payload-123'. La firma es pública (verificable con la clave pública
-// embebida); la clave privada NO vive en el cliente.
-const VALID_PAYLOAD = 'test-payload-123';
-const VALID_SIGNATURE =
-  '26b5beb8166c4f2ba4c9cc2c705219fa2b0b6bfab4cc324c7c8475b449537b7b' +
-  '6b898e9f1971ffcdbcfd47e44e2d2e936ca3b0744005c4a0766b0cd7d83e3f06';
+function rawPublicKey(key: crypto.KeyObject): string {
+  const jwk = key.export({ format: 'jwk' });
+  return Buffer.from(jwk.x as string, 'base64url').toString('base64');
+}
+
+function payload(): LicenciaPayloadV3 {
+  return {
+    activa: true,
+    emitida_en: '2026-01-01T12:00:00.000Z',
+    empresa_id: 'EMP-001',
+    fecha_inicio: '2026-01-01T00:00:00.000Z',
+    fecha_vencimiento: '2027-01-01T00:00:00.000Z',
+    hardware_fingerprint: 'a'.repeat(64),
+    license_id: '3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f',
+    max_usuarios: 5,
+    revocada: false,
+    secuencia: 1,
+    tipo: 'suscripcion_anual',
+  };
+}
+
+function sign(p: LicenciaPayloadV3, key: crypto.KeyObject): string {
+  return crypto
+    .sign(null, Buffer.from(buildCanonicalPayload(p), 'utf8'), key)
+    .toString('hex');
+}
 
 describe('LicenciaCryptoService', () => {
+  const vendorA = crypto.generateKeyPairSync('ed25519');
+  const vendorB = crypto.generateKeyPairSync('ed25519');
+  const attacker = crypto.generateKeyPairSync('ed25519');
+
   let service: LicenciaCryptoService;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [LicenciaCryptoService],
-    }).compile();
-
-    service = module.get<LicenciaCryptoService>(LicenciaCryptoService);
-    // Disparar onModuleInit manualmente como hace NestJS runtime (no-op).
-    service.onModuleInit();
+  beforeEach(() => {
+    service = new LicenciaCryptoService([
+      rawPublicKey(vendorA.publicKey),
+      rawPublicKey(vendorB.publicKey),
+    ]);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
-  describe('onModuleInit (verify-only: sin gates de secretos)', () => {
-    it('should NOT throw even when no secret env vars are set', () => {
-      const oldKey = process.env.LICENSE_SECRET_KEY;
-      const oldSign = process.env.LICENSE_SIGN_SECRET;
-      const oldSalt = process.env.LICENSE_SALT;
-      try {
-        delete process.env.LICENSE_SECRET_KEY;
-        delete process.env.LICENSE_SIGN_SECRET;
-        delete process.env.LICENSE_SALT;
-        expect(() => service.onModuleInit()).not.toThrow();
-      } finally {
-        if (oldKey) process.env.LICENSE_SECRET_KEY = oldKey;
-        if (oldSign) process.env.LICENSE_SIGN_SECRET = oldSign;
-        if (oldSalt) process.env.LICENSE_SALT = oldSalt;
-      }
-    });
+  it('accepts an artifact signed by any trusted key', () => {
+    const p = payload();
+    expect(
+      service.verifyArtifact({
+        version_firma: 3,
+        payload: p,
+        firma: sign(p, vendorA.privateKey),
+      }),
+    ).toEqual({ ok: true, payload: p, firma: sign(p, vendorA.privateKey) });
+    expect(
+      service.verifyArtifact({
+        version_firma: 3,
+        payload: p,
+        firma: sign(p, vendorB.privateKey),
+      }).ok,
+    ).toBe(true);
   });
 
-  describe('verifyEd25519', () => {
-    it('should verify a valid Ed25519 signature', () => {
-      expect(service.verifyEd25519(VALID_PAYLOAD, VALID_SIGNATURE)).toBe(true);
-    });
+  it('rejects an artifact signed by an untrusted key', () => {
+    const p = payload();
+    expect(
+      service.verifyArtifact({
+        version_firma: 3,
+        payload: p,
+        firma: sign(p, attacker.privateKey),
+      }),
+    ).toEqual({ ok: false, codigo: 'firma_invalida' });
+  });
 
-    it('should verify signatures made with an env-overridden public key', async () => {
-      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-      const rawB64 = Buffer.from(
-        (publicKey.export({ format: 'jwk' }) as { x: string }).x,
-        'base64url',
-      ).toString('base64');
+  it('rejects a tampered payload', () => {
+    const p = payload();
+    const firma = sign(p, vendorA.privateKey);
+    expect(
+      service.verifyArtifact({
+        version_firma: 3,
+        payload: { ...p, max_usuarios: 500 },
+        firma,
+      }),
+    ).toEqual({ ok: false, codigo: 'firma_invalida' });
+  });
 
-      const prev = process.env.LICENCIA_ED25519_PUBLIC_KEY;
-      process.env.LICENCIA_ED25519_PUBLIC_KEY = rawB64;
-      try {
-        // Instancia nueva para que getPublicKey() lea el env (no la caché).
-        const module: TestingModule = await Test.createTestingModule({
-          providers: [LicenciaCryptoService],
-        }).compile();
-        const overrideService = module.get<LicenciaCryptoService>(
-          LicenciaCryptoService,
-        );
-        const payload = 'env-override-payload';
-        const signature = crypto
-          .sign(null, Buffer.from(payload, 'utf8'), privateKey)
-          .toString('hex');
-        expect(overrideService.verifyEd25519(payload, signature)).toBe(true);
-      } finally {
-        if (prev === undefined) {
-          delete process.env.LICENCIA_ED25519_PUBLIC_KEY;
-        } else {
-          process.env.LICENCIA_ED25519_PUBLIC_KEY = prev;
-        }
-      }
-    });
+  it.each([0, 1, 2, 4, '3', undefined, null])(
+    'rejects version_firma %p without throwing',
+    (version) => {
+      const p = payload();
+      expect(
+        service.verifyArtifact({
+          version_firma: version,
+          payload: p,
+          firma: sign(p, vendorA.privateKey),
+        }),
+      ).toEqual({ ok: false, codigo: 'version_no_soportada' });
+    },
+  );
 
-    it('should reject a forged signature', () => {
-      const bogus = 'a'.repeat(128);
-      expect(service.verifyEd25519(VALID_PAYLOAD, bogus)).toBe(false);
-    });
-
-    it('should reject a signature over a different payload', () => {
-      expect(service.verifyEd25519('other-payload', VALID_SIGNATURE)).toBe(
-        false,
-      );
-    });
-
-    it('should reject truncated / non-hex signatures without throwing', () => {
-      expect(service.verifyEd25519(VALID_PAYLOAD, 'short')).toBe(false);
-      expect(service.verifyEd25519(VALID_PAYLOAD, '')).toBe(false);
-      expect(service.verifyEd25519(VALID_PAYLOAD, 'zz'.repeat(64))).toBe(false);
-      expect(() => service.verifyEd25519(VALID_PAYLOAD, 'short')).not.toThrow();
+  it.each([
+    ['null artifact', null],
+    ['missing firma', { version_firma: 3, payload: payload() }],
+    [
+      'uppercase firma',
+      { version_firma: 3, payload: payload(), firma: 'A'.repeat(128) },
+    ],
+    [
+      'invalid payload',
+      { version_firma: 3, payload: { a: 1 }, firma: 'a'.repeat(128) },
+    ],
+  ])('rejects %s as formato_invalido', (_name, artifact) => {
+    expect(service.verifyArtifact(artifact)).toEqual({
+      ok: false,
+      codigo: 'formato_invalido',
     });
   });
 
-  describe('forge-path hardening (dead-by-throw)', () => {
-    it('should throw when signHMAC is called (no client signing path)', () => {
-      expect(() => service.signHMAC('payload')).toThrow();
-    });
-
-    it('should throw when encryptAES256GCM is called (AES cleanup deferred)', () => {
-      expect(() => service.encryptAES256GCM('key')).toThrow();
-    });
-
-    it('should throw when decryptAES256GCM is called', () => {
-      expect(() => service.decryptAES256GCM('dGVzdA==')).toThrow();
-    });
+  it('does not read the public key from the environment', () => {
+    const p = payload();
+    process.env.LICENCIA_ED25519_PUBLIC_KEY = rawPublicKey(attacker.publicKey);
+    try {
+      const fresh = new LicenciaCryptoService([
+        rawPublicKey(vendorA.publicKey),
+      ]);
+      expect(
+        fresh.verifyArtifact({
+          version_firma: 3,
+          payload: p,
+          firma: sign(p, attacker.privateKey),
+        }).ok,
+      ).toBe(false);
+    } finally {
+      delete process.env.LICENCIA_ED25519_PUBLIC_KEY;
+    }
   });
 
-  describe('generateSHA256Hash', () => {
-    it('should generate a consistent hash', () => {
-      const h1 = service.generateSHA256Hash('hello');
-      const h2 = service.generateSHA256Hash('hello');
-      expect(h1).toBe(h2);
-      expect(h1.length).toBe(64); // SHA256 hex = 64 chars
-    });
-
-    it('should produce different hashes for different inputs', () => {
-      const h1 = service.generateSHA256Hash('hello');
-      const h2 = service.generateSHA256Hash('world');
-      expect(h1).not.toBe(h2);
-    });
+  it('refuses to start with a malformed trusted key', () => {
+    expect(() => new LicenciaCryptoService(['bm90LWEta2V5'])).toThrow();
   });
 
-  describe('buildIntegrityPayload (canonical v1)', () => {
-    it('should produce canonical JSON with sorted keys', () => {
-      const fechaInicio = new Date('2024-01-01');
-      const fechaVenc = new Date('2025-01-01');
-      const payload = service.buildIntegrityPayload({
-        empresa_id: 'EMP-001',
-        tipo: 'suscripcion_anual',
-        fecha_inicio: fechaInicio,
-        fecha_vencimiento: fechaVenc,
-        max_usuarios: 10,
-        hardware_id: 'hw-hash',
-        activa: true,
-        revocada: false,
-      });
-      const parsed = JSON.parse(payload) as Record<string, unknown>;
-      const keys = Object.keys(parsed);
-      const sorted = [...keys].sort();
-      expect(keys).toEqual(sorted);
-      expect(parsed).toHaveProperty('activa');
-      expect(parsed).toHaveProperty('empresa_id');
-      expect(parsed).toHaveProperty('fecha_inicio');
-      expect(parsed).toHaveProperty('fecha_vencimiento');
-      expect(parsed).toHaveProperty('hardware_id');
-      expect(parsed).toHaveProperty('max_usuarios');
-      expect(parsed).toHaveProperty('revocada');
-      expect(parsed).toHaveProperty('tipo');
-      expect(parsed.fecha_inicio).toBe(fechaInicio.toISOString());
-      expect(parsed.fecha_vencimiento).toBe(fechaVenc.toISOString());
-      expect(parsed).not.toHaveProperty('firma_hmac');
-    });
-
-    it('should include hardware_id, max_usuarios, activa, revocada in v1', () => {
-      const payload = service.buildIntegrityPayload({
-        empresa_id: 'EMP-001',
-        tipo: 'trial',
-        fecha_inicio: new Date('2024-01-01'),
-        fecha_vencimiento: new Date('2025-01-01'),
-        max_usuarios: 5,
-        hardware_id: 'abc',
-        activa: true,
-        revocada: false,
-      });
-      const parsed = JSON.parse(payload) as Record<string, unknown>;
-      expect(parsed.hardware_id).toBe('abc');
-      expect(parsed.max_usuarios).toBe(5);
-      expect(parsed.activa).toBe(true);
-      expect(parsed.revocada).toBe(false);
-    });
+  it('refuses to start with no trusted keys', () => {
+    expect(() => new LicenciaCryptoService([])).toThrow();
   });
 
-  describe('buildEd25519Payload (canonical v2, 7 campos)', () => {
-    it('should exclude hardware_id', () => {
-      const payload = service.buildEd25519Payload({
-        empresa_id: 'EMP-001',
-        tipo: 'suscripcion_anual',
-        fecha_inicio: new Date('2024-01-01'),
-        fecha_vencimiento: new Date('2025-01-01'),
-        max_usuarios: 10,
-        activa: true,
-        revocada: false,
-      });
-      const parsed = JSON.parse(payload) as Record<string, unknown>;
-      expect(parsed).not.toHaveProperty('hardware_id');
-      expect(Object.keys(parsed)).toHaveLength(7);
+  describe('onModuleInit dev key warning', () => {
+    const originalEnv = process.env.NODE_ENV;
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
     });
-  });
 
-  describe('buildLegacyIntegrityPayload (v0)', () => {
-    it('should produce pipe-separated format with only 4 fields', () => {
-      const fi = new Date('2024-01-01');
-      const fv = new Date('2025-01-01');
-      const payload = service.buildLegacyIntegrityPayload({
-        empresa_id: 'EMP-001',
-        tipo: 'trial',
-        fecha_inicio: fi,
-        fecha_vencimiento: fv,
-      });
-      expect(payload.split('|').length).toBe(4);
-      expect(payload).toContain('EMP-001');
-      expect(payload).toContain('trial');
-      expect(payload).toContain(fi.toISOString());
-      expect(payload).toContain(fv.toISOString());
+    it('logs an error in production when only the dev key is trusted', () => {
+      const spy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      process.env.NODE_ENV = 'production';
+      new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit();
+      expect(spy).toHaveBeenCalled();
     });
-  });
 
-  describe('generateNonce', () => {
-    it('should generate unique nonces', () => {
-      const n1 = service.generateNonce();
-      const n2 = service.generateNonce();
-      expect(n1).toBeDefined();
-      expect(n2).toBeDefined();
-      expect(n1).not.toBe(n2);
-      expect(n1.length).toBeGreaterThan(30);
+    it('does not log in production with a real key', () => {
+      const spy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      process.env.NODE_ENV = 'production';
+      service.onModuleInit();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('does not log outside production', () => {
+      const spy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      process.env.NODE_ENV = 'development';
+      new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit();
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 });
