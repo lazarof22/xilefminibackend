@@ -240,9 +240,11 @@ export class LicenciaService {
       .lean<LicenciaRecord>()
       .exec();
 
+    // Global floor (every stored license) + the clock state file: a new
+    // license_id must not reset the anti-rollback floor.
     const clock = await this.clockService.observe(
       Date.now(),
-      existing?.ultimo_visto_ms ?? null,
+      await this.pisoGlobal(),
     );
     if (!clock.ok) {
       await this.audit(
@@ -461,10 +463,9 @@ export class LicenciaService {
     if (records.length === 0) return [];
 
     const fingerprint = await this.hardwareService.getFingerprint();
-    const piso = Math.max(0, ...records.map((r) => r.ultimo_visto_ms ?? 0));
     const clock = await this.clockService.observe(
       Date.now(),
-      piso > 0 ? piso : null,
+      await this.pisoGlobal(),
     );
     if (!clock.ok) {
       await this.audit(
@@ -510,6 +511,22 @@ export class LicenciaService {
       evaluaciones.push({ record, estado });
     }
     return evaluaciones;
+  }
+
+  /**
+   * Max `ultimo_visto_ms` across ALL stored licenses (not only the ones in
+   * scope), or `null` when there is none. Unsigned: it can only tighten the
+   * clock check.
+   */
+  private async pisoGlobal(): Promise<number | null> {
+    const records = await this.licenciaModel
+      .find({}, { ultimo_visto_ms: 1 })
+      .lean<Pick<LicenciaRecord, 'ultimo_visto_ms'>[]>()
+      .exec();
+    const pisos = records
+      .map((r) => r.ultimo_visto_ms)
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return pisos.length > 0 ? Math.max(...pisos) : null;
   }
 
   private evaluarRegistro(

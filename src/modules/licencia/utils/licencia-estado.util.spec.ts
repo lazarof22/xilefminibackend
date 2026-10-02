@@ -107,7 +107,34 @@ describe('derivarCodigo', () => {
   });
 });
 
+describe('derivarCodigo — fail closed on bad input', () => {
+  const ctx = { ahoraMs: NOW, fingerprint: FP };
+
+  it.each([NaN, Infinity, -Infinity])(
+    'never reports valida for a non-finite clock (%p)',
+    (ahoraMs) => {
+      expect(derivarCodigo(payload(), { ...ctx, ahoraMs })).toBe(
+        'error_interno',
+      );
+    },
+  );
+
+  it.each([
+    ['emitida_en', { emitida_en: 'not-a-date' }],
+    ['fecha_inicio', { fecha_inicio: 'not-a-date' }],
+    ['fecha_vencimiento', { fecha_vencimiento: '2027-13-45' }],
+  ] as const)('rejects an unparseable %s', (_field, over) => {
+    expect(derivarCodigo(payload(over), ctx)).toBe('formato_invalido');
+  });
+});
+
 describe('diasRestantes', () => {
+  it('is never NaN for unparseable dates or a non-finite clock', () => {
+    expect(diasRestantes(payload({ fecha_vencimiento: 'nope' }), NOW)).toBe(0);
+    expect(diasRestantes(payload(), NaN)).toBe(0);
+    expect(diasRestantes(payload(), Infinity)).toBe(0);
+  });
+
   it('is null for perpetual licenses', () => {
     expect(
       diasRestantes(

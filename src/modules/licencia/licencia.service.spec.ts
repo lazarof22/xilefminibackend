@@ -319,6 +319,20 @@ describe('LicenciaService', () => {
       expect(r).toEqual({ status: 400, codigo: 'expirada' });
     });
 
+    it('uses the global clock floor (every stored license) on import', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+      model.docs[0].ultimo_visto_ms = NOW + 7;
+      const otro = payload({
+        license_id: '11111111-2222-4333-8444-555555555555',
+        empresa_id: 'EMP-002',
+      });
+      await service.importarLicencia(artifact(otro), {});
+      expect(clock.observe).toHaveBeenLastCalledWith(
+        expect.any(Number),
+        NOW + 7,
+      );
+    });
+
     it('treats re-import of the identical artifact as idempotent', async () => {
       const a = artifact(payload());
       await service.importarLicencia(a, {});

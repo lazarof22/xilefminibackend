@@ -75,6 +75,26 @@ describe('LicenciaClockService', () => {
     expect(r).toMatchObject({ ok: false, codigo: 'reloj_alterado' });
   });
 
+  it.each([NaN, Infinity, -Infinity])(
+    'fails closed on a non-finite now (%p) and never persists it',
+    async (now) => {
+      const svc = new LicenciaClockService(hw('a'.repeat(64)));
+      await svc.observe(T0);
+      const before = fs.readFileSync(statePath, 'utf8');
+      const r = await svc.observe(now);
+      expect(r).toMatchObject({ ok: false, codigo: 'reloj_alterado' });
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(before);
+      expect((await svc.observe(T0 + 1000)).ok).toBe(true);
+    },
+  );
+
+  it('does not create a state file from a non-finite now', async () => {
+    const svc = new LicenciaClockService(hw('a'.repeat(64)));
+    const r = await svc.observe(NaN);
+    expect(r.ok).toBe(false);
+    expect(fs.existsSync(statePath)).toBe(false);
+  });
+
   it('flags a tampered last_seen value', async () => {
     const svc = new LicenciaClockService(hw('a'.repeat(64)));
     await svc.observe(T0);

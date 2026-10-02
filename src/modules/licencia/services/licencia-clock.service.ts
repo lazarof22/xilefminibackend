@@ -40,6 +40,7 @@ const MAC_HEX = /^[0-9a-f]{64}$/;
  * Keeps `last_seen_ms` in a state file outside MongoDB, authenticated with an
  * HMAC-SHA256 whose key is derived (HKDF) from the hardware fingerprint and an
  * embedded constant. On every observation:
+ *   - non-finite `now`                -> `reloj_alterado` (nothing written)
  *   - MAC invalid / corrupt file      -> `estado_alterado`
  *   - now < last_seen - tolerance     -> `reloj_alterado`
  *   - otherwise last_seen = max(last_seen, now), written atomically (0600).
@@ -75,6 +76,16 @@ export class LicenciaClockService {
     nowMs: number,
     pisoMs: number | null,
   ): Promise<ClockObservation> {
+    if (!Number.isFinite(nowMs)) {
+      // Never compare against or persist NaN/Infinity: fail closed.
+      this.logger.error(`Non-finite clock reading: ${nowMs}`);
+      return {
+        ok: false,
+        codigo: 'reloj_alterado',
+        ahoraMs: nowMs,
+        ultimoVistoMs: null,
+      };
+    }
     const key = await this.deriveKey();
     const statePath = resolveStatePath();
     const state = await this.readState(statePath, key);
