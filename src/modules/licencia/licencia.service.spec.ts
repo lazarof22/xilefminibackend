@@ -341,6 +341,32 @@ describe('LicenciaService', () => {
       expect(model.docs).toHaveLength(1);
     });
 
+    it('treats a concurrent identical import (duplicate key) as reimportada', async () => {
+      const a = artifact(payload());
+      const results = await Promise.all([
+        service.importarLicencia(a, {}),
+        service.importarLicencia(a, {}),
+      ]);
+      expect(results.map((r) => r.resultado).sort()).toEqual([
+        'activada',
+        'reimportada',
+      ]);
+      expect(model.docs).toHaveLength(1);
+    });
+
+    it('rejects a concurrent different import of the same license_id', async () => {
+      const results = await Promise.allSettled([
+        service.importarLicencia(artifact(payload({ max_usuarios: 3 })), {}),
+        service.importarLicencia(artifact(payload({ max_usuarios: 9 })), {}),
+      ]);
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(rejected).toHaveLength(1);
+      const reason = rejected[0].reason as HttpException;
+      expect(reason.getResponse()).toMatchObject({
+        codigo: 'secuencia_obsoleta',
+      });
+    });
+
     it('rejects a lower secuencia (anti-rollback)', async () => {
       await service.importarLicencia(artifact(payload({ secuencia: 2 })), {});
       const r = await codigoOf(() =>

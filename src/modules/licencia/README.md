@@ -65,7 +65,7 @@ Rejections use `{ statusCode, message: "Licencia rechazada", codigo }`:
 
 | HTTP | `codigo` |
 |------|----------|
-| 400 | `formato_invalido`, `version_no_soportada`, `firma_invalida`, `expirada` (DTO errors are standard Nest 400s) |
+| 400 | `formato_invalido`, `version_no_soportada`, `firma_invalida`, `expirada` (DTO errors are standard Nest 400s: `version_firma` must be exactly `3`, unknown keys rejected, `fecha_vencimiento` `null` iff `tipo: 'perpetua'`) |
 | 403 | `hardware_no_coincide`, `empresa_no_coincide` (payload vs admin JWT empresa), `reloj_alterado`, `estado_alterado` |
 | 409 | `secuencia_obsoleta` (lower secuencia, or same secuencia with a different signature) |
 | 500 | `archivo_no_escrito` (DB updated; re-import is idempotent), `error_interno` |
@@ -82,7 +82,7 @@ Status codes (`estado`): `valida`, `sin_licencia`, `version_no_soportada`,
 | Trust anchor | `LICENCIA_TRUSTED_PUBLIC_KEYS` embedded in the build; any key verifies. No env override. |
 | Machine binding | `HardwareFingerprintService`: sha256(namespace + platform + machine id). Linux `/etc/machine-id` (fallback `/var/lib/dbus/machine-id`), Windows `MachineGuid` via `%SystemRoot%\System32\reg.exe ... /reg:64`, macOS `IOPlatformUUID` via `/usr/sbin/ioreg` (absolute paths, never `PATH`). Id normalized once (trim + lowercase). No hostname/MAC. Unreadable → invalid; concurrent first calls share one probe, failures are not cached. |
 | Status | Re-verified signature + derivation on every check (`utils/licencia-estado.util.ts`). Unsigned DB fields never make a license valid. Several licenses per empresa: any valid one wins. |
-| Anti-rollback | Per `license_id`: lower `secuencia` rejected; equal only if identical signature. |
+| Anti-rollback | Per `license_id`: lower `secuencia` rejected; equal only if identical signature (also when two imports race on the unique index: identical → `reimportada`, different → `secuencia_obsoleta`). |
 | Clock | `LicenciaClockService`: HMAC-protected `license.state` (`LICENSE_STATE_PATH`, default next to the `.lic`), key = HKDF(fingerprint, embedded salt). Rollback > 10 min → `reloj_alterado`; bad MAC → `estado_alterado`. The max `ultimo_visto_ms` across **all** stored licenses is an extra floor on status checks and imports (a new `license_id` cannot reset it; can only tighten). A non-finite clock reading fails closed and is never persisted; unparseable payload dates derive `formato_invalido`, never `valida`. This **raises the cost** of clock tampering; it is not impossible (root + binary can forge, deleting both state and DB floor falls back to `emitida_en`). |
 | `.lic` file | Write-only export (`LICENSE_FILE_PATH`, default `./license.lic`), atomic, mode 0600, errors surfaced. Never read back; to restore, re-import it. No DB-error fallback, no grace period. |
 | Leaks | Public endpoint: `{ valida, estado }`. Day counts and reasons only in admin endpoints and audit (`rechazo`, `rollback_rechazado`, `reloj_alterado`, `hardware_no_coincide`, ...). |

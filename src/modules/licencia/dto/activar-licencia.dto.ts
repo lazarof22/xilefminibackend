@@ -10,19 +10,37 @@ import {
   Matches,
   MaxLength,
   Min,
+  Validate,
   ValidateIf,
   ValidateNested,
+  ValidationArguments,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import {
   EMPRESA_ID_MAX_LENGTH,
   FIRMA_REGEX,
+  FIRMA_VERSION,
   HARDWARE_FINGERPRINT_REGEX,
   LICENCIA_TIPOS,
   LICENSE_ID_REGEX,
 } from '../services/payload-builder';
 import type { LicenciaTipo } from '../services/payload-builder';
+
+/** `fecha_vencimiento` is `null` if and only if `tipo === 'perpetua'`. */
+@ValidatorConstraint({ name: 'vencimientoCoherente' })
+export class VencimientoCoherente implements ValidatorConstraintInterface {
+  validate(_tipo: unknown, args: ValidationArguments): boolean {
+    const o = args.object as Partial<LicenciaPayloadDto>;
+    return (o.tipo === 'perpetua') === (o.fecha_vencimiento === null);
+  }
+
+  defaultMessage(): string {
+    return 'fecha_vencimiento must be null if and only if tipo is "perpetua"';
+  }
+}
 
 /**
  * Signed payload v3, validated strictly. Unknown keys are rejected by the
@@ -85,13 +103,14 @@ export class LicenciaPayloadDto {
 
   @ApiProperty({ enum: LICENCIA_TIPOS })
   @IsIn(LICENCIA_TIPOS)
+  @Validate(VencimientoCoherente)
   tipo: LicenciaTipo;
 }
 
 /** Body of `POST /licencia/activar`: the `.lic` artifact as produced by the signer. */
 export class ActivarLicenciaDto {
   @ApiProperty({ example: 3, description: 'Only 3 is accepted' })
-  @IsInt()
+  @IsIn([FIRMA_VERSION])
   version_firma: number;
 
   @ApiProperty({ type: LicenciaPayloadDto })

@@ -398,6 +398,14 @@ export class LicenciaService {
         });
       } catch (error) {
         if ((error as { code?: number }).code === 11000) {
+          // A concurrent import of the same license_id won the insert. The
+          // identical artifact is an idempotent re-import; anything else is
+          // a conflicting artifact.
+          const stored = await this.licenciaModel
+            .findOne({ license_id: payload.license_id })
+            .lean<LicenciaRecord>()
+            .exec();
+          if (stored?.firma === firma) return 'reimportada';
           return rollback('concurrent import');
         }
         throw error;

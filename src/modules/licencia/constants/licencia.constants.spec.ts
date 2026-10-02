@@ -31,8 +31,23 @@ describe('licencia.constants', () => {
     },
   );
 
-  it('keeps the dev key clearly identified', () => {
-    expect(LICENCIA_TRUSTED_PUBLIC_KEYS).toContain(LICENCIA_DEV_PUBLIC_KEY);
+  it.each(LICENCIA_TRUSTED_PUBLIC_KEYS.map((k) => [k]))(
+    'trusted key %s is canonical base64',
+    (key: string) => {
+      expect(Buffer.from(key, 'base64').toString('base64')).toBe(key);
+    },
+  );
+
+  it('has no duplicate trusted keys', () => {
+    expect(new Set(LICENCIA_TRUSTED_PUBLIC_KEYS).size).toBe(
+      LICENCIA_TRUSTED_PUBLIC_KEYS.length,
+    );
+  });
+
+  it('keeps the dev key a valid key, without forcing it to stay trusted', () => {
+    // Production builds remove the dev key from the trusted list; only its
+    // own format is checked here.
+    expect(Buffer.from(LICENCIA_DEV_PUBLIC_KEY, 'base64')).toHaveLength(32);
   });
 
   it('uses a 10 minute clock tolerance', () => {
