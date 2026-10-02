@@ -4,6 +4,7 @@ import { UsuariosController } from './usuarios.controller';
 import { UsuariosService } from './usuarios.service';
 import { Usuario, UsuarioSchema } from '../../auth/schemas/empleado.schema';
 import { NomencladorHelperModule } from '../nomenclador-helper/nomenclador-helper.module';
+import { LicenciaModule } from '../../licencia/licencia.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { NomencladorHelperModule } from '../nomenclador-helper/nomenclador-helpe
       { name: Usuario.name, schema: UsuarioSchema },
     ]),
     NomencladorHelperModule,
+    LicenciaModule,
   ],
   controllers: [UsuariosController],
   providers: [UsuariosService],

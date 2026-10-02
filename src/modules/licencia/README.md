@@ -101,11 +101,40 @@ The embedded key `LICENCIA_DEV_PUBLIC_KEY` is a **development** key. In
    `constants/licencia.constants.ts` (and remove the dev key for production builds).
 3. Back up the private key offline. Rotation: add the new key, ship, re-sign, then remove the old key.
 
+## `empresa_id` convention
+
+The license `empresa_id` is an opaque string compared **exactly** with the
+`empresa_id` of the JWT. It is NOT the tax id (RUC/NIT).
+
+| Where | Value |
+|-------|-------|
+| `Usuario.empresa_id` (`auth/schemas/empleado.schema.ts`) | optional `ObjectId` ref `Empresa` |
+| JWT / `req.user.empresa_id` | that ObjectId as a 24-hex string, or absent |
+| `.req` `empresa_id` | JWT value, or the admin's explicit `?empresa_id=` |
+| signed payload `empresa_id` | copied verbatim from the `.req` by the signer, never retyped |
+
+Consequences:
+
+- Admins without `empresa_id` in the JWT must call `GET /licencia/solicitud?empresa_id=<Empresa ObjectId>`; whatever is sent is what gets signed.
+- Status/cap lookups with an `empresa_id` only match a license whose payload carries that same string; a mismatch reads as `sin_licencia`.
+- Requests without an `empresa_id` (JWT without empresa, public status) evaluate the install-wide license (any stored license on this machine).
+
+## User cap (`max_usuarios`)
+
+`LicenciaService.assertCupoUsuarios(empresaId, count)` runs before saving a user in:
+
+| Path | Scope |
+|------|-------|
+| `POST /auth/register` (`AuthService.register`) | users of the DTO `empresa_id`; install-wide when absent |
+| `POST /usuarios` (`UsuariosService.create`) | install-wide (this DTO has no `empresa_id`), after duplicate checks |
+
+Only enforced when a **valid** license exists; `0` = unlimited. Rejection: 403
+`{ codigo: 'cupo_usuarios_excedido' }`.
+
 ## Known gaps (tighten when guards are wired)
 
 - `LicenciaGuard` exists, fails closed, but is **not applied** to routes nor registered as `APP_GUARD` (product decision).
-- `max_usuarios` is enforced in `AuthService.register` via `LicenciaService.assertCupoUsuarios(empresaId, count)` **only when a valid license exists**; with no/invalid license user creation is not blocked. Users without `empresa_id` count against the install-wide license.
-- Other user-creation paths (e.g. `configuracion/usuarios`) must call `assertCupoUsuarios` too.
+- With no/invalid license, user creation is not blocked (so dev/testing keeps working).
 
 ## Environment
 

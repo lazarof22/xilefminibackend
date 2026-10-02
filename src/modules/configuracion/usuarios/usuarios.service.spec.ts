@@ -1,11 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { UsuariosService } from './usuarios.service';
 import { Usuario } from '../../auth/schemas/empleado.schema';
 import { NomencladorHelper } from '../nomenclador-helper/nomenclador-helper.service';
 import { Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
+import { LicenciaService } from '../../licencia/licencia.service';
 
 jest.mock('bcryptjs', () => ({
   hash: jest.fn().mockResolvedValue('$2a$10$hashedpassword'),
@@ -20,7 +25,14 @@ const mockNomencladorHelper = {
 
 describe('UsuariosService', () => {
   let service: UsuariosService;
-  let mockModel: any;
+  let mockModel: {
+    find: jest.Mock;
+    findOne: jest.Mock;
+    findByIdAndDelete: jest.Mock;
+    create: jest.Mock;
+    countDocuments: jest.Mock;
+  };
+  let mockLicenciaService: { assertCupoUsuarios: jest.Mock };
 
   beforeEach(async () => {
     mockModel = {
@@ -28,6 +40,13 @@ describe('UsuariosService', () => {
       findOne: jest.fn(),
       findByIdAndDelete: jest.fn(),
       create: jest.fn(),
+      countDocuments: jest.fn(),
+    };
+    mockModel.countDocuments.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(4),
+    });
+    mockLicenciaService = {
+      assertCupoUsuarios: jest.fn().mockResolvedValue(undefined),
     };
     mockModel.find.mockReturnValue({
       select: jest.fn().mockReturnThis(),
@@ -41,6 +60,7 @@ describe('UsuariosService', () => {
         UsuariosService,
         { provide: getModelToken(Usuario.name), useValue: mockModel },
         { provide: NomencladorHelper, useValue: mockNomencladorHelper },
+        { provide: LicenciaService, useValue: mockLicenciaService },
       ],
     }).compile();
 
@@ -79,6 +99,41 @@ describe('UsuariosService', () => {
       const result = await service.create(dto);
       expect(bcrypt.hash).toHaveBeenCalledWith('Test123!', 10);
       expect(result).toBeDefined();
+    });
+
+    it('creates the user when there is no license (cap not enforced)', async () => {
+      mockModel.findOne.mockResolvedValue(null);
+      mockModel.create.mockResolvedValue({
+        toObject: () => ({ ...dto, _id: 'abc', contraseña: 'hash' }),
+      });
+      const result = (await service.create(dto)) as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(mockModel.countDocuments).toHaveBeenCalledWith({});
+      expect(mockLicenciaService.assertCupoUsuarios).toHaveBeenCalledWith(
+        undefined,
+        4,
+      );
+      expect(mockModel.create).toHaveBeenCalled();
+      expect(result.contraseña).toBeUndefined();
+    });
+
+    it('rejects and does not save when the license user cap is reached', async () => {
+      mockModel.findOne.mockResolvedValue(null);
+      mockLicenciaService.assertCupoUsuarios.mockRejectedValue(
+        new ForbiddenException(),
+      );
+      await expect(service.create(dto)).rejects.toThrow(ForbiddenException);
+      expect(mockModel.create).not.toHaveBeenCalled();
+    });
+
+    it('checks duplicates before the license cap', async () => {
+      mockModel.findOne.mockResolvedValueOnce({
+        correo_empleado: 'juan@test.com',
+      });
+      await expect(service.create(dto)).rejects.toThrow(ConflictException);
+      expect(mockLicenciaService.assertCupoUsuarios).not.toHaveBeenCalled();
     });
 
     it('should throw if email exists', async () => {

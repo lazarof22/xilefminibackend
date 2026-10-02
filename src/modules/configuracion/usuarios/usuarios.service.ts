@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { Usuario, UsuarioDocument } from '../../auth/schemas/empleado.schema';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { NomencladorHelper } from '../nomenclador-helper/nomenclador-helper.service';
+import { LicenciaService } from '../../licencia/licencia.service';
 
 @Injectable()
 export class UsuariosService {
@@ -12,6 +13,7 @@ export class UsuariosService {
     @InjectModel(Usuario.name)
     private readonly usuarioModel: Model<UsuarioDocument>,
     private readonly nomencladorHelper: NomencladorHelper,
+    private readonly licenciaService: LicenciaService,
   ) {}
 
   async findAll(): Promise<UsuarioDocument[]> {
@@ -27,6 +29,12 @@ export class UsuariosService {
     if (ciExists) {
       throw new ConflictException('Ya existe un usuario con esa cédula');
     }
+
+    // License user cap (same semantics as AuthService.register). Users created
+    // here carry no empresa_id, so they count against the install-wide license.
+    // Only enforced when a valid license exists.
+    const usuariosActuales = await this.usuarioModel.countDocuments({}).exec();
+    await this.licenciaService.assertCupoUsuarios(undefined, usuariosActuales);
 
     let departamentoId: Types.ObjectId;
     if (this.nomencladorHelper.isObjectId(dto.departamento)) {
