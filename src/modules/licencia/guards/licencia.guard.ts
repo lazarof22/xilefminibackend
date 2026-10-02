@@ -1,86 +1,59 @@
 import {
-  Injectable,
   CanActivate,
   ExecutionContext,
-  UnauthorizedException,
   ForbiddenException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { LicenciaService } from '../licencia.service';
+import type { EstadoLicencia } from '../types/licencia.types';
 
 interface GuardRequest {
-  user?: {
-    empresa_id?: string;
-    rol?: string;
-    sub?: string;
-  };
-  body?: { empresa_id?: string };
-  headers?: Record<string, string | string[] | undefined>;
-  licenciaEstado?: unknown;
+  user?: { empresa_id?: string; rol?: string };
+  licenciaEstado?: EstadoLicencia;
 }
 
 /**
- * LicenciaGuard: protege rutas garantizando que la empresa del JWT tenga
- * licencia activa y vigente.
+ * Requires a valid license for the empresa of the JWT.
  *
- * Reglas:
- * - Sin `req.user` se rechaza con Unauthorized (la auth no ocurrió).
- * - Para non-admin: usa EXCLUSIVAMENTE `req.user.empresa_id`. No se aceptan
- *   overrides por body ni header (anti IDOR).
- * - Para admin (rol === 'administrador'): se permite override explícito vía
- *   `req.body.empresa_id` o header `x-empresa-id` si viene para inspección
- *   administrativa.
- * - Sin `empresa_id` estando autenticado pero sin empresa asociada: Unauthorized.
+ * NOT WIRED: by product decision this guard is not applied to any route nor
+ * registered as APP_GUARD yet. It is kept correct and fail-closed so it can be
+ * wired later:
+ * - no `req.user` → 401;
+ * - empresa comes ONLY from the JWT (no body/header overrides, also for
+ *   admins); a JWT without empresa evaluates the install-wide license;
+ * - invalid license or ANY error → 403 with a generic message (details stay in
+ *   the audit log / admin endpoints).
  */
 @Injectable()
 export class LicenciaGuard implements CanActivate {
+  private readonly logger = new Logger(LicenciaGuard.name);
+
   constructor(private readonly licenciaService: LicenciaService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<GuardRequest>();
-
     if (!request.user) {
       throw new UnauthorizedException('No autenticado');
     }
 
-    const isAdmin = request.user.rol === 'administrador';
-    let empresaId: string | undefined;
-
-    if (isAdmin) {
-      const headerEmpresa = request.headers?.['x-empresa-id'];
-      const headerValue = Array.isArray(headerEmpresa)
-        ? headerEmpresa[0]
-        : headerEmpresa;
-      empresaId =
-        request.user.empresa_id ?? request.body?.empresa_id ?? headerValue;
-    } else {
-      empresaId = request.user.empresa_id;
-    }
-
-    if (!empresaId) {
-      throw new UnauthorizedException(
-        'empresa_id no presente en el JWT. Solicite un token con empresa asociada.',
+    let estado: EstadoLicencia;
+    try {
+      estado = await this.licenciaService.verificarEstado(
+        request.user.empresa_id,
       );
+    } catch (error) {
+      this.logger.error(
+        `License guard check failed: ${(error as Error).message}`,
+      );
+      throw new ForbiddenException('Licencia no válida');
     }
-
-    const estado = await this.licenciaService.verificarEstado(
-      empresaId,
-      undefined,
-      undefined,
-    );
 
     if (!estado.valida) {
-      throw new ForbiddenException('No hay licencia activa para esta empresa');
+      throw new ForbiddenException('Licencia no válida');
     }
-
-    if (!estado.vigente) {
-      const diasExpirados = Math.abs(estado.dias_restantes);
-      throw new ForbiddenException(
-        `Licencia expirada hace ${diasExpirados} días. Por favor, renueve su licencia.`,
-      );
-    }
-
     request.licenciaEstado = estado;
-
     return true;
   }
 }

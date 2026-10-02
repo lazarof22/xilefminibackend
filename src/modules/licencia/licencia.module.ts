@@ -9,22 +9,23 @@ import {
   AuditoriaLicencia,
   AuditoriaLicenciaSchema,
 } from './schemas/auditoria-licencia.schema';
-import { NonceUsado, NonceUsadoSchema } from './schemas/nonce-usado.schema';
 import { LicenciaCryptoService } from './services/licencia-crypto.service';
-import { LicenciaGeneratorService } from './services/licencia-generator.service';
-import { LicenciaValidatorService } from './services/licencia-validator.service';
+import { HardwareFingerprintService } from './services/hardware-fingerprint.service';
+import { LicenciaClockService } from './services/licencia-clock.service';
 import { LicenciaAuditService } from './services/licencia-audit.service';
 import { LicenciaCronService } from './services/licencia-cron.service';
 import { LicenciaOfflineService } from './services/licencia-offline.service';
 import { LicenciaGuard } from './guards/licencia.guard';
-import { LicenciaValidator } from './types/licencia-validator.interface';
+import {
+  LICENCIA_TRUSTED_KEYS,
+  LICENCIA_TRUSTED_PUBLIC_KEYS,
+} from './constants/licencia.constants';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Licencia.name, schema: LicenciaSchema },
       { name: AuditoriaLicencia.name, schema: AuditoriaLicenciaSchema },
-      { name: NonceUsado.name, schema: NonceUsadoSchema },
     ]),
     ScheduleModule,
     ThrottlerModule,
@@ -32,14 +33,16 @@ import { LicenciaValidator } from './types/licencia-validator.interface';
   controllers: [LicenciaController],
   providers: [
     LicenciaService,
+    { provide: LICENCIA_TRUSTED_KEYS, useValue: LICENCIA_TRUSTED_PUBLIC_KEYS },
     LicenciaCryptoService,
-    LicenciaGeneratorService,
-    { provide: LicenciaValidator, useClass: LicenciaValidatorService },
+    HardwareFingerprintService,
+    LicenciaClockService,
     LicenciaAuditService,
     LicenciaCronService,
     LicenciaOfflineService,
+    // Provided (not applied): see LicenciaGuard docs.
     LicenciaGuard,
   ],
-  exports: [LicenciaService, LicenciaOfflineService, LicenciaGuard],
+  exports: [LicenciaService, LicenciaGuard],
 })
 export class LicenciaModule {}

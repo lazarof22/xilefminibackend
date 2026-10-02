@@ -1,36 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LicenciaService } from '../licencia.service';
-import { LicenciaOfflineService } from './licencia-offline.service';
 
+/**
+ * Daily re-derivation of every license from its signed payload. There is no
+ * stored `activa` flag to flip: status is always derived. The run also
+ * advances the monotonic clock state and audits non-valid licenses.
+ */
 @Injectable()
 export class LicenciaCronService {
   private readonly logger = new Logger(LicenciaCronService.name);
 
-  constructor(
-    private readonly licenciaService: LicenciaService,
-    private readonly offlineService: LicenciaOfflineService,
-  ) {}
+  constructor(private readonly licenciaService: LicenciaService) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
-  async handleDesactivarLicenciasVencidas(): Promise<void> {
+  async reevaluar(): Promise<void> {
     try {
-      const count = await this.licenciaService.desactivarLicenciasVencidas();
-      if (count > 0) {
-        this.logger.log(`${count} licencias vencidas desactivadas`);
-      }
+      const resumen = await this.licenciaService.reevaluarTodas();
+      this.logger.log(`License re-evaluation: ${JSON.stringify(resumen)}`);
     } catch (error) {
-      this.logger.warn(
-        `No se pudo desactivar licencias vencidas en DB: ${(error as Error).message}`,
+      this.logger.error(
+        `License re-evaluation failed: ${(error as Error).message}`,
       );
-    }
-
-    const result = await this.offlineService.isOfflineLicenseValidWithGrace();
-    if (result.data && !result.valida && !result.enPeriodoGracia) {
-      this.logger.warn(
-        'Licencia vencida sin período de gracia — eliminando .lic',
-      );
-      await this.offlineService.deleteLicenseFile();
     }
   }
 }

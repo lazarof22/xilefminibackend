@@ -5,6 +5,7 @@ import {
   AuditoriaLicencia,
   AuditoriaLicenciaDocument,
 } from '../schemas/auditoria-licencia.schema';
+import type { LicenciaAuditAccion } from '../constants/licencia.constants';
 
 export interface AuditQueryParams {
   limit?: number;
@@ -13,6 +14,22 @@ export interface AuditQueryParams {
   accion?: string;
 }
 
+export interface AuditEntry {
+  licencia_id?: Types.ObjectId;
+  license_id?: string;
+  accion: LicenciaAuditAccion;
+  empresa_id?: string;
+  detalles?: Record<string, unknown>;
+  exitoso: boolean;
+  error?: string;
+  ip_origen?: string;
+  user_agent?: string;
+}
+
+/**
+ * Audit trail. Detailed reasons (codes, clock values, expiry) live HERE and in
+ * admin endpoints only — never in public responses.
+ */
 @Injectable()
 export class LicenciaAuditService {
   private static readonly MAX_LIMIT = 100;
@@ -24,20 +41,11 @@ export class LicenciaAuditService {
     private readonly auditoriaModel: Model<AuditoriaLicenciaDocument>,
   ) {}
 
-  async logAccion(params: {
-    licencia_id?: Types.ObjectId;
-    accion: string;
-    empresa_id?: string;
-    detalles?: Record<string, unknown>;
-    exitoso: boolean;
-    error?: string;
-    ip_origen?: string;
-    user_agent?: string;
-    motivo?: string;
-  }): Promise<void> {
+  async logAccion(params: AuditEntry): Promise<void> {
     try {
       await this.auditoriaModel.create({
         licencia_id: params.licencia_id,
+        license_id: params.license_id,
         accion: params.accion,
         empresa_id: params.empresa_id,
         detalles: params.detalles ?? {},
@@ -47,8 +55,8 @@ export class LicenciaAuditService {
         user_agent: params.user_agent ?? undefined,
       });
     } catch (error) {
-      this.logger.error('Fallo al registrar auditoría de licencia', error);
-      // Fail silently - audit should never break main flow
+      // Audit must never change the license decision.
+      this.logger.error('Failed to write license audit entry', error);
     }
   }
 
@@ -63,9 +71,8 @@ export class LicenciaAuditService {
   }
 
   /**
-   * Lista auditorías con paginación y filtros opcionales.
-   * `limit` se acota a 100 máximo (default 100); `offset` default 0.
-   * Filtros opcionales por `empresa_id` y `accion`.
+   * Paginated audit listing. `limit` is clamped to 100 (default 100); `offset`
+   * defaults to 0. Optional filters: `empresa_id`, `accion`.
    */
   async getTodasAuditorias(
     params: AuditQueryParams = {},

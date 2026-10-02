@@ -6,7 +6,6 @@ import { Types } from 'mongoose';
 
 describe('LicenciaAuditService', () => {
   let service: LicenciaAuditService;
-  let mockModel: any;
 
   const mockAuditoriaModel = {
     create: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }),
@@ -18,6 +17,7 @@ describe('LicenciaAuditService', () => {
     exec: jest.fn().mockResolvedValue([]),
     countDocuments: jest.fn().mockResolvedValue(0),
   };
+  let mockModel: typeof mockAuditoriaModel;
 
   beforeEach(async () => {
     mockModel = { ...mockAuditoriaModel };
