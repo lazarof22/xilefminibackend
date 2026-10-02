@@ -1,90 +1,74 @@
-export const LICENCIA_PREFIX = 'XILEF';
+import {
+  FIRMA_VERSION,
+  LICENCIA_PAYLOAD_FIELDS,
+  LICENCIA_TIPOS,
+  LicenciaTipo,
+} from '../services/payload-builder';
 
-export const GRACE_PERIOD_DAYS = 7;
+export { LICENCIA_TIPOS, LICENCIA_PAYLOAD_FIELDS };
+export type { LicenciaTipo };
 
-export const LICENCIA_TIPOS = [
-  'trial',
-  'suscripcion_mensual',
-  'suscripcion_anual',
-  'perpetua',
-] as const;
+/**
+ * The only accepted `version_firma`. Any other value (0/1/2 legacy HMAC or
+ * pipe formats, future versions) is rejected with `version_no_soportada`.
+ */
+export const FIRMA_VERSION_ACTUAL = FIRMA_VERSION;
 
-export type LicenciaTipo = (typeof LICENCIA_TIPOS)[number];
+/**
+ * DEV ONLY Ed25519 public key (raw 32 bytes, base64). Its private key is a
+ * development key and MUST NOT be trusted in production. When
+ * `NODE_ENV === 'production'` and this is the only trusted key, the crypto
+ * service logs an ERROR at startup. See the module README for the production
+ * keypair procedure.
+ */
+export const LICENCIA_DEV_PUBLIC_KEY =
+  'JnoxEB42azN5d3cGoEvQPMuYB13cYWXvDBHw3VlKeU0=';
 
-export const LICENCIA_DURACIONES: Record<LicenciaTipo, number> = {
-  trial: 30,
-  suscripcion_mensual: 30,
-  suscripcion_anual: 365,
-  perpetua: Number.MAX_SAFE_INTEGER,
-};
+/**
+ * Embedded trusted XILEF public keys (raw 32 bytes, base64). A license
+ * verifies if ANY key in this list verifies its signature, which allows key
+ * rotation by build: add the new key, ship, re-sign, then drop the old key.
+ *
+ * There is intentionally NO environment override: the trust anchor is part of
+ * the build, not of the runtime configuration.
+ */
+export const LICENCIA_TRUSTED_PUBLIC_KEYS: readonly string[] = [
+  LICENCIA_DEV_PUBLIC_KEY,
+];
 
-export const LICENCIA_FORMAT_REGEX =
-  /^XILEF-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}$/;
+/** DI token for the trusted public keys (tests inject their own keys). */
+export const LICENCIA_TRUSTED_KEYS = Symbol('LICENCIA_TRUSTED_KEYS');
 
-export const HARDWARE_FINGERPRINT_FIELDS = [
-  'platform',
-  'hostname',
-  'cpus',
-] as const;
+/**
+ * Allowed clock drift. Used for: clock moving backwards vs the last observed
+ * time, and `emitida_en` (vendor clock) ahead of the local clock.
+ */
+export const CLOCK_TOLERANCE_MS = 10 * 60 * 1000;
 
-export const NONCE_EXPIRATION_MS = 5 * 60 * 1000;
+/** Fixed namespace mixed into the hardware fingerprint hash. */
+export const HARDWARE_FINGERPRINT_NAMESPACE = 'xilef-licencia-hw-v1';
+
+/**
+ * Embedded salt for the HKDF that derives the clock-state HMAC key from the
+ * hardware fingerprint. It is not a secret against a determined attacker who
+ * can read the binary; it only raises the cost of forging the state file.
+ */
+export const CLOCK_STATE_HKDF_SALT = 'xilef-licencia-clock-state-salt-v1';
+export const CLOCK_STATE_HKDF_INFO = 'xilef-licencia-clock-state';
 
 export const LICENCIA_AUDIT_ACCIONES = [
   'activacion',
-  'verificacion',
-  'renovacion',
+  'reimportacion',
   'revocacion',
   'rechazo',
-  'generacion',
-  'firma-legacy',
-  'skew',
+  'verificacion',
+  'rollback_rechazado',
+  'reloj_alterado',
+  'hardware_no_coincide',
+  'solicitud',
 ] as const;
 
 export type LicenciaAuditAccion = (typeof LICENCIA_AUDIT_ACCIONES)[number];
 
-export const THROTTLE_LIMIT = 5;
-export const THROTTLE_TTL = 15 * 60 * 1000;
-
-/**
- * version_firma = 2 → payload canónico v2 (ordenado, JSON, 7 campos, SIN
- *   hardware_id): { activa, empresa_id, fecha_inicio, fecha_vencimiento,
- *   max_usuarios, revocada, tipo }. Firmado por XILEF con Ed25519.
- * version_firma = 1 → payload canónico v1 (8 campos, con hardware_id) — HMAC,
- *   solo de referencia.
- * version_firma = 0 / undefined → payload legacy (pipe-separated)
- *   empresa_id|tipo|fecha_inicio|fecha_vencimiento (back-compat).
- */
-export const FIRMA_VERSION_ACTUAL = 2;
-export const FIRMA_VERSION_LEGACY = 0;
-
-/**
- * Campos canónicos del payload v2 (7 campos, sin hardware_id).
- * El orden aquí es ilustrativo: la canonicalización ordena las keys en
- * `payload-builder.ts` (`canonicalStringify`).
- */
-export const LICENCIA_ED25519_PAYLOAD_FIELDS = [
-  'activa',
-  'empresa_id',
-  'fecha_inicio',
-  'fecha_vencimiento',
-  'max_usuarios',
-  'revocada',
-  'tipo',
-] as const;
-
-/**
- * Clave pública Ed25519 de XILEF (raw 32 bytes, base64). Es pública y segura
- * para distribuir. El cliente SOLO verifica; la clave privada vive únicamente
- * en la máquina de XILEF.
- *
- * DEV: clave de prueba generada para desarrollo. XILEF debe regenerar el
- * keypair de producción con `npm run sign -- keygen` y reemplazar este valor.
- *
- * Uso en verifyEd25519: reconstruir SPKI anteponiendo el prefijo Ed25519 fijo
- * `302a300506032b6570032100` y cargar con
- * `crypto.createPublicKey({ key, format: 'der', type: 'spki' })`.
- */
-export const LICENCIA_ED25519_PUBLIC_KEY =
-  'JnoxEB42azN5d3cGoEvQPMuYB13cYWXvDBHw3VlKeU0=';
-
-export const NONCE_TTL_SEGUNDOS = 300;
+/** Version of the unsigned activation request (`.req`) format. */
+export const SOLICITUD_VERSION = 1;

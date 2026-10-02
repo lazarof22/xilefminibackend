@@ -1,41 +1,41 @@
 import * as crypto from 'crypto';
 import {
+  CLOCK_TOLERANCE_MS,
   FIRMA_VERSION_ACTUAL,
-  FIRMA_VERSION_LEGACY,
-  LICENCIA_ED25519_PAYLOAD_FIELDS,
-  LICENCIA_ED25519_PUBLIC_KEY,
+  LICENCIA_DEV_PUBLIC_KEY,
+  LICENCIA_TRUSTED_PUBLIC_KEYS,
 } from './licencia.constants';
 
+const SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
 describe('licencia.constants', () => {
-  it('FIRMA_VERSION_ACTUAL es 2', () => {
-    expect(FIRMA_VERSION_ACTUAL).toBe(2);
+  it('pins the signature version to 3', () => {
+    expect(FIRMA_VERSION_ACTUAL).toBe(3);
   });
 
-  it('FIRMA_VERSION_LEGACY es 0', () => {
-    expect(FIRMA_VERSION_LEGACY).toBe(0);
+  it('ships at least one trusted public key', () => {
+    expect(LICENCIA_TRUSTED_PUBLIC_KEYS.length).toBeGreaterThan(0);
   });
 
-  it('LICENCIA_ED25519_PUBLIC_KEY es base64 de 32 bytes', () => {
-    const raw = Buffer.from(LICENCIA_ED25519_PUBLIC_KEY, 'base64');
-    expect(raw.length).toBe(32);
+  it.each(LICENCIA_TRUSTED_PUBLIC_KEYS.map((k) => [k]))(
+    'trusted key %s is a valid raw Ed25519 key',
+    (key: string) => {
+      const raw = Buffer.from(key, 'base64');
+      expect(raw.length).toBe(32);
+      const pub = crypto.createPublicKey({
+        key: Buffer.concat([SPKI_PREFIX, raw]),
+        format: 'der',
+        type: 'spki',
+      });
+      expect(pub.asymmetricKeyType).toBe('ed25519');
+    },
+  );
+
+  it('keeps the dev key clearly identified', () => {
+    expect(LICENCIA_TRUSTED_PUBLIC_KEYS).toContain(LICENCIA_DEV_PUBLIC_KEY);
   });
 
-  it('el payload v2 tiene 7 campos y no incluye hardware_id', () => {
-    expect(LICENCIA_ED25519_PAYLOAD_FIELDS).toHaveLength(7);
-    expect(LICENCIA_ED25519_PAYLOAD_FIELDS).not.toContain('hardware_id');
-  });
-
-  it('la clave pública es una clave Ed25519 válida (reconstrucción SPKI)', () => {
-    const raw = Buffer.from(LICENCIA_ED25519_PUBLIC_KEY, 'base64');
-    const spki = Buffer.concat([
-      Buffer.from('302a300506032b6570032100', 'hex'),
-      raw,
-    ]);
-    const pub = crypto.createPublicKey({
-      key: spki,
-      format: 'der',
-      type: 'spki',
-    });
-    expect(pub.asymmetricKeyType).toBe('ed25519');
+  it('uses a 10 minute clock tolerance', () => {
+    expect(CLOCK_TOLERANCE_MS).toBe(10 * 60 * 1000);
   });
 });

@@ -1,0 +1,56 @@
+{
+  "description": "Golden canonical payloads for license payload v3. This file MUST be identical in xilefminibackend (src/modules/licencia/services/__fixtures__) and xilef-signer (tests/fixtures). The canonical strings are hand-written: they are the contract, not an output of the implementation.",
+  "cases": [
+    {
+      "name": "suscripcion_anual",
+      "payload": {
+        "tipo": "suscripcion_anual",
+        "secuencia": 1,
+        "revocada": false,
+        "max_usuarios": 10,
+        "license_id": "3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f",
+        "hardware_fingerprint": "a3f5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5",
+        "fecha_vencimiento": "2027-01-01T00:00:00.000Z",
+        "fecha_inicio": "2026-01-01T00:00:00.000Z",
+        "empresa_id": "EMP-001",
+        "emitida_en": "2026-01-01T12:30:00.000Z",
+        "activa": true
+      },
+      "canonical": "{\"activa\":true,\"emitida_en\":\"2026-01-01T12:30:00.000Z\",\"empresa_id\":\"EMP-001\",\"fecha_inicio\":\"2026-01-01T00:00:00.000Z\",\"fecha_vencimiento\":\"2027-01-01T00:00:00.000Z\",\"hardware_fingerprint\":\"a3f5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5\",\"license_id\":\"3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f\",\"max_usuarios\":10,\"revocada\":false,\"secuencia\":1,\"tipo\":\"suscripcion_anual\"}"
+    },
+    {
+      "name": "perpetua",
+      "payload": {
+        "activa": true,
+        "emitida_en": "2026-03-15T08:00:00.000Z",
+        "empresa_id": "Ñandú S.A.",
+        "fecha_inicio": "2026-03-15T00:00:00.000Z",
+        "fecha_vencimiento": null,
+        "hardware_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+        "license_id": "00000000-0000-4000-8000-000000000000",
+        "max_usuarios": 0,
+        "revocada": false,
+        "secuencia": 7,
+        "tipo": "perpetua"
+      },
+      "canonical": "{\"activa\":true,\"emitida_en\":\"2026-03-15T08:00:00.000Z\",\"empresa_id\":\"Ñandú S.A.\",\"fecha_inicio\":\"2026-03-15T00:00:00.000Z\",\"fecha_vencimiento\":null,\"hardware_fingerprint\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"license_id\":\"00000000-0000-4000-8000-000000000000\",\"max_usuarios\":0,\"revocada\":false,\"secuencia\":7,\"tipo\":\"perpetua\"}"
+    },
+    {
+      "name": "revocation",
+      "payload": {
+        "activa": false,
+        "emitida_en": "2026-06-01T00:00:00.000Z",
+        "empresa_id": "EMP-001",
+        "fecha_inicio": "2026-01-01T00:00:00.000Z",
+        "fecha_vencimiento": "2027-01-01T00:00:00.000Z",
+        "hardware_fingerprint": "a3f5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5",
+        "license_id": "3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f",
+        "max_usuarios": 10,
+        "revocada": true,
+        "secuencia": 2,
+        "tipo": "suscripcion_anual"
+      },
+      "canonical": "{\"activa\":false,\"emitida_en\":\"2026-06-01T00:00:00.000Z\",\"empresa_id\":\"EMP-001\",\"fecha_inicio\":\"2026-01-01T00:00:00.000Z\",\"fecha_vencimiento\":\"2027-01-01T00:00:00.000Z\",\"hardware_fingerprint\":\"a3f5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5\",\"license_id\":\"3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f\",\"max_usuarios\":10,\"revocada\":true,\"secuencia\":2,\"tipo\":\"suscripcion_anual\"}"
+    }
+  ]
+}
