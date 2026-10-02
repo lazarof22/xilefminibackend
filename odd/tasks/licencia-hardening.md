@@ -48,5 +48,18 @@ Ed25519 signing is sound, but everything around it is bypassable: public key ove
 - T4: frontend `a145e0f` on `fix/licencia-module`. eslint on module files 0 problems (parent re-ran); tsc errors 91→82, none in licencia files; `vite build` fails only on pre-existing missing `axios` (passes with axios external). No test runner → TDD exception.
 - Open: backend CORS lacks `exposedHeaders: ['Content-Disposition']`; frontend LoginPage never stores the JWT (admin endpoints unusable from UI until fixed); `.env.example` not updated.
 
+## Native review (backend)
+- Original 885e50f exceeded the reviewer context budget → split into 12 slices (backup branch `backup/licencia-hardening-pre-split`, final tree identical). Reviewed via detached worktree `../xilefminibackend-worktrees/review-slice`.
+- Slices 1–10 and 11+12 (combined, slice 11 under budget): all granted, approved, acknowledged (authority burned). Last two commits (usuarios cap + task log, 154 lines) under budget → pending in slice.
+- Advisory follow-ups (non-blocking, candidate for T5):
+  - F1 user cap fails open when license invalid by tamper/DB error (should only allow when sin_licencia) — slice 8
+  - F2 user cap check-then-insert race (concurrent register exceeds cap) — slices 11+12
+  - F3 NaN dates in derivarCodigo fail open to 'valida' — slice 3
+  - F4 import with new license_id ignores global clock floor — slice 8
+  - F5 production with only dev key should fail startup, not just log — slice 5
+  - F6 fingerprint: absolute paths for reg/ioreg, `/reg:64`, in-flight memoization, error cause — slice 2
+  - F7 DTO `version_firma` @Equals(3) + DTO tests; concurrent identical import → reimportada — slices 7, 8
+  - F8 constants spec forces dev key to stay trusted (blocks prod rotation) — slice 1
+
 ## Next step
-User audit of the three branches (no merge/push). Native review of backend commits pending consent.
+Ask user whether to fix F1–F8 (T5), then user audit (no merge/push).
