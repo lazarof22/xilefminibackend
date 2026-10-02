@@ -77,6 +77,34 @@ function rechazo(
   return new HttpException(body, status);
 }
 
+function cupoExcedido(): HttpException {
+  const body: LicenciaErrorBody = {
+    statusCode: HttpStatus.FORBIDDEN,
+    message: 'Se alcanzó el máximo de usuarios permitido por la licencia',
+    codigo: 'cupo_usuarios_excedido',
+  };
+  return new HttpException(body, HttpStatus.FORBIDDEN);
+}
+
+/**
+ * Callbacks a user-creation path hands to `crearUsuarioConCupo`. `contar`
+ * counts the users in the same scope as the license lookup (empresa, or the
+ * whole install).
+ */
+export interface CupoUsuariosOps<T> {
+  contar: () => Promise<number>;
+  crear: () => Promise<T>;
+  eliminar: (creado: T) => Promise<void>;
+}
+
+/** Empty or whitespace-only empresa ids mean "no empresa" (install-wide). */
+export function normalizarEmpresaId(
+  empresaId: string | null | undefined,
+): string | undefined {
+  const v = empresaId?.trim();
+  return v ? v : undefined;
+}
+
 function estadoVacio(estado: EstadoCodigo): EstadoLicencia {
   return {
     valida: false,
@@ -528,26 +556,81 @@ export class LicenciaService {
   }
 
   /**
-   * Enforces `max_usuarios` (0 = unlimited) before creating a user.
+   * Creates a user while enforcing the license `max_usuarios` cap
+   * (0 = unlimited). Shared by every user-creation path.
    *
-   * Only enforced when a VALID license exists. With no license (or an invalid
-   * one) user creation is not blocked, because the license guard is
-   * intentionally not wired yet; tighten this when guards are wired.
+   * - No license installed at all on this machine → no cap (guards are not
+   *   wired yet, so dev/testing keeps working).
+   * - Any other non-valid state (tamper, revoked, expired, DB error, empresa
+   *   without its own license, ...) → 403 `licencia_invalida` (fail closed).
+   * - Valid → pre-check, insert, then recount. If concurrent inserts pushed
+   *   the count over the cap, the just-created user is removed and the call
+   *   fails. Whichever request recounts last sees every surviving insert, so
+   *   the cap cannot be exceeded; under contention requests may be rejected
+   *   even though one of them could have fit (fails safe). Works on a
+   *   standalone mongod (no transactions needed).
    */
-  async assertCupoUsuarios(
+  async crearUsuarioConCupo<T>(
     empresaId: string | undefined,
-    usuariosActuales: number,
-  ): Promise<void> {
+    ops: CupoUsuariosOps<T>,
+  ): Promise<T> {
+    const max = await this.limiteUsuarios(normalizarEmpresaId(empresaId));
+    if (max === null) return ops.crear();
+
+    if ((await ops.contar()) >= max) throw cupoExcedido();
+    const creado = await ops.crear();
+
+    let total: number;
+    try {
+      total = await ops.contar();
+    } catch (error) {
+      await this.compensar(ops, creado);
+      throw error;
+    }
+    if (total > max) {
+      await this.compensar(ops, creado);
+      throw cupoExcedido();
+    }
+    return creado;
+  }
+
+  /** Cap for user creation: `null` = no cap; throws when the license is invalid. */
+  private async limiteUsuarios(
+    empresaId: string | undefined,
+  ): Promise<number | null> {
     const estado = await this.verificarEstado(empresaId);
-    if (!estado.valida) return;
-    const max = estado.max_usuarios ?? 0;
-    if (max > 0 && usuariosActuales >= max) {
-      const body: LicenciaErrorBody = {
-        statusCode: HttpStatus.FORBIDDEN,
-        message: 'Se alcanzó el máximo de usuarios permitido por la licencia',
-        codigo: 'cupo_usuarios_excedido',
-      };
-      throw new HttpException(body, HttpStatus.FORBIDDEN);
+    if (estado.valida) {
+      const max = estado.max_usuarios ?? 0;
+      return max > 0 ? max : null;
+    }
+    if (estado.estado === 'sin_licencia' && (await this.sinLicencias())) {
+      return null;
+    }
+    throw rechazo(HttpStatus.FORBIDDEN, 'licencia_invalida');
+  }
+
+  /** True only when no license at all is stored on this install. */
+  private async sinLicencias(): Promise<boolean> {
+    try {
+      return (await this.licenciaModel.countDocuments({}).exec()) === 0;
+    } catch (error) {
+      this.logger.error(
+        `License count failed (fail closed): ${(error as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  private async compensar<T>(
+    ops: CupoUsuariosOps<T>,
+    creado: T,
+  ): Promise<void> {
+    try {
+      await ops.eliminar(creado);
+    } catch (error) {
+      this.logger.error(
+        `Could not remove user created over the license cap: ${(error as Error).message}`,
+      );
     }
   }
 

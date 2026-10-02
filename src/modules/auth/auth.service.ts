@@ -8,7 +8,11 @@ import { Usuario } from './schemas/empleado.schema';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { CargoEmpleado } from '../nomencladores/cargo_empleado/schema/cargo_empleado.schema';
 import { Departamento } from '../nomencladores/departamento/schema/departamento.schema';
-import { LicenciaService } from '../licencia/licencia.service';
+import {
+  CupoUsuariosOps,
+  LicenciaService,
+  normalizarEmpresaId,
+} from '../licencia/licencia.service';
 
 @Injectable()
 export class AuthService {
@@ -30,23 +34,28 @@ export class AuthService {
 
   async register(createAuthDto: CreateAuthDto): Promise<{ access_token: string }> {
     const { ci_empleado, nombre_empleado, correo_empleado, contraseña, departamento, cargo, salario, rol, empresa_id } = createAuthDto;
-    await this.assertCupoUsuarios(empresa_id?.toString());
-    const hashedPassword = await bcrypt.hash(contraseña, 10);
-    const user = new this.userModel({
-      ci_empleado,
-      nombre_empleado,
-      correo_empleado,
-      contraseña: hashedPassword,
-      departamento,
-      cargo,
-      salario,
-      rol: rol || 'empleado',
-      ...(empresa_id ? { empresa_id } : {}),
-    });
-    const savedUser = await user.save();
+    const empresaId = normalizarEmpresaId(empresa_id?.toString());
+    const savedUser = await this.licenciaService.crearUsuarioConCupo(
+      empresaId,
+      this.opsCupoRegistro(empresaId, async () => {
+        const hashedPassword = await bcrypt.hash(contraseña, 10);
+        const user = new this.userModel({
+          ci_empleado,
+          nombre_empleado,
+          correo_empleado,
+          contraseña: hashedPassword,
+          departamento,
+          cargo,
+          salario,
+          rol: rol || 'empleado',
+          ...(empresaId ? { empresa_id: empresaId } : {}),
+        });
+        return user.save();
+      }),
+    );
 
     // Genera el token igual que en login
-    const payload = { correo_empleado: savedUser.correo_empleado, sub: savedUser._id, rol: savedUser.rol, nombre_empleado: savedUser.nombre_empleado, empresa_id: (savedUser as any).empresa_id?.toString() ?? undefined };
+    const payload = { correo_empleado: savedUser.correo_empleado, sub: savedUser._id, rol: savedUser.rol, nombre_empleado: savedUser.nombre_empleado, empresa_id: savedUser.empresa_id?.toString() ?? undefined };
     const access_token = this.jwtService.sign(payload, {
       secret: JWT_SECRET,
       expiresIn: JWT_EXPIRES_IN,
@@ -56,14 +65,21 @@ export class AuthService {
   }
 
   /**
-   * Enforces the license `max_usuarios` cap before creating a user. Counts the
-   * users of the empresa (or of the whole install when no empresa is given).
-   * Only enforced when a valid license exists (see LicenciaService).
+   * License-cap callbacks for registration: users are counted per empresa, or
+   * install-wide when no empresa is given (same scope as the license lookup).
    */
-  private async assertCupoUsuarios(empresaId: string | undefined): Promise<void> {
+  private opsCupoRegistro(
+    empresaId: string | undefined,
+    crear: () => Promise<Usuario & { _id: unknown }>,
+  ): CupoUsuariosOps<Usuario & { _id: unknown }> {
     const filter = empresaId ? { empresa_id: empresaId } : {};
-    const usuariosActuales = await this.userModel.countDocuments(filter).exec();
-    await this.licenciaService.assertCupoUsuarios(empresaId, usuariosActuales);
+    return {
+      contar: () => this.userModel.countDocuments(filter).exec(),
+      crear,
+      eliminar: async (creado) => {
+        await this.userModel.deleteOne({ _id: creado._id }).exec();
+      },
+    };
   }
 
   async validateUser(correo_empleado: string, contraseña: string): Promise<any> {

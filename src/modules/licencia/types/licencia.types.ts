@@ -76,7 +76,7 @@ export type ImportRejectCode =
 export interface LicenciaErrorBody {
   statusCode: number;
   message: string;
-  codigo: ImportRejectCode | 'cupo_usuarios_excedido';
+  codigo: ImportRejectCode | 'cupo_usuarios_excedido' | 'licencia_invalida';
 }
 
 export interface ContextoPeticion {

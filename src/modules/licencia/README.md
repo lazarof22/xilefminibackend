@@ -121,20 +121,31 @@ Consequences:
 
 ## User cap (`max_usuarios`)
 
-`LicenciaService.assertCupoUsuarios(empresaId, count)` runs before saving a user in:
+`LicenciaService.crearUsuarioConCupo(empresaId, { contar, crear, eliminar })`
+wraps user creation in:
 
 | Path | Scope |
 |------|-------|
-| `POST /auth/register` (`AuthService.register`) | users of the DTO `empresa_id`; install-wide when absent |
+| `POST /auth/register` (`AuthService.register`) | users of the DTO `empresa_id`; install-wide when absent, empty or whitespace |
 | `POST /usuarios` (`UsuariosService.create`) | install-wide (this DTO has no `empresa_id`), after duplicate checks |
 
-Only enforced when a **valid** license exists; `0` = unlimited. Rejection: 403
-`{ codigo: 'cupo_usuarios_excedido' }`.
+| License state (for that scope) | Result |
+|--------------------------------|--------|
+| No license stored on the install at all | created, no cap (dev/testing while guards are unwired) |
+| `valida`, `max_usuarios: 0` | created, unlimited |
+| `valida`, `max_usuarios: N` | created while count < N, else 403 `cupo_usuarios_excedido` |
+| anything else (`reloj_alterado`, `estado_alterado`, `hardware_no_coincide`, `firma_invalida`, `expirada`, `revocada`, `error_interno`, empresa without its own license while the install has one, ...) | 403 `licencia_invalida` (fail closed) |
+
+Concurrency: count → insert → **recount**; if the recount exceeds the cap (or
+fails) the just-inserted user is deleted and the request fails. The last
+recount sees every surviving insert, so the cap holds without transactions
+(standalone mongod). Under contention, requests may be rejected even when one
+of them would have fit.
 
 ## Known gaps (tighten when guards are wired)
 
 - `LicenciaGuard` exists, fails closed, but is **not applied** to routes nor registered as `APP_GUARD` (product decision).
-- With no/invalid license, user creation is not blocked (so dev/testing keeps working).
+- With **no license installed at all**, user creation is not blocked (so dev/testing keeps working).
 
 ## Environment
 

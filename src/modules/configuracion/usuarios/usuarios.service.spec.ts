@@ -10,7 +10,10 @@ import { Usuario } from '../../auth/schemas/empleado.schema';
 import { NomencladorHelper } from '../nomenclador-helper/nomenclador-helper.service';
 import { Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { LicenciaService } from '../../licencia/licencia.service';
+import {
+  CupoUsuariosOps,
+  LicenciaService,
+} from '../../licencia/licencia.service';
 
 jest.mock('bcryptjs', () => ({
   hash: jest.fn().mockResolvedValue('$2a$10$hashedpassword'),
@@ -31,8 +34,9 @@ describe('UsuariosService', () => {
     findByIdAndDelete: jest.Mock;
     create: jest.Mock;
     countDocuments: jest.Mock;
+    deleteOne: jest.Mock;
   };
-  let mockLicenciaService: { assertCupoUsuarios: jest.Mock };
+  let mockLicenciaService: { crearUsuarioConCupo: jest.Mock };
 
   beforeEach(async () => {
     mockModel = {
@@ -41,12 +45,19 @@ describe('UsuariosService', () => {
       findByIdAndDelete: jest.fn(),
       create: jest.fn(),
       countDocuments: jest.fn(),
+      deleteOne: jest.fn(),
     };
+    mockModel.deleteOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({}),
+    });
     mockModel.countDocuments.mockReturnValue({
       exec: jest.fn().mockResolvedValue(4),
     });
     mockLicenciaService = {
-      assertCupoUsuarios: jest.fn().mockResolvedValue(undefined),
+      crearUsuarioConCupo: jest.fn(
+        (_empresa: string | undefined, ops: CupoUsuariosOps<unknown>) =>
+          ops.crear(),
+      ),
     };
     mockModel.find.mockReturnValue({
       select: jest.fn().mockReturnThis(),
@@ -95,33 +106,45 @@ describe('UsuariosService', () => {
 
     it('should create a user with hashed password', async () => {
       mockModel.findOne.mockResolvedValue(null);
-      mockModel.create.mockResolvedValue({ ...dto, _id: 'abc' });
+      mockModel.create.mockResolvedValue({
+        toObject: () => ({ ...dto, _id: 'abc' }),
+      });
       const result = await service.create(dto);
       expect(bcrypt.hash).toHaveBeenCalledWith('Test123!', 10);
       expect(result).toBeDefined();
     });
 
-    it('creates the user when there is no license (cap not enforced)', async () => {
+    it('creates the user through the install-wide license cap helper', async () => {
       mockModel.findOne.mockResolvedValue(null);
       mockModel.create.mockResolvedValue({
+        _id: 'abc',
         toObject: () => ({ ...dto, _id: 'abc', contraseña: 'hash' }),
       });
+      mockLicenciaService.crearUsuarioConCupo.mockImplementation(
+        async (_empresa: string | undefined, ops: CupoUsuariosOps<unknown>) => {
+          expect(await ops.contar()).toBe(4);
+          const creado = await ops.crear();
+          await ops.eliminar(creado);
+          return creado;
+        },
+      );
       const result = (await service.create(dto)) as unknown as Record<
         string,
         unknown
       >;
-      expect(mockModel.countDocuments).toHaveBeenCalledWith({});
-      expect(mockLicenciaService.assertCupoUsuarios).toHaveBeenCalledWith(
+      expect(mockLicenciaService.crearUsuarioConCupo).toHaveBeenCalledWith(
         undefined,
-        4,
+        expect.any(Object),
       );
+      expect(mockModel.countDocuments).toHaveBeenCalledWith({});
       expect(mockModel.create).toHaveBeenCalled();
+      expect(mockModel.deleteOne).toHaveBeenCalledWith({ _id: 'abc' });
       expect(result.contraseña).toBeUndefined();
     });
 
     it('rejects and does not save when the license user cap is reached', async () => {
       mockModel.findOne.mockResolvedValue(null);
-      mockLicenciaService.assertCupoUsuarios.mockRejectedValue(
+      mockLicenciaService.crearUsuarioConCupo.mockRejectedValue(
         new ForbiddenException(),
       );
       await expect(service.create(dto)).rejects.toThrow(ForbiddenException);
@@ -133,7 +156,7 @@ describe('UsuariosService', () => {
         correo_empleado: 'juan@test.com',
       });
       await expect(service.create(dto)).rejects.toThrow(ConflictException);
-      expect(mockLicenciaService.assertCupoUsuarios).not.toHaveBeenCalled();
+      expect(mockLicenciaService.crearUsuarioConCupo).not.toHaveBeenCalled();
     });
 
     it('should throw if email exists', async () => {

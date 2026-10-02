@@ -30,12 +30,21 @@ export class UsuariosService {
       throw new ConflictException('Ya existe un usuario con esa cédula');
     }
 
-    // License user cap (same semantics as AuthService.register). Users created
-    // here carry no empresa_id, so they count against the install-wide license.
-    // Only enforced when a valid license exists.
-    const usuariosActuales = await this.usuarioModel.countDocuments({}).exec();
-    await this.licenciaService.assertCupoUsuarios(undefined, usuariosActuales);
+    // License user cap (shared with AuthService.register). Users created here
+    // carry no empresa_id, so they count against the install-wide license.
+    const created = await this.licenciaService.crearUsuarioConCupo(undefined, {
+      contar: () => this.usuarioModel.countDocuments({}).exec(),
+      crear: () => this.crearUsuario(dto),
+      eliminar: async (doc) => {
+        await this.usuarioModel.deleteOne({ _id: doc._id }).exec();
+      },
+    });
+    const obj = created.toObject() as unknown as Record<string, unknown>;
+    delete obj.contraseña;
+    return obj as unknown as UsuarioDocument;
+  }
 
+  private async crearUsuario(dto: CreateUsuarioDto): Promise<UsuarioDocument> {
     let departamentoId: Types.ObjectId;
     if (this.nomencladorHelper.isObjectId(dto.departamento)) {
       departamentoId = new Types.ObjectId(dto.departamento);
@@ -51,15 +60,12 @@ export class UsuariosService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.contraseña, 10);
-    const created = await this.usuarioModel.create({
+    return this.usuarioModel.create({
       ...dto,
       departamento: departamentoId,
       cargo: cargoId,
       contraseña: hashedPassword,
     });
-    const obj = created.toObject() as unknown as Record<string, unknown>;
-    delete obj.contraseña;
-    return obj as unknown as UsuarioDocument;
   }
 
   async remove(id: string): Promise<void> {

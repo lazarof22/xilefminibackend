@@ -77,6 +77,13 @@ class FakeLicenciaModel {
     });
   }
 
+  countDocuments(filter: Record<string, unknown>): Chain<number> {
+    return chain(() => {
+      if (this.failReads) throw new Error('mongo down');
+      return this.docs.filter((d) => matches(d, filter)).length;
+    });
+  }
+
   create(doc: Omit<StoredDoc, '_id'>): Promise<StoredDoc> {
     if (this.docs.some((d) => d.license_id === doc.license_id)) {
       return Promise.reject(Object.assign(new Error('dup'), { code: 11000 }));
@@ -547,30 +554,55 @@ describe('LicenciaService', () => {
     });
   });
 
-  describe('assertCupoUsuarios', () => {
-    it('does not block when there is no license yet', async () => {
-      await expect(
-        service.assertCupoUsuarios('EMP-001', 50),
-      ).resolves.toBeUndefined();
+  describe('crearUsuarioConCupo', () => {
+    /** In-memory user store shared by concurrent creations. */
+    function userStore(initial: number) {
+      const users: number[] = Array.from({ length: initial }, (_, i) => i);
+      let next = initial;
+      const ops = {
+        contar: jest.fn(() => Promise.resolve(users.length)),
+        crear: jest.fn(() => {
+          const id = next++;
+          users.push(id);
+          return Promise.resolve(id);
+        }),
+        eliminar: jest.fn((id: number) => {
+          users.splice(users.indexOf(id), 1);
+          return Promise.resolve();
+        }),
+      };
+      return { users, ops };
+    }
+
+    it('creates without a cap when no license is installed at all', async () => {
+      const { ops } = userStore(50);
+      await expect(service.crearUsuarioConCupo('EMP-001', ops)).resolves.toBe(
+        50,
+      );
+      expect(ops.contar).not.toHaveBeenCalled();
     });
 
-    it('allows users below the cap', async () => {
+    it('creates users below the cap', async () => {
       await service.importarLicencia(
         artifact(payload({ max_usuarios: 3 })),
         {},
       );
-      await expect(
-        service.assertCupoUsuarios('EMP-001', 2),
-      ).resolves.toBeUndefined();
+      const { users, ops } = userStore(2);
+      await service.crearUsuarioConCupo('EMP-001', ops);
+      expect(users).toHaveLength(3);
     });
 
-    it('rejects when the cap is reached', async () => {
+    it('rejects before creating when the cap is reached', async () => {
       await service.importarLicencia(
         artifact(payload({ max_usuarios: 3 })),
         {},
       );
-      const r = await codigoOf(() => service.assertCupoUsuarios('EMP-001', 3));
+      const { ops } = userStore(3);
+      const r = await codigoOf(() =>
+        service.crearUsuarioConCupo('EMP-001', ops),
+      );
       expect(r).toEqual({ status: 403, codigo: 'cupo_usuarios_excedido' });
+      expect(ops.crear).not.toHaveBeenCalled();
     });
 
     it('treats max_usuarios 0 as unlimited', async () => {
@@ -578,9 +610,122 @@ describe('LicenciaService', () => {
         artifact(payload({ max_usuarios: 0 })),
         {},
       );
-      await expect(
-        service.assertCupoUsuarios('EMP-001', 10_000),
-      ).resolves.toBeUndefined();
+      const { users, ops } = userStore(10_000);
+      await service.crearUsuarioConCupo('EMP-001', ops);
+      expect(users).toHaveLength(10_001);
+    });
+
+    it.each([
+      [
+        'tampered clock state',
+        (): void => {
+          clock.observe.mockResolvedValue({
+            ok: false,
+            codigo: 'estado_alterado',
+            ahoraMs: NOW,
+            ultimoVistoMs: null,
+          });
+        },
+      ],
+      [
+        'hardware mismatch',
+        (): void => {
+          hw.getFingerprint.mockResolvedValue('b'.repeat(64));
+        },
+      ],
+      [
+        'database error',
+        (): void => {
+          model.failReads = true;
+        },
+      ],
+      [
+        'expired license',
+        (): void => {
+          clock.observe.mockResolvedValue({
+            ok: true,
+            ahoraMs: Date.parse('2027-03-01T00:00:00.000Z'),
+            ultimoVistoMs: NOW,
+          });
+        },
+      ],
+    ])('fails closed on an invalid license (%s)', async (_name, romper) => {
+      await service.importarLicencia(
+        artifact(payload({ max_usuarios: 3 })),
+        {},
+      );
+      romper();
+      const { ops } = userStore(0);
+      const r = await codigoOf(() =>
+        service.crearUsuarioConCupo('EMP-001', ops),
+      );
+      expect(r).toEqual({ status: 403, codigo: 'licencia_invalida' });
+      expect(ops.crear).not.toHaveBeenCalled();
+    });
+
+    it('rejects an empresa without its own license when the install has one', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+      const { ops } = userStore(0);
+      const r = await codigoOf(() => service.crearUsuarioConCupo('OTHER', ops));
+      expect(r).toEqual({ status: 403, codigo: 'licencia_invalida' });
+    });
+
+    it('treats an empty or whitespace empresa as install-wide', async () => {
+      await service.importarLicencia(
+        artifact(payload({ max_usuarios: 1 })),
+        {},
+      );
+      const { ops } = userStore(1);
+      const r = await codigoOf(() => service.crearUsuarioConCupo('   ', ops));
+      expect(r).toEqual({ status: 403, codigo: 'cupo_usuarios_excedido' });
+    });
+
+    it('removes the new user when a concurrent insert exceeded the cap', async () => {
+      await service.importarLicencia(
+        artifact(payload({ max_usuarios: 2 })),
+        {},
+      );
+      const { users, ops } = userStore(1);
+      // Another request inserts between our pre-check and our insert.
+      ops.crear.mockImplementationOnce(() => {
+        users.push(99, 100);
+        return Promise.resolve(100);
+      });
+      const r = await codigoOf(() =>
+        service.crearUsuarioConCupo('EMP-001', ops),
+      );
+      expect(r).toEqual({ status: 403, codigo: 'cupo_usuarios_excedido' });
+      expect(ops.eliminar).toHaveBeenCalledWith(100);
+      expect(users).toEqual([0, 99]);
+    });
+
+    it('never lets concurrent creations exceed the cap', async () => {
+      await service.importarLicencia(
+        artifact(payload({ max_usuarios: 3 })),
+        {},
+      );
+      const { users, ops } = userStore(0);
+      await Promise.allSettled(
+        Array.from({ length: 8 }, () =>
+          service.crearUsuarioConCupo('EMP-001', ops),
+        ),
+      );
+      expect(users.length).toBeLessThanOrEqual(3);
+    });
+
+    it('removes the new user and fails when the recount fails', async () => {
+      await service.importarLicencia(
+        artifact(payload({ max_usuarios: 3 })),
+        {},
+      );
+      const { users, ops } = userStore(0);
+      ops.contar
+        .mockImplementationOnce(() => Promise.resolve(users.length))
+        .mockImplementationOnce(() => Promise.reject(new Error('mongo down')));
+      await expect(service.crearUsuarioConCupo('EMP-001', ops)).rejects.toThrow(
+        'mongo down',
+      );
+      expect(users).toEqual([]);
     });
   });
 
