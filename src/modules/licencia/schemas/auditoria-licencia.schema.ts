@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
+import { LICENCIA_AUDIT_ACCIONES } from '../constants/licencia.constants';
 
 export type AuditoriaLicenciaDocument = HydratedDocument<AuditoriaLicencia>;
 
@@ -8,19 +9,10 @@ export class AuditoriaLicencia {
   @Prop({ type: Types.ObjectId, ref: 'Licencia' })
   licencia_id?: Types.ObjectId;
 
-  @Prop({
-    required: true,
-    enum: [
-      'activacion',
-      'verificacion',
-      'renovacion',
-      'revocacion',
-      'rechazo',
-      'generacion',
-      'firma-legacy',
-      'skew',
-    ],
-  })
+  @Prop()
+  license_id?: string;
+
+  @Prop({ required: true, enum: LICENCIA_AUDIT_ACCIONES })
   accion: string;
 
   @Prop()

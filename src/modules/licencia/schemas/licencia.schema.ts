@@ -1,111 +1,54 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import type { LicenciaPayloadV3 } from '../services/payload-builder';
 
 export type LicenciaDocument = HydratedDocument<Licencia>;
 
-@Schema({ timestamps: true, collection: 'licencias' })
+/**
+ * One document per signed license (`license_id`). The signed payload and its
+ * signature are stored VERBATIM; status is always re-derived from them (see
+ * `licencia-estado.util.ts`). Denormalized fields (`empresa_id`, `secuencia`,
+ * `emitida_en`) exist only for indexing/queries and are never trusted for the
+ * validity decision.
+ *
+ * New collection name (`licencias_v3`): v0–v2 licenses are not accepted
+ * anymore and the old collection carried incompatible unique indexes.
+ */
+@Schema({ timestamps: true, collection: 'licencias_v3' })
 export class Licencia {
   @Prop({ required: true })
-  clave_hash: string;
-
-  @Prop({ required: true })
-  clave_activacion_encriptada: string;
-
-  @Prop({ required: true })
-  empresa_nombre: string;
+  license_id: string;
 
   @Prop({ required: true })
   empresa_id: string;
 
-  @Prop({
-    required: true,
-    enum: ['trial', 'suscripcion_mensual', 'suscripcion_anual', 'perpetua'],
-  })
-  tipo: string;
+  @Prop({ required: true })
+  secuencia: number;
 
   @Prop({ required: true })
-  fecha_inicio: Date;
+  emitida_en: Date;
 
   @Prop({ required: true })
-  fecha_vencimiento: Date;
-
-  @Prop({ default: true })
-  activa: boolean;
-
-  @Prop({ default: 0 })
-  dias_restantes: number;
-
-  @Prop({ default: 0 })
-  max_usuarios: number;
-
-  @Prop()
-  hardware_id: string;
-
-  @Prop()
-  ultima_verificacion: Date;
-
-  /**
-   * Máximo histórico observado de ultima_verificacion. defensa anti clock-skew:
-   * si Date.now() < ultima_verificacion_efectiva, se considera que el reloj
-   * retrocedió y se usa esta fecha como referencia (max) para no revivir
-   * licencias vencidas.
-   */
-  @Prop()
-  ultima_verificacion_efectiva: Date;
-
-  /**
-   * True si se detectó que Date.now() < ultima_verificacion_efectiva en alguna
-   * verificación (clock skew probable). No bloquea el servicio pero queda
-   * registrado para auditoría.
-   */
-  @Prop({ default: false })
-  skew_detectado: boolean;
-
-  /**
-   * Marca temporal monótona (ms) basada en process.hrtime.bigint() desde el
-   * arranque del proceso. Solo se persiste si el server tiene uptime
-   * reconocible. Sirve como referencia anti-rollback de reloj dentro del
-   * proceso.
-   */
-  @Prop()
-  ultima_verificacion_monotonic_ms: number;
-
-  /**
-   * Firma Ed25519 (hex, 128 chars) provista por XILEF y persistida verbatim.
-   * El cliente SOLO verifica; nunca re-firma.
-   */
-  @Prop()
-  firma_ed25519: string;
-
-  /**
-   * Versión del formato de firma.
-   * 2 = payload canónico v2 (JSON ordenado, 7 campos sin hardware_id) — Ed25519.
-   * 1 = payload canónico v1 (JSON con hardware_id) — HMAC, solo de referencia.
-   * 0 / undefined = payload legacy (pipe-separated) — solo de referencia.
-   */
-  @Prop({ default: 2 })
   version_firma: number;
 
+  @Prop({ type: Object, required: true })
+  payload: LicenciaPayloadV3;
+
+  @Prop({ required: true })
+  firma: string;
+
+  @Prop({ required: true })
+  importada_en: Date;
+
   /**
-   * Marcado en true cuando una licencia tiene firma legacy y necesita ser
-   * re-firmada por un admin con el payload canónico nuevo.
+   * Unsigned, max-only clock floor (ms). It is only ever used to make the
+   * clock check STRICTER (backup for a deleted state file), never to accept.
    */
-  @Prop({ default: false })
-  requiere_re_firma: boolean;
-
-  @Prop({ type: Object })
-  metadata?: Record<string, unknown>;
-
-  @Prop({ default: false })
-  revocada: boolean;
-
-  @Prop()
-  motivo_revocacion?: string;
+  @Prop({ default: 0 })
+  ultimo_visto_ms: number;
 }
 
 export const LicenciaSchema = SchemaFactory.createForClass(Licencia);
 
-LicenciaSchema.index({ clave_hash: 1 }, { unique: true });
-LicenciaSchema.index({ empresa_id: 1 }, { unique: true });
-LicenciaSchema.index({ activa: 1, fecha_vencimiento: 1 });
-LicenciaSchema.index({ clave_activacion_encriptada: 1 }, { unique: true });
+LicenciaSchema.index({ license_id: 1 }, { unique: true });
+LicenciaSchema.index({ empresa_id: 1, emitida_en: -1 });
