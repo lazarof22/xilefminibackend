@@ -80,7 +80,7 @@ Status codes (`estado`): `valida`, `sin_licencia`, `version_no_soportada`,
 | Concern | Decision |
 |---------|----------|
 | Trust anchor | `LICENCIA_TRUSTED_PUBLIC_KEYS` embedded in the build; any key verifies. No env override. |
-| Machine binding | `HardwareFingerprintService`: sha256(namespace + platform + machine id). Linux `/etc/machine-id` (fallback `/var/lib/dbus/machine-id`), Windows `MachineGuid`, macOS `IOPlatformUUID`. No hostname/MAC. Unreadable → invalid. |
+| Machine binding | `HardwareFingerprintService`: sha256(namespace + platform + machine id). Linux `/etc/machine-id` (fallback `/var/lib/dbus/machine-id`), Windows `MachineGuid` via `%SystemRoot%\System32\reg.exe ... /reg:64`, macOS `IOPlatformUUID` via `/usr/sbin/ioreg` (absolute paths, never `PATH`). Id normalized once (trim + lowercase). No hostname/MAC. Unreadable → invalid; concurrent first calls share one probe, failures are not cached. |
 | Status | Re-verified signature + derivation on every check (`utils/licencia-estado.util.ts`). Unsigned DB fields never make a license valid. Several licenses per empresa: any valid one wins. |
 | Anti-rollback | Per `license_id`: lower `secuencia` rejected; equal only if identical signature. |
 | Clock | `LicenciaClockService`: HMAC-protected `license.state` (`LICENSE_STATE_PATH`, default next to the `.lic`), key = HKDF(fingerprint, embedded salt). Rollback > 10 min → `reloj_alterado`; bad MAC → `estado_alterado`. The max `ultimo_visto_ms` across **all** stored licenses is an extra floor on status checks and imports (a new `license_id` cannot reset it; can only tighten). A non-finite clock reading fails closed and is never persisted; unparseable payload dates derive `formato_invalido`, never `valida`. This **raises the cost** of clock tampering; it is not impossible (root + binary can forge, deleting both state and DB floor falls back to `emitida_en`). |
@@ -94,7 +94,9 @@ no longer used; existing v2 licenses must be re-issued as v3.
 ## Production keypair (required before shipping)
 
 The embedded key `LICENCIA_DEV_PUBLIC_KEY` is a **development** key. In
-`NODE_ENV=production`, if it is the only trusted key, startup logs an ERROR.
+`NODE_ENV=production`, if it is the only trusted key, **startup fails** (the crypto
+service throws at module init); elsewhere it logs a warning. Embedded keys must
+be canonical base64 of exactly 32 raw bytes, or startup fails.
 
 1. On the XILEF machine: `XILEF_SIGNING_PRIVATE_KEY_PATH=/secure/xilef.pem npm run keygen` (in `xilef-signer`).
 2. Copy the printed `LICENCIA_TRUSTED_PUBLIC_KEYS` entry into

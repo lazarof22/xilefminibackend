@@ -46,6 +46,11 @@ export class LicenciaCryptoService implements OnModuleInit {
     this.trustedRawKeys = trustedRawKeys;
     this.trustedKeys = trustedRawKeys.map((rawB64) => {
       const raw = Buffer.from(rawB64, 'base64');
+      // Node's base64 decoder silently skips invalid characters; require a
+      // byte-exact round trip so a mangled key cannot slip through.
+      if (raw.toString('base64') !== rawB64) {
+        throw new Error('Trusted license public key must be canonical base64');
+      }
       if (raw.length !== 32) {
         throw new Error('Trusted license public key must be 32 raw bytes');
       }
@@ -57,17 +62,25 @@ export class LicenciaCryptoService implements OnModuleInit {
     });
   }
 
+  /**
+   * Fails closed in production when the DEV key is the only trust anchor
+   * (anyone holding the dev private key could mint licenses). Outside
+   * production it only warns.
+   */
   onModuleInit(): void {
     const onlyDevKey = this.trustedRawKeys.every(
       (k) => k === LICENCIA_DEV_PUBLIC_KEY,
     );
-    if (process.env.NODE_ENV === 'production' && onlyDevKey) {
-      this.logger.error(
-        'SECURITY: the only trusted license public key is the DEV key. ' +
-          'Generate the production keypair with the signer and embed its ' +
-          'public key in LICENCIA_TRUSTED_PUBLIC_KEYS.',
-      );
+    if (!onlyDevKey) return;
+    const message =
+      'SECURITY: the only trusted license public key is the DEV key. ' +
+      'Generate the production keypair with the signer and embed its ' +
+      'public key in LICENCIA_TRUSTED_PUBLIC_KEYS.';
+    if (process.env.NODE_ENV === 'production') {
+      this.logger.error(message);
+      throw new Error(message);
     }
+    this.logger.warn(message);
   }
 
   generateSHA256Hash(data: string): string {

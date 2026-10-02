@@ -18,7 +18,7 @@ export const FIRMA_VERSION_ACTUAL = FIRMA_VERSION;
  * DEV ONLY Ed25519 public key (raw 32 bytes, base64). Its private key is a
  * development key and MUST NOT be trusted in production. When
  * `NODE_ENV === 'production'` and this is the only trusted key, the crypto
- * service logs an ERROR at startup. See the module README for the production
+ * service refuses to start (throws at module init). See the module README for the production
  * keypair procedure.
  */
 export const LICENCIA_DEV_PUBLIC_KEY =

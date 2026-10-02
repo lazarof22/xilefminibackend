@@ -149,37 +149,49 @@ describe('LicenciaCryptoService', () => {
     expect(() => new LicenciaCryptoService([])).toThrow();
   });
 
-  describe('onModuleInit dev key warning', () => {
+  it.each([
+    ['trailing newline', `${LICENCIA_DEV_PUBLIC_KEY}\n`],
+    ['inner junk', `*${LICENCIA_DEV_PUBLIC_KEY}`],
+    ['base64url alphabet', LICENCIA_DEV_PUBLIC_KEY.replace(/=$/, '')],
+  ])('refuses a non-canonical base64 trusted key (%s)', (_name, key) => {
+    expect(() => new LicenciaCryptoService([key])).toThrow(
+      'Trusted license public key must be canonical base64',
+    );
+  });
+
+  describe('onModuleInit dev key check', () => {
     const originalEnv = process.env.NODE_ENV;
     afterEach(() => {
       process.env.NODE_ENV = originalEnv;
     });
 
-    it('logs an error in production when only the dev key is trusted', () => {
-      const spy = jest
-        .spyOn(Logger.prototype, 'error')
-        .mockImplementation(() => undefined);
+    it('refuses to start in production when only the dev key is trusted', () => {
       process.env.NODE_ENV = 'production';
-      new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit();
-      expect(spy).toHaveBeenCalled();
+      expect(() =>
+        new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit(),
+      ).toThrow('only trusted license public key is the DEV key');
     });
 
-    it('does not log in production with a real key', () => {
-      const spy = jest
-        .spyOn(Logger.prototype, 'error')
-        .mockImplementation(() => undefined);
+    it('starts in production when a real key is trusted (even next to the dev key)', () => {
       process.env.NODE_ENV = 'production';
-      service.onModuleInit();
-      expect(spy).not.toHaveBeenCalled();
+      expect(() => service.onModuleInit()).not.toThrow();
+      expect(() =>
+        new LicenciaCryptoService([
+          LICENCIA_DEV_PUBLIC_KEY,
+          rawPublicKey(vendorA.publicKey),
+        ]).onModuleInit(),
+      ).not.toThrow();
     });
 
-    it('does not log outside production', () => {
+    it('only warns outside production', () => {
       const spy = jest
-        .spyOn(Logger.prototype, 'error')
+        .spyOn(Logger.prototype, 'warn')
         .mockImplementation(() => undefined);
       process.env.NODE_ENV = 'development';
-      new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit();
-      expect(spy).not.toHaveBeenCalled();
+      expect(() =>
+        new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit(),
+      ).not.toThrow();
+      expect(spy).toHaveBeenCalled();
     });
   });
 });
