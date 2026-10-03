@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { HttpException } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { Model, Types } from 'mongoose';
 import { LicenciaService } from './licencia.service';
 import { LicenciaDocument } from './schemas/licencia.schema';
@@ -745,12 +745,66 @@ describe('LicenciaService', () => {
         {},
       );
       const { users, ops } = userStore(0);
-      await Promise.allSettled(
+      // Stagger insert latency so recounts interleave like real requests. In
+      // perfect lockstep every request can be rejected (fails safe), which is
+      // why a success is only asserted with staggered inserts.
+      let call = 0;
+      ops.crear.mockImplementation(async () => {
+        const delayMs = call++;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const id = 1000 + delayMs;
+        users.push(id);
+        return id;
+      });
+      const results = await Promise.allSettled(
         Array.from({ length: 8 }, () =>
           service.crearUsuarioConCupo('EMP-001', ops),
         ),
       );
       expect(users.length).toBeLessThanOrEqual(3);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+      expect(fulfilled.length).toBe(users.length);
+      for (const r of results) {
+        if (r.status === 'fulfilled') continue;
+        const reason: unknown = r.reason;
+        expect(reason).toBeInstanceOf(HttpException);
+        expect((reason as HttpException).getResponse()).toMatchObject({
+          codigo: 'cupo_usuarios_excedido',
+        });
+      }
+    });
+
+    it('logs and still reports the cap error when the compensating delete fails', async () => {
+      await service.importarLicencia(
+        artifact(payload({ max_usuarios: 2 })),
+        {},
+      );
+      const errorSpy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      const { users, ops } = userStore(1);
+      ops.crear.mockImplementationOnce(() => {
+        users.push(99, 100);
+        return Promise.resolve(100);
+      });
+      ops.eliminar.mockImplementationOnce(() =>
+        Promise.reject(new Error('delete failed')),
+      );
+      try {
+        const r = await codigoOf(() =>
+          service.crearUsuarioConCupo('EMP-001', ops),
+        );
+        expect(r).toEqual({ status: 403, codigo: 'cupo_usuarios_excedido' });
+        expect(ops.eliminar).toHaveBeenCalledWith(100);
+        // Residual case: the extra user remains and is only logged.
+        expect(users).toEqual([0, 99, 100]);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('delete failed'),
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
 
     it('removes the new user and fails when the recount fails', async () => {

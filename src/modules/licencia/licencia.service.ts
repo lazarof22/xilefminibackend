@@ -591,9 +591,12 @@ export class LicenciaService {
    * - Valid → pre-check, insert, then recount. If concurrent inserts pushed
    *   the count over the cap, the just-created user is removed and the call
    *   fails. Whichever request recounts last sees every surviving insert, so
-   *   the cap cannot be exceeded; under contention requests may be rejected
-   *   even though one of them could have fit (fails safe). Works on a
-   *   standalone mongod (no transactions needed).
+   *   the cap holds as long as the compensating delete succeeds; under
+   *   contention requests may be rejected even though one of them could have
+   *   fit (fails safe). Works on a standalone mongod (no transactions needed).
+   * - Residual case: if the compensating delete itself fails, the extra user
+   *   remains (the cap is exceeded by that user), the failure is logged at
+   *   error level and the caller still gets the cap error.
    */
   async crearUsuarioConCupo<T>(
     empresaId: string | undefined,

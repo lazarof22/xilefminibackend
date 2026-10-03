@@ -84,6 +84,7 @@ Status codes (`estado`): `valida`, `sin_licencia`, `version_no_soportada`,
 | Status | Re-verified signature + derivation on every check (`utils/licencia-estado.util.ts`). Unsigned DB fields never make a license valid. Several licenses per empresa: any valid one wins. |
 | Anti-rollback | Per `license_id`: lower `secuencia` rejected; equal only if identical signature (also when two imports race on the unique index: identical → `reimportada`, different → `secuencia_obsoleta`). |
 | Clock | `LicenciaClockService`: HMAC-protected `license.state` (`LICENSE_STATE_PATH`, default next to the `.lic`), key = HKDF(fingerprint, embedded salt). Rollback > 10 min → `reloj_alterado`; bad MAC → `estado_alterado`. The max `ultimo_visto_ms` across **all** stored licenses is an extra floor on status checks and imports (a new `license_id` cannot reset it; can only tighten). A non-finite clock reading fails closed and is never persisted; unparseable payload dates derive `formato_invalido`, never `valida`. This **raises the cost** of clock tampering; it is not impossible (root + binary can forge, deleting both state and DB floor falls back to `emitida_en`). |
+| Offline revocation | Revocation is a signed artifact the customer must import; nothing reaches the machine otherwise. Anti-rollback state lives in the DB (`secuencia` per `license_id`): a root/DB admin can delete the stored record and re-import an older, non-revoked artifact. This is an **offline limit**, not a bug; mitigation is out-of-band (contract, audits, short `--vence` terms, periodic renewal). |
 | `.lic` file | Write-only export (`LICENSE_FILE_PATH`, default `./license.lic`), atomic, mode 0600, errors surfaced. Never read back; to restore, re-import it. No DB-error fallback, no grace period. |
 | Leaks | Public endpoint: `{ valida, estado }`. Day counts and reasons only in admin endpoints and audit (`rechazo`, `rollback_rechazado`, `reloj_alterado`, `hardware_no_coincide`, ...). |
 
@@ -165,8 +166,14 @@ wraps user creation in:
 Concurrency: count → insert → **recount**; if the recount exceeds the cap (or
 fails) the just-inserted user is deleted and the request fails. The last
 recount sees every surviving insert, so the cap holds without transactions
-(standalone mongod). Under contention, requests may be rejected even when one
-of them would have fit.
+(standalone mongod) **as long as that compensating delete succeeds**. Under
+contention, requests may be rejected even when one of them would have fit (in
+perfect lockstep, all of them).
+
+Residual case: if the compensating delete fails, the extra user **remains**
+(the cap is exceeded by that user); the failure is logged at error level and
+the caller still receives 403 `cupo_usuarios_excedido`. Check the logs for
+`Could not remove user created over the license cap`.
 
 ## Known gaps (tighten when guards are wired)
 
