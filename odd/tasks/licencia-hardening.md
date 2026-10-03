@@ -31,6 +31,11 @@ Ed25519 signing is sound, but everything around it is bypassable: public key ove
 - [x] T3 Signer v3: shared payload builder, sign from request file, tests
 - [x] T2b Second user-creation path (`UsuariosService.create`) enforces cap — follow-up from T2
 - [x] T4 Frontend license module rebuild (MUI, project style)
+- [x] T5 Review follow-ups F1–F8 (backend e798c42..f46554a)
+- [x] T6 Backend: new dev keypair (private key only in signer `keys/`, gitignored), refuse DEV key in production whenever present, CORS `exposedHeaders: Content-Disposition`, compensation doc wording, README revocation-limits note
+- [x] T7 Frontend: fix FE-1 (admin detail endpoint/array), nullable EstadoLicencia fields, wire LoginPage to `POST /auth/login` storing the JWT
+- [x] T8 End-to-end verification against a live backend + throwaway mongod (request → sign → activate → status, frontend calls)
+- [x] T9 Native review of e798c42..HEAD (fresh candidate; previous range-2 lineage interrupted by session limit)
 
 ## Route log
 - T1–T3: delegated writer (writer trigger: many non-trivial files across two repos).
@@ -63,3 +68,25 @@ Ed25519 signing is sound, but everything around it is bypassable: public key ove
 
 ## Next step
 Ask user whether to fix F1–F8 (T5), then user audit (no merge/push).
+
+## Final audit (2026-10-02) — resume here
+- Backend + signer: MERGE-READY (612/612 tests, tsc clean, parity OK, merge-tree clean).
+- Frontend: BLOCKED FE-1 — `Licencia.tsx:46` calls `GET /licencia` (returns array) as single `EstadoLicencia`; use `/licencia/:empresaId` or pick from list; make EstadoLicencia fields nullable.
+- Native review range ee7dc16..f46554a: readability lens failed (session limit) — re-query bound STATUS and relaunch that slot.
+- Todo: refuse DEV key in production whenever present (not only sole); compensation-delete failure doc wording; README revocation limits note.
+- User authorized all reviews without asking and merge to master (no push) once clean.
+- 2026-10-02 later: user asked to connect frontend↔backend, test it, and leave everything READY to merge (do not merge). Discovery: no dev private key exists anywhere → nobody can sign licenses the backend accepts; T6 regenerates the dev keypair.
+
+## T6–T8 evidence
+- T6 backend `4e7be43` (dev key rotated: `sR0RpkwuO2tNOAb2iJb00uPakrViiNWu+gkstudjz30=`; private key `xilef-signer/keys/dev-private.pem`, gitignored), `85d3d0a` (CORS exposedHeaders), `9793194` (docs + specs); signer `0d5e91e`. jest 238/238, tsc clean, signer 55/55, parity OK.
+- T7 frontend `16f603e` (FE-1 + nullable fields), `6b045e6` (login → POST /auth/login, JWT in localStorage). eslint 0 on touched files, tsc baseline 79 unchanged, vite build OK.
+- T8 live E2E (ts-node backend + throwaway mongod :27018): all 13 steps PASS — prod refuses dev key; sin_licencia; register/login; solicitud 401/200 + Content-Disposition exposed + CORS preflight; sign; activada/reimportada; estado/detail/list shapes; firma_invalida; hardware_no_coincide; v2 rejected; cap 403 at max 2; revocada + 409 secuencia_obsoleta + licencia_invalida on register; frontend build endpoints correct. Browser run skipped (no driver installed).
+- Out-of-scope observations: `GET /auth` unguarded (lists user emails); `POST /auth/register` public.
+
+## T9 + final state (ready to merge, NOT merged — user merges/pushes)
+- Backend e798c42..9793194: native review approved + acknowledged (4 lenses). Full suite 614/614.
+- Signer master..0d5e91e approved + acknowledged; follow-up `6d4bf2f` (self-verify interactive, renewal validation; 216 lines, under budget). 69/69 tests.
+- Frontend master..6b045e6 approved + acknowledged; follow-ups `5a598e9`, `13ac3e9` (load race, activation result guard, shared base URL/token/thresholds) approved + acknowledged.
+- All three branches fast-forwardable onto master, merge-tree clean.
+- Cleanup: throwaway mongod stopped, review worktree removed. Backup branch `backup/licencia-hardening-pre-split` kept (delete after merge).
+- Known, out of scope: `GET /auth` and `POST /auth/register` unguarded; LicenciaGuard unwired (user decision); production build must embed the production public key and drop the dev key (startup refuses otherwise).
