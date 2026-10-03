@@ -22,6 +22,8 @@ async function bootstrap() {
     origin: ['http://localhost:5173'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     allowedHeaders: 'Content-Type, Authorization',
+    // Lets the browser read the .req filename of GET /licencia/solicitud?descargar=true.
+    exposedHeaders: ['Content-Disposition'],
     credentials: true,
   });
 
