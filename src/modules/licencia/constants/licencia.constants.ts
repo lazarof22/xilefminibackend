@@ -15,14 +15,15 @@ export type { LicenciaTipo };
 export const FIRMA_VERSION_ACTUAL = FIRMA_VERSION;
 
 /**
- * DEV ONLY Ed25519 public key (raw 32 bytes, base64). Its private key is a
- * development key and MUST NOT be trusted in production. When
- * `NODE_ENV === 'production'` and this is the only trusted key, the crypto
- * service refuses to start (throws at module init). See the module README for the production
- * keypair procedure.
+ * DEV ONLY Ed25519 public key (raw 32 bytes, base64). Its private key lives
+ * only at `xilef-signer/keys/dev-private.pem` (never committed) and MUST NOT
+ * be trusted in production. When `NODE_ENV === 'production'` and this key is
+ * anywhere in the trusted list, the crypto service refuses to start (throws at
+ * module init). See the module README for the dev signing and production
+ * keypair procedures.
  */
 export const LICENCIA_DEV_PUBLIC_KEY =
-  'JnoxEB42azN5d3cGoEvQPMuYB13cYWXvDBHw3VlKeU0=';
+  'sR0RpkwuO2tNOAb2iJb00uPakrViiNWu+gkstudjz30=';
 
 /**
  * Embedded trusted XILEF public keys (raw 32 bytes, base64). A license

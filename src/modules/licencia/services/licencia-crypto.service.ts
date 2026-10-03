@@ -63,19 +63,17 @@ export class LicenciaCryptoService implements OnModuleInit {
   }
 
   /**
-   * Fails closed in production when the DEV key is the only trust anchor
-   * (anyone holding the dev private key could mint licenses). Outside
-   * production it only warns.
+   * Fails closed in production whenever the DEV key is in the trusted list,
+   * alone or next to real keys (anyone holding the dev private key could mint
+   * licenses). Outside production it only warns.
    */
   onModuleInit(): void {
-    const onlyDevKey = this.trustedRawKeys.every(
-      (k) => k === LICENCIA_DEV_PUBLIC_KEY,
-    );
-    if (!onlyDevKey) return;
+    if (!this.trustedRawKeys.includes(LICENCIA_DEV_PUBLIC_KEY)) return;
     const message =
-      'SECURITY: the only trusted license public key is the DEV key. ' +
-      'Generate the production keypair with the signer and embed its ' +
-      'public key in LICENCIA_TRUSTED_PUBLIC_KEYS.';
+      'SECURITY: the DEV key is trusted as a license public key. ' +
+      'Generate the production keypair with the signer, embed its public ' +
+      'key in LICENCIA_TRUSTED_PUBLIC_KEYS and remove the DEV key for ' +
+      'production builds.';
     if (process.env.NODE_ENV === 'production') {
       this.logger.error(message);
       throw new Error(message);

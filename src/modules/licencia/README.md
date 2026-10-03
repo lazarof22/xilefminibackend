@@ -94,14 +94,38 @@ no longer used; existing v2 licenses must be re-issued as v3.
 ## Production keypair (required before shipping)
 
 The embedded key `LICENCIA_DEV_PUBLIC_KEY` is a **development** key. In
-`NODE_ENV=production`, if it is the only trusted key, **startup fails** (the crypto
-service throws at module init); elsewhere it logs a warning. Embedded keys must
-be canonical base64 of exactly 32 raw bytes, or startup fails.
+`NODE_ENV=production`, if it is **anywhere** in the trusted list (alone or next
+to real keys), **startup fails** (the crypto service throws at module init);
+elsewhere it logs a warning. Embedded keys must be canonical base64 of exactly
+32 raw bytes, or startup fails.
 
 1. On the XILEF machine: `XILEF_SIGNING_PRIVATE_KEY_PATH=/secure/xilef.pem npm run keygen` (in `xilef-signer`).
 2. Copy the printed `LICENCIA_TRUSTED_PUBLIC_KEYS` entry into
    `constants/licencia.constants.ts` (and remove the dev key for production builds).
 3. Back up the private key offline. Rotation: add the new key, ship, re-sign, then remove the old key.
+
+## Dev key and dev signing
+
+The dev private key matching `LICENCIA_DEV_PUBLIC_KEY` lives **only** at
+`xilef-signer/keys/dev-private.pem` (git-ignored, mode 0600, never committed).
+If it is lost or leaked, regenerate it and update the constant:
+
+```bash
+# in xilef-signer (keygen refuses to overwrite: remove the old file first)
+XILEF_SIGNING_PRIVATE_KEY_PATH=$PWD/keys/dev-private.pem npm run keygen
+# paste the printed publicKeyBase64 into LICENCIA_DEV_PUBLIC_KEY (constants/licencia.constants.ts)
+```
+
+Sign a dev license from a `.req` downloaded from `GET /licencia/solicitud?descargar=true`:
+
+```bash
+# in xilef-signer
+XILEF_SIGNING_PRIVATE_KEY_PATH=$PWD/keys/dev-private.pem \
+  npm run sign -- --request ./xilef-<empresa>.req --tipo suscripcion_anual \
+  --vence 2027-01-01 --max-usuarios 10 --out ./dev.lic
+```
+
+Then post the `.lic` content to `POST /licencia/activar` (non-production only).
 
 ## `empresa_id` convention
 

@@ -169,18 +169,22 @@ describe('LicenciaCryptoService', () => {
       process.env.NODE_ENV = 'production';
       expect(() =>
         new LicenciaCryptoService([LICENCIA_DEV_PUBLIC_KEY]).onModuleInit(),
-      ).toThrow('only trusted license public key is the DEV key');
+      ).toThrow('DEV key is trusted');
     });
 
-    it('starts in production when a real key is trusted (even next to the dev key)', () => {
+    it('refuses to start in production when the dev key is trusted next to a real key', () => {
       process.env.NODE_ENV = 'production';
-      expect(() => service.onModuleInit()).not.toThrow();
       expect(() =>
         new LicenciaCryptoService([
-          LICENCIA_DEV_PUBLIC_KEY,
           rawPublicKey(vendorA.publicKey),
+          LICENCIA_DEV_PUBLIC_KEY,
         ]).onModuleInit(),
-      ).not.toThrow();
+      ).toThrow('DEV key is trusted');
+    });
+
+    it('starts in production when only real keys are trusted', () => {
+      process.env.NODE_ENV = 'production';
+      expect(() => service.onModuleInit()).not.toThrow();
     });
 
     it('only warns outside production', () => {
