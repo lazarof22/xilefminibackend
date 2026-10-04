@@ -38,6 +38,7 @@ import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empres
 import { FacturaModule } from './modules/factura/factura.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
 import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
+import { TasaModule } from './modules/tasa/tasa.module';
 
 
 @Module({
@@ -90,6 +91,7 @@ import { NomencladoresModule } from './modules/nomencladore generales/nomenclado
     FacturaModule,
     ImportExportModule,
     NomencladoresModule,
+    TasaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
