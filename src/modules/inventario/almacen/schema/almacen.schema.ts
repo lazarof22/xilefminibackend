@@ -22,7 +22,7 @@ export class Almacen {
     // reject the second legacy document). New almacenes always get one via
     // CreateAlmacenDto (required there).
     @Prop({ trim: true, unique: true, sparse: true })
-    codigo?: string;
+    codigoAlmacen?: string;
 }
 
 export const AlmacenSchema = SchemaFactory.createForClass(Almacen);

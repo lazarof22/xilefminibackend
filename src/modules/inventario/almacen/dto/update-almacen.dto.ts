@@ -25,5 +25,5 @@ export class UpdateAlmacenDto extends PartialType(CreateAlmacenDto) {
     @IsNotEmpty({ message: 'El código del almacén no puede estar vacío' })
     @IsString({ message: 'El código debe ser una cadena de texto' })
     @MaxLength(20, { message: 'El código no puede tener más de 20 caracteres' })
-    codigo?: string;
+    codigoAlmacen?: string;
 }

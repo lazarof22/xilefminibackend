@@ -195,7 +195,7 @@ export class FacturaService implements OnModuleInit {
       concepto: createFacturaDto.concepto,
       clienteId,
       almacenId: almacen._id,
-      almacenCodigo: almacen.codigo,
+      almacenCodigo: almacen.codigoAlmacen,
       emisor,
       impuesto,
       metodoPago: createFacturaDto.metodoPago,
@@ -349,7 +349,7 @@ export class FacturaService implements OnModuleInit {
     if (!almacen) {
       throw new NotFoundException(`Almacén con ID ${almacenId} no encontrado`);
     }
-    if (!almacen.codigo) {
+    if (!almacen.codigoAlmacen) {
       throw new UnprocessableEntityException(
         `El almacén "${almacen.nombreAlmacen}" no tiene código configurado`,
       );
@@ -793,7 +793,7 @@ export class FacturaService implements OnModuleInit {
     const almacen = await this.obtenerAlmacenValido(almacenId);
     await this.validarProductosDelAlmacen(itemsParaValidar, almacenId);
     set.almacenId = almacen._id;
-    set.almacenCodigo = almacen.codigo;
+    set.almacenCodigo = almacen.codigoAlmacen;
   }
 
   /**
