@@ -39,6 +39,8 @@ import {
     ExistenciaSchema,
 } from '../exitencia/schema/existencia.schema';
 
+import { ExistenciaModule } from '../exitencia/existencia.module';
+
 @Module({
     controllers: [
         TransferenciaController,
@@ -49,6 +51,7 @@ import {
     ],
 
     imports: [
+        ExistenciaModule,
         MongooseModule.forFeature([
             {
                 name: Transferencia.name,
@@ -81,5 +84,4 @@ import {
         MongooseModule,
     ],
 })
-export class TransferenciaModule {}
-
+export class TransferenciaModule { }

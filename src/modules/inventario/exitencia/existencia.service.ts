@@ -14,6 +14,12 @@ import { Producto } from '../producto/schemas/producto.schema';
 import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
 
+/** Error E11000 de MongoDB (violación del índice único). */
+const esClaveDuplicada = (err: unknown): boolean =>
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === 11000;
+
 @Injectable()
 export class ExistenciaService {
     constructor(
@@ -123,6 +129,9 @@ export class ExistenciaService {
 
     /**
      * Obtener todas las ubicaciones donde existe un producto.
+     *
+     * Solo devuelve filas con cantidad > 0 y con almacén y contenedor
+     * poblados (nombre), listas para los selectores de Transferencias.
      */
     async listarPorProducto(
         productoId: string,
@@ -133,7 +142,12 @@ export class ExistenciaService {
             );
         }
 
-        const producto = await this.productoModel.findById(productoId);
+        // lean(): solo se necesitan los datos, no el documento hidratado.
+        const producto = await this.productoModel
+            .findById(productoId)
+            .select('almacen contenedor stock_inicial')
+            .lean()
+            .exec();
 
         if (!producto) {
             throw new NotFoundException(
@@ -141,9 +155,13 @@ export class ExistenciaService {
             );
         }
 
+        await this.sincronizarUbicacionInicial(producto);
+
+        // No se puebla `producto`: quien llama ya lo conoce, y cada
+        // populate es una consulta extra a la base de datos.
         return this.existenciaModel
             .find({
-                producto: productoId,
+                producto: producto._id,
                 cantidad: { $gt: 0 },
             })
             .populate({
@@ -154,15 +172,76 @@ export class ExistenciaService {
                 path: 'contenedor',
                 select: 'nombreContenedor almacen',
             })
-            .populate({
-                path: 'producto',
-                select:
-                    'codigo_producto nombre_producto categoria_producto',
-            })
             .sort({
                 cantidad: -1,
             })
+            .lean()
             .exec();
+    }
+
+    /**
+     * Productos creados antes de que existiera la colección `existencias`
+     * guardan su ubicación solo en el propio producto (`almacen` +
+     * `contenedor`) y su stock en `stock_inicial`, por lo que no aparecían
+     * como transferibles. Aquí se crea la fila que les falta.
+     *
+     * - Solo actúa si el producto NO tiene ninguna fila de existencias (ni
+     *   siquiera con cantidad 0), para no "resucitar" stock de un producto
+     *   que ya se agotó por transferencias.
+     * - Solo usa la ubicación del producto si el contenedor existe y
+     *   pertenece a ese almacén.
+     * - Es idempotente y segura ante peticiones simultáneas: usa upsert con
+     *   $setOnInsert y el índice único (producto, almacén, contenedor).
+     */
+    private async sincronizarUbicacionInicial(producto: {
+        _id: Types.ObjectId;
+        almacen?: Types.ObjectId;
+        contenedor?: Types.ObjectId;
+        stock_inicial?: number;
+    }): Promise<void> {
+        if (!producto.almacen || !producto.contenedor) {
+            return;
+        }
+
+        const yaTieneExistencias = await this.existenciaModel.exists({
+            producto: producto._id,
+        });
+
+        if (yaTieneExistencias) {
+            return;
+        }
+
+        const contenedorValido = await this.contenedorModel
+            .exists({
+                _id: producto.contenedor,
+                almacen: producto.almacen,
+            });
+
+        if (!contenedorValido) {
+            return;
+        }
+
+        const cantidad = Math.max(
+            0,
+            Number(producto.stock_inicial) || 0,
+        );
+
+        try {
+            await this.existenciaModel.updateOne(
+                {
+                    producto: producto._id,
+                    almacen: producto.almacen,
+                    contenedor: producto.contenedor,
+                },
+                { $setOnInsert: { cantidad } },
+                { upsert: true },
+            );
+        } catch (error) {
+            // Otra petición la creó a la vez: el resultado es el mismo.
+            if (!esClaveDuplicada(error)) {
+                throw error;
+            }
+        }
     }
 
     /**

@@ -1,5 +1,6 @@
 import {
     Injectable,
+    Logger,
     NotFoundException,
     BadRequestException,
 } from '@nestjs/common';
@@ -44,8 +45,15 @@ import {
     Existencia,
 } from '../exitencia/schema/existencia.schema';
 
+import { ExistenciaService } from '../exitencia/existencia.service';
+
 @Injectable()
 export class TransferenciaService {
+    private readonly logger = new Logger(TransferenciaService.name);
+
+    /** null = aún no se ha comprobado. Solo se guarda un resultado fiable. */
+    private transaccionesSoportadas: boolean | null = null;
+
     constructor(
         @InjectModel(Transferencia.name)
         private readonly transferenciaModel: Model<Transferencia>,
@@ -67,7 +75,9 @@ export class TransferenciaService {
 
         @InjectConnection()
         private readonly connection: Connection,
-    ) {}
+
+        private readonly existenciaService: ExistenciaService,
+    ) { }
 
     async create(
         createTransferenciaDto: CreateTransferenciaDto,
@@ -120,286 +130,341 @@ export class TransferenciaService {
             );
         }
 
-        const session =
-            await this.connection.startSession();
+        /**
+         * Las transacciones de MongoDB solo existen en un replica set
+         * (o mongos). En un MongoDB independiente —lo habitual en
+         * desarrollo local— darían "Transaction numbers are only allowed
+         * on a replica set member or mongos".
+         *
+         * - Con soporte: todo ocurre dentro de una transacción real.
+         * - Sin soporte: las mismas operaciones se ejecutan sin sesión,
+         *   cada una atómica por documento, y si algo falla a mitad se
+         *   deshace lo ya hecho (ver ejecutarTransferencia).
+         */
+        if (await this.soportaTransacciones()) {
+            return this.connection.transaction(
+                (session) =>
+                    this.ejecutarTransferencia(
+                        createTransferenciaDto,
+                        session,
+                    ),
+                { readPreference: 'primary' },
+            );
+        }
+
+        return this.ejecutarTransferencia(createTransferenciaDto);
+    }
+
+    /**
+     * Indica si el servidor admite transacciones (replica set o mongos).
+     * Si no se puede determinar, devuelve false (camino seguro) sin
+     * guardar el resultado, para volver a comprobarlo en la próxima.
+     */
+    private async soportaTransacciones(): Promise<boolean> {
+        if (this.transaccionesSoportadas !== null) {
+            return this.transaccionesSoportadas;
+        }
+
+        const admin = this.connection.db?.admin();
+
+        if (!admin) {
+            return false;
+        }
+
+        let info: Record<string, unknown>;
 
         try {
-            type TransferenciaConId = Transferencia & {
-                _id: Types.ObjectId;
-            };
+            info = await admin.command({ hello: 1 });
+        } catch {
+            try {
+                // Servidores anteriores a 4.4.2 no conocen "hello".
+                info = await admin.command({ isMaster: 1 });
+            } catch (error) {
+                this.logger.warn(
+                    `No se pudo comprobar si MongoDB admite transacciones: ${String(error)}`,
+                );
+                return false;
+            }
+        }
 
-            let transferenciaGuardada:
-                | TransferenciaConId
-                | null = null;
+        this.transaccionesSoportadas =
+            Boolean(info.setName) || info.msg === 'isdbgrid';
 
-            await session.withTransaction(
-                async () => {
-                    const almacenOrigen =
-                        await this.almacenModel
-                            .findById(almacen_origen)
-                            .session(session);
+        if (!this.transaccionesSoportadas) {
+            this.logger.warn(
+                'MongoDB no está en modo replica set: las transferencias se ' +
+                'ejecutan sin transacción (con reversión manual si fallan).',
+            );
+        }
 
-                    if (!almacenOrigen) {
-                        throw new NotFoundException(
-                            'El almacén de origen no existe',
-                        );
-                    }
+        return this.transaccionesSoportadas;
+    }
 
-                    const almacenDestino =
-                        await this.almacenModel
-                            .findById(almacen_destino)
-                            .session(session);
+    /**
+     * Ejecuta la transferencia.
+     *
+     * Con `session` (transacción) cualquier error la aborta completa.
+     * Sin `session`, cada paso se registra en `deshacer` y, si un paso
+     * posterior falla, se revierten en orden inverso.
+     *
+     * El descuento del origen usa una condición atómica
+     * (`cantidad >= N`), por lo que dos transferencias simultáneas nunca
+     * pueden dejar el stock en negativo.
+     */
+    private async ejecutarTransferencia(
+        dto: CreateTransferenciaDto,
+        session?: ClientSession,
+    ): Promise<Transferencia> {
+        const deshacer: Array<() => Promise<unknown>> = [];
 
-                    if (!almacenDestino) {
-                        throw new NotFoundException(
-                            'El almacén de destino no existe',
-                        );
-                    }
+        try {
+            const {
+                almacen_origen,
+                almacen_destino,
+                contenedor_origen,
+                contenedor_destino,
+                producto,
+                cantidad,
+            } = dto;
 
-                    const contenedorOrigen =
-                        await this.contenedorModel
-                            .findById(contenedor_origen)
-                            .session(session);
+            const ses = session ?? null;
 
-                    if (!contenedorOrigen) {
-                        throw new NotFoundException(
-                            'El contenedor de origen no existe',
-                        );
-                    }
+            // Una consulta por colección en lugar de dos.
+            const almacenes = await this.almacenModel
+                .find({ _id: { $in: [almacen_origen, almacen_destino] } })
+                .session(ses);
 
-                    const contenedorDestino =
-                        await this.contenedorModel
-                            .findById(contenedor_destino)
-                            .session(session);
-
-                    if (!contenedorDestino) {
-                        throw new NotFoundException(
-                            'El contenedor de destino no existe',
-                        );
-                    }
-
-                    // Validar pertenencia de contenedores
-                    if (
-                        contenedorOrigen.almacen.toString() !==
-                        almacenOrigen._id.toString()
-                    ) {
-                        throw new BadRequestException(
-                            'El contenedor de origen no pertenece al almacén de origen',
-                        );
-                    }
-
-                    if (
-                        contenedorDestino.almacen.toString() !==
-                        almacenDestino._id.toString()
-                    ) {
-                        throw new BadRequestException(
-                            'El contenedor de destino no pertenece al almacén de destino',
-                        );
-                    }
-
-                    const productoExist =
-                        await this.productoModel
-                            .findById(producto)
-                            .session(session);
-
-                    if (!productoExist) {
-                        throw new NotFoundException(
-                            'El producto no existe',
-                        );
-                    }
-
-                    /**
-                     * Buscar la existencia física exacta
-                     * del producto en el origen.
-                     */
-                    const existenciaOrigen =
-                        await this.existenciaModel
-                            .findOne({
-                                producto:
-                                    productoExist._id,
-                                almacen: almacenOrigen._id,
-                                contenedor:
-                                    contenedorOrigen._id,
-                                cantidad: {
-                                    $gte: cantidad,
-                                },
-                            })
-                            .session(session);
-
-                    if (!existenciaOrigen) {
-                        const existenciaReal =
-                            await this.existenciaModel
-                                .findOne({
-                                    producto:
-                                        productoExist._id,
-                                    almacen:
-                                        almacenOrigen._id,
-                                    contenedor:
-                                        contenedorOrigen._id,
-                                })
-                                .session(session);
-
-                        if (!existenciaReal) {
-                            throw new BadRequestException(
-                                'El producto no existe en la ubicación de origen',
-                            );
-                        }
-
-                        throw new BadRequestException(
-                            `Stock insuficiente en origen. Disponible: ${existenciaReal.cantidad}`,
-                        );
-                    }
-
-                    /**
-                     * RESTAR DEL ORIGEN
-                     */
-                    existenciaOrigen.cantidad -= cantidad;
-
-                    await existenciaOrigen.save({
-                        session,
-                    });
-
-                    /**
-                     * Si queda en cero, conservamos el documento
-                     * para mantener trazabilidad de la ubicación.
-                     *
-                     * Las consultas de disponibilidad solamente
-                     * muestran cantidad > 0.
-                     */
-
-                    /**
-                     * SUMAR AL DESTINO
-                     *
-                     * Si ya existe la combinación:
-                     * producto + almacén + contenedor
-                     * se incrementa.
-                     *
-                     * Si no existe, se crea.
-                     */
-                    let existenciaDestino =
-                        await this.existenciaModel
-                            .findOne({
-                                producto:
-                                    productoExist._id,
-                                almacen: almacenDestino._id,
-                                contenedor:
-                                    contenedorDestino._id,
-                            })
-                            .session(session);
-
-                    if (existenciaDestino) {
-                        existenciaDestino.cantidad += cantidad;
-
-                        await existenciaDestino.save({
-                            session,
-                        });
-                    } else {
-                        const nuevasExistencias =
-                            await this.existenciaModel.create(
-                                [
-                                    {
-                                        producto:
-                                            productoExist._id,
-                                        almacen:
-                                            almacenDestino._id,
-                                        contenedor:
-                                            contenedorDestino._id,
-                                        cantidad,
-                                    },
-                                ],
-                                {
-                                    session,
-                                },
-                            );
-
-                        existenciaDestino =
-                            nuevasExistencias[0];
-                    }
-
-                    /**
-                     * Registrar transferencia.
-                     */
-                    const nuevasTransferencias =
-                        await this.transferenciaModel.create(
-                            [
-                                {
-                                    ...createTransferenciaDto,
-                                    tipo:
-                                        createTransferenciaDto.tipo ??
-                                        TipoTransferencia.ENVIADA,
-                                },
-                            ],
-                            {
-                                session,
-                            },
-                        );
-
-                    transferenciaGuardada =
-                        nuevasTransferencias[0];
-
-                    /**
-                     * Kardex de salida.
-                     */
-                    await this.kardexModel.create(
-                        [
-                            {
-                                productoId:
-                                    productoExist._id,
-                                tipo:
-                                    KardexTipo.TRANSFERENCIA_SALIDA,
-                                cantidad,
-                                stock:
-                                    existenciaOrigen.cantidad,
-                                motivo:
-                                    `Transferencia desde ${almacenOrigen.nombreAlmacen}`,
-                                referencia:
-                                    transferenciaGuardada._id.toString(),
-                            },
-                        ],
-                        {
-                            session,
-                        },
-                    );
-
-                    /**
-                     * Kardex de entrada.
-                     */
-                    await this.kardexModel.create(
-                        [
-                            {
-                                productoId:
-                                    productoExist._id,
-                                tipo:
-                                    KardexTipo.TRANSFERENCIA_ENTRADA,
-                                cantidad,
-                                stock:
-                                    existenciaDestino.cantidad,
-                                motivo:
-                                    `Transferencia hacia ${almacenDestino.nombreAlmacen}`,
-                                referencia:
-                                    transferenciaGuardada._id.toString(),
-                            },
-                        ],
-                        {
-                            session,
-                        },
-                    );
-                },
-                {
-                    readPreference: 'primary',
-                },
+            const almacenOrigen = almacenes.find(
+                (a) => a._id.toString() === almacen_origen,
+            );
+            const almacenDestino = almacenes.find(
+                (a) => a._id.toString() === almacen_destino,
             );
 
-            if (!transferenciaGuardada) {
-                throw new BadRequestException(
-                    'No fue posible registrar la transferencia',
+            if (!almacenOrigen) {
+                throw new NotFoundException(
+                    'El almacén de origen no existe',
                 );
             }
 
+            if (!almacenDestino) {
+                throw new NotFoundException(
+                    'El almacén de destino no existe',
+                );
+            }
+
+            const contenedores = await this.contenedorModel
+                .find({
+                    _id: { $in: [contenedor_origen, contenedor_destino] },
+                })
+                .session(ses);
+
+            const contenedorOrigen = contenedores.find(
+                (c) => c._id.toString() === contenedor_origen,
+            );
+            const contenedorDestino = contenedores.find(
+                (c) => c._id.toString() === contenedor_destino,
+            );
+
+            if (!contenedorOrigen) {
+                throw new NotFoundException(
+                    'El contenedor de origen no existe',
+                );
+            }
+
+            if (!contenedorDestino) {
+                throw new NotFoundException(
+                    'El contenedor de destino no existe',
+                );
+            }
+
+            // Validar pertenencia de contenedores
+            if (
+                contenedorOrigen.almacen.toString() !==
+                almacenOrigen._id.toString()
+            ) {
+                throw new BadRequestException(
+                    'El contenedor de origen no pertenece al almacén de origen',
+                );
+            }
+
+            if (
+                contenedorDestino.almacen.toString() !==
+                almacenDestino._id.toString()
+            ) {
+                throw new BadRequestException(
+                    'El contenedor de destino no pertenece al almacén de destino',
+                );
+            }
+
+            const productoExist = await this.productoModel
+                .findById(producto)
+                .session(ses);
+
+            if (!productoExist) {
+                throw new NotFoundException('El producto no existe');
+            }
+
+            /**
+             * REBAJAR DEL ORIGEN (almacén + contenedor exactos).
+             * Falla sin tocar nada si no hay stock suficiente.
+             */
+            let existenciaOrigen: Existencia;
+
+            try {
+                existenciaOrigen = await this.existenciaService.disminuir(
+                    productoExist._id,
+                    almacenOrigen._id,
+                    contenedorOrigen._id,
+                    cantidad,
+                    session,
+                );
+            } catch (error) {
+                if (error instanceof BadRequestException) {
+                    throw await this.errorDeStock(
+                        productoExist._id,
+                        almacenOrigen._id,
+                        contenedorOrigen._id,
+                        session,
+                    );
+                }
+
+                throw error;
+            }
+
+            deshacer.push(() =>
+                this.existenciaService.aumentar(
+                    productoExist._id,
+                    almacenOrigen._id,
+                    contenedorOrigen._id,
+                    cantidad,
+                ),
+            );
+
+            /**
+             * SUMAR AL DESTINO (se crea la existencia si no existe).
+             */
+            const existenciaDestino = await this.existenciaService.aumentar(
+                productoExist._id,
+                almacenDestino._id,
+                contenedorDestino._id,
+                cantidad,
+                session,
+            );
+
+            deshacer.push(() =>
+                this.existenciaService.disminuir(
+                    productoExist._id,
+                    almacenDestino._id,
+                    contenedorDestino._id,
+                    cantidad,
+                ),
+            );
+
+            /**
+             * Registrar la transferencia.
+             */
+            const [transferenciaGuardada] =
+                await this.transferenciaModel.create(
+                    [
+                        {
+                            ...dto,
+                            tipo: dto.tipo ?? TipoTransferencia.ENVIADA,
+                        },
+                    ],
+                    { session },
+                );
+
+            deshacer.push(() =>
+                this.transferenciaModel.deleteOne({
+                    _id: transferenciaGuardada._id,
+                }),
+            );
+
+            /**
+             * Kardex: salida del origen y entrada al destino.
+             */
+            const referencia = transferenciaGuardada._id.toString();
+
+            await this.kardexModel.create(
+                [
+                    {
+                        productoId: productoExist._id,
+                        tipo: KardexTipo.TRANSFERENCIA_SALIDA,
+                        cantidad,
+                        stock: existenciaOrigen.cantidad,
+                        motivo: `Transferencia desde ${almacenOrigen.nombreAlmacen}`,
+                        referencia,
+                    },
+                    {
+                        productoId: productoExist._id,
+                        tipo: KardexTipo.TRANSFERENCIA_ENTRADA,
+                        cantidad,
+                        stock: existenciaDestino.cantidad,
+                        motivo: `Transferencia hacia ${almacenDestino.nombreAlmacen}`,
+                        referencia,
+                    },
+                ],
+                { session, ordered: true },
+            );
+
             return transferenciaGuardada;
-        } finally {
-            await session.endSession();
+        } catch (error) {
+            // En una transacción, el rollback lo hace MongoDB.
+            if (!session) {
+                await this.revertir(deshacer);
+            }
+
+            throw error;
         }
+    }
+
+    /**
+     * Deshace, en orden inverso, los pasos ya aplicados cuando no hay
+     * transacción. Un fallo al revertir se registra pero no oculta el
+     * error original que causó la reversión.
+     */
+    private async revertir(
+        deshacer: Array<() => Promise<unknown>>,
+    ): Promise<void> {
+        for (const paso of [...deshacer].reverse()) {
+            try {
+                await paso();
+            } catch (error) {
+                this.logger.error(
+                    `No se pudo revertir un paso de la transferencia: ${String(error)}`,
+                );
+            }
+        }
+    }
+
+    /**
+     * Mensaje claro cuando falla el descuento del origen: distingue
+     * "no hay existencia ahí" de "no alcanza", e indica lo disponible.
+     */
+    private async errorDeStock(
+        productoId: Types.ObjectId,
+        almacenId: Types.ObjectId,
+        contenedorId: Types.ObjectId,
+        session?: ClientSession,
+    ): Promise<BadRequestException> {
+        const existenciaReal = await this.existenciaModel
+            .findOne({
+                producto: productoId,
+                almacen: almacenId,
+                contenedor: contenedorId,
+            })
+            .session(session ?? null);
+
+        if (!existenciaReal) {
+            return new BadRequestException(
+                'El producto no existe en la ubicación de origen',
+            );
+        }
+
+        return new BadRequestException(
+            `Stock insuficiente en origen. Disponible: ${existenciaReal.cantidad}`,
+        );
     }
 
     async findAll(): Promise<Transferencia[]> {
@@ -485,4 +550,3 @@ export class TransferenciaService {
         );
     }
 }
-
