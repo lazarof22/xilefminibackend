@@ -39,6 +39,7 @@ import { FacturaModule } from './modules/factura/factura.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
 import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 import { TasaModule } from './modules/tasa/tasa.module';
+import { RegistroCompraModule } from './modules/inventario/registro-compra/registro-compra.module';
 
 
 @Module({
@@ -92,6 +93,7 @@ import { TasaModule } from './modules/tasa/tasa.module';
     ImportExportModule,
     NomencladoresModule,
     TasaModule,
+    RegistroCompraModule
   ],
   controllers: [AppController],
   providers: [AppService],
