@@ -1,4 +1,4 @@
-import { IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
 import { Types } from "mongoose";
 
 export class CreateProductoDto {
@@ -18,21 +18,25 @@ export class CreateProductoDto {
 
     @IsNotEmpty()
     @IsNumber()
+    @Min(0, { message: 'El precio de compra no puede ser negativo' })
     precio_compra!: number;
 
 
     @IsNotEmpty()
     @IsNumber()
+    @Min(0, { message: 'El precio de venta no puede ser negativo' })
     precio_venta!: number;
 
 
     @IsNotEmpty()
     @IsNumber()
+    @Min(0, { message: 'El stock no puede ser negativo' })
     stock_inicial!: number;
 
 
     @IsNotEmpty()
     @IsNumber()
+    @Min(0, { message: 'El stock mínimo no puede ser negativo' })
     stock_minimo!: number;
 
     @IsString()
