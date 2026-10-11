@@ -40,6 +40,7 @@ import { ImportExportModule } from './modules/configuracion/import-export/import
 import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 import { TasaModule } from './modules/tasa/tasa.module';
 import { RegistroCompraModule } from './modules/inventario/registro-compra/registro-compra.module';
+import { ReporteInventarioModule } from './modules/inventario/reporte-inventario/reporte-inventario.module';
 
 
 @Module({
@@ -93,9 +94,10 @@ import { RegistroCompraModule } from './modules/inventario/registro-compra/regis
     ImportExportModule,
     NomencladoresModule,
     TasaModule,
-    RegistroCompraModule
+    RegistroCompraModule,
+    ReporteInventarioModule
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }
