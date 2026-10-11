@@ -4,8 +4,8 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { TasaService } from "./tasa.service";
 import { TasaController } from "./tasa.controller";
 import { Tasa, TasaSchema } from "./schemas/tasa.schema";
+import { Moneda, MonedaSchema } from "../nomencladores/moneda/schema/moneda.schema";
 
-import { NomencladoresModule } from "../nomencladore generales/nomencladoresg.module";
 
 @Module({
   imports: [
@@ -14,9 +14,11 @@ import { NomencladoresModule } from "../nomencladore generales/nomencladoresg.mo
         name: Tasa.name,
         schema: TasaSchema,
       },
+      {
+        name: Moneda.name,
+        schema: MonedaSchema,
+      },
     ]),
-
-    NomencladoresModule,
   ],
   controllers: [TasaController],
   providers: [TasaService],

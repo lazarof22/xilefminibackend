@@ -10,8 +10,7 @@ import { Model } from "mongoose";
 import { Tasa, TasaDocument } from "./schemas/tasa.schema";
 import { CreateTasaDto } from "./dto/create-tasa.dto";
 import { UpdateTasaDto } from "./dto/update-tasa.dto";
-import { NomencladoresService } from "../nomencladore generales/nomencladoresg.service";
-
+import { Moneda, MonedaDocument } from "../nomencladores/moneda/schema/moneda.schema";
 
 
 @Injectable()
@@ -20,13 +19,10 @@ export class TasaService {
     @InjectModel(Tasa.name)
     private readonly tasaModel: Model<TasaDocument>,
 
-    private readonly nomencladoresService: NomencladoresService,
+    @InjectModel(Moneda.name)
+    private readonly monedaModel: Model<MonedaDocument>,
   ) {}
 
-  /**
-   * Normaliza el código de moneda de forma consistente con los valores
-   * del nomenclador, cuyos códigos se guardan en mayúsculas.
-   */
   private normalizarMoneda(moneda: string): string {
     const codigo = moneda?.trim().toUpperCase();
 
@@ -39,25 +35,15 @@ export class TasaService {
     return codigo;
   }
 
-  /**
-   * Asegura que el código recibido pertenezca a un valor ACTIVO del
-   * nomenclador MONEDA. listarValores('MONEDA') ya devuelve únicamente
-   * activos porque incluirInactivos es false por defecto.
-   */
   private async validarMoneda(moneda: string): Promise<string> {
     const codigo = this.normalizarMoneda(moneda);
 
-    const monedas = await this.nomencladoresService.listarValores(
-      "MONEDA",
-    );
-
-    const monedaValida = monedas.some(
-      (valor) => valor.codigo === codigo,
-    );
+    const monedaValida = await this.monedaModel
+      .exists({ tipo_moneda: codigo });
 
     if (!monedaValida) {
       throw new BadRequestException(
-        `La moneda ${codigo} no existe o está inactiva en el nomenclador MONEDA`,
+        `La moneda ${codigo} no existe en la colección moneda`,
       );
     }
 
@@ -65,7 +51,9 @@ export class TasaService {
   }
 
   async create(createTasaDto: CreateTasaDto): Promise<Tasa> {
-    const moneda = await this.validarMoneda(createTasaDto.moneda);
+    const moneda = await this.validarMoneda(
+      createTasaDto.moneda,
+    );
 
     const existe = await this.tasaModel.exists({ moneda });
 
@@ -80,10 +68,10 @@ export class TasaService {
         ...createTasaDto,
         moneda,
       });
-    } catch (error) {
+    } catch (error: unknown) {
       if (
-        error &&
         typeof error === "object" &&
+        error !== null &&
         "code" in error &&
         error.code === 11000
       ) {
@@ -97,13 +85,12 @@ export class TasaService {
   }
 
   async findAll(): Promise<Tasa[]> {
-    return this.tasaModel.find().sort({ moneda: 1 }).exec();
+    return this.tasaModel
+      .find()
+      .sort({ moneda: 1 })
+      .exec();
   }
 
-  /**
-   * No se valida contra el nomenclador aquí, porque una tasa histórica
-   * puede existir aunque una moneda haya sido desactivada después.
-   */
   async findByMoneda(moneda: string): Promise<Tasa> {
     const codigo = this.normalizarMoneda(moneda);
 
@@ -121,7 +108,9 @@ export class TasaService {
   }
 
   async findOne(id: string): Promise<Tasa> {
-    const tasa = await this.tasaModel.findById(id).exec();
+    const tasa = await this.tasaModel
+      .findById(id)
+      .exec();
 
     if (!tasa) {
       throw new NotFoundException("No se encontró la tasa");
@@ -167,12 +156,16 @@ export class TasaService {
     id: string,
     updateTasaDto: UpdateTasaDto,
   ): Promise<Tasa> {
+    const datos = { ...updateTasaDto };
+
+    if (datos.moneda !== undefined) {
+      datos.moneda = await this.validarMoneda(datos.moneda);
+    }
+
     const tasa = await this.tasaModel
       .findByIdAndUpdate(
         id,
-        {
-          $set: updateTasaDto,
-        },
+        { $set: datos },
         {
           new: true,
           runValidators: true,
@@ -188,7 +181,9 @@ export class TasaService {
   }
 
   async remove(id: string): Promise<void> {
-    const tasa = await this.tasaModel.findByIdAndDelete(id).exec();
+    const tasa = await this.tasaModel
+      .findByIdAndDelete(id)
+      .exec();
 
     if (!tasa) {
       throw new NotFoundException("No se encontró la tasa");
