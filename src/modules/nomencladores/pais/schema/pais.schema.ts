@@ -3,7 +3,7 @@ import { HydratedDocument } from "mongoose";
 
 export type PaisDocument = HydratedDocument<Pais>;
 
-@Schema()
+@Schema({ timestamps: true })
 export class Pais {
 
 

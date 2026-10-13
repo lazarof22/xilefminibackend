@@ -33,6 +33,7 @@ import { NaturalezaCuentaModule } from './modules/nomencladores/naturaleza-cuent
 import { ElementoGastoModule } from './modules/nomencladores/elemento-gasto/elemento-gasto.module';
 import { ComprobanteTipoModule } from './modules/nomencladores/comprobante-tipo/comprobante-tipo.module';
 import { PaisModule } from './modules/nomencladores/pais/pais.module';
+import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
 import { UsuariosModule } from './modules/configuracion/usuarios/usuarios.module';
 import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empresa-datos.module';
 import { FacturaModule } from './modules/factura/factura.module';
@@ -88,6 +89,7 @@ import { ReporteInventarioModule } from './modules/inventario/reporte-inventario
     ElementoGastoModule,
     ComprobanteTipoModule,
     PaisModule,
+    CiudadModule,
     UsuariosModule,
     EmpresaDatosModule,
     FacturaModule,
