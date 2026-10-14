@@ -1,52 +1,82 @@
-import { IsArray, IsNotEmpty, IsNumber, IsOptional, IsMongoId, IsEnum, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
-import { Pago, Compra } from '../schema/compra.schema';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import {
+  IsDateString,
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
+import { Pago } from '../schema/compra.schema';
 
-class ItemCompraDto {
-	@IsMongoId()
-	productoId!: string;
-
-	@IsNumber()
-	cantidad!: number;
-
-	@IsNumber()
-	precioCompra!: number;
-}
+const trim = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
 
 export class CreateCompraDto {
-	@IsArray()
-	@ValidateNested({ each: true })
-	@Type(() => ItemCompraDto)
-	productos!: ItemCompraDto[];
+  @ApiProperty({ example: 'F-0001' })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  numeroFactura!: string;
 
-	@IsNumber()
-	subtotalCompra!: number;
+  @ApiProperty({
+    description: 'Nombre de la empresa proveedora (módulo empresa)',
+  })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  nombreProveedor!: string;
 
-	@IsNumber()
-	descuentoTotal!: number;
+  @ApiProperty()
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  nombreProducto!: string;
 
-	@IsMongoId()
-	moneda!: string;
+  @ApiProperty({ example: '2026-10-13' })
+  @IsDateString()
+  fechaCompra!: string;
 
-	@IsMongoId()
-	empresa!: string;
+  @ApiProperty({ example: 'USD' })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  moneda!: string;
 
-	@IsEnum(Pago)
-	modoPago!: Pago;
+  @ApiPropertyOptional({
+    description: 'Solo si la moneda no es CUP y el proveedor es Mypime',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  tasaMercadoInformal?: number;
 
-	@IsOptional()
-	@IsNumber()
-	tasaBancoCentral?: number;
+  @ApiPropertyOptional({
+    description: 'Solo si la moneda no es CUP y el proveedor NO es Mypime',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  tasaBancoNacional?: number;
 
-	@IsOptional()
-	@IsNumber()
-	tasaBancoInformal?: number;
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  precioCompra!: number;
 
-	@IsOptional()
-	@IsNumber()
-	fluctuacion?: number;
+  @ApiProperty()
+  @IsNumber()
+  @Min(1)
+  cantidad!: number;
 
-	@IsOptional()
-	@IsNumber()
-	recargo?: number;
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  iva!: number;
+
+  @ApiProperty({ enum: Pago })
+  @IsEnum(Pago)
+  metodoPago!: Pago;
 }

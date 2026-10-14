@@ -1,14 +1,12 @@
 import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { CompraService } from './compra.service';
 import { CompraController } from './compra.controller';
-import { MongooseModule } from '@nestjs/mongoose';
 import { Compra, CompraSchema } from './schema/compra.schema';
-import { Producto, ProductoSchema } from '../../inventario/producto/schemas/producto.schema';
-import { Kardex, KardexSchema } from '../../inventario/kardex/schema/kardex.schema';
-import { CuentaPagar, CuentaPagarSchema } from '../../finanzas/cuenta-pagar/schema/cuenta-pagar.schema';
-import { Comprobante, ComprobanteSchema } from '../../contabilidad/comprobante/schema/comprobante.schema';
-import { Cuenta, CuentaSchema } from '../../contabilidad/cuenta/schema/cuenta.schema';
-import { NomencladorHelperModule } from '../../configuracion/nomenclador-helper/nomenclador-helper.module';
+import {
+  Empresa,
+  EmpresaSchema,
+} from '../../clientes y provedores/empresa/schema/empresa.schema';
 
 @Module({
   controllers: [CompraController],
@@ -16,13 +14,8 @@ import { NomencladorHelperModule } from '../../configuracion/nomenclador-helper/
   imports: [
     MongooseModule.forFeature([
       { name: Compra.name, schema: CompraSchema },
-      { name: Producto.name, schema: ProductoSchema },
-      { name: Kardex.name, schema: KardexSchema },
-      { name: CuentaPagar.name, schema: CuentaPagarSchema },
-      { name: Comprobante.name, schema: ComprobanteSchema },
-      { name: Cuenta.name, schema: CuentaSchema },
+      { name: Empresa.name, schema: EmpresaSchema },
     ]),
-    NomencladorHelperModule,
   ],
   exports: [MongooseModule],
 })

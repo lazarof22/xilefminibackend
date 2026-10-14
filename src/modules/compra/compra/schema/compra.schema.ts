@@ -1,63 +1,65 @@
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { HydratedDocument, Types } from "mongoose";
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
 
 export type CompraDocument = HydratedDocument<Compra>;
 
-
 export enum Pago {
-    EFECTIVO = 'efectivo',
-    TRANSFERENCIA= 'transferencia',
-    CREDITO = 'credito'
+  EFECTIVO = 'efectivo',
+  TRANSFERENCIA = 'transferencia',
+  CREDITO = 'credito',
 }
 
-@Schema()
-class ItemCompra {
-    @Prop({ type: Types.ObjectId, ref: 'Producto', required: true })
-    productoId!: Types.ObjectId;
-
-    @Prop({ required: true })
-    cantidad!: number;
-
-    @Prop({ required: true })
-    precioCompra!: number;
-
-}
-
-
-@Schema()
+/**
+ * Compra a un proveedor, tal y como se registra desde Compras > Registrar compra.
+ *
+ * - `moneda` es el tipo de moneda (CUP, USD, EUR, ...). Con CUP no se usan tasas.
+ * - Si la moneda no es CUP se usa UNA tasa según el tipo de proveedor:
+ *     · Mypime  -> `tasaMercadoInformal`
+ *     · Resto   -> `tasaBancoNacional`
+ *   La otra no se guarda.
+ * - `totalPagado` = `precioCompra` × `cantidad`. Lo calcula el servidor.
+ */
+@Schema({ timestamps: true })
 export class Compra {
+  @Prop({ required: true, trim: true })
+  numeroFactura!: string;
 
-    @Prop({ type: [ItemCompra], required: true })
-    productos!: ItemCompra[];
+  @Prop({ required: true, trim: true })
+  nombreProveedor!: string;
 
-    @Prop({ required: true })
-    subtotalCompra!: number;
+  @Prop({ required: true, trim: true })
+  nombreProducto!: string;
 
-    @Prop({ required: true })
-    descuentoTotal!: number;
+  @Prop({ type: Date, required: true })
+  fechaCompra!: Date;
 
-    @Prop({ type: Types.ObjectId, ref: 'Moneda', required: true })
-    moneda!: Types.ObjectId;
+  @Prop({ required: true, trim: true })
+  moneda!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'Empresa', required: true })
-    empresa!: Types.ObjectId;
+  @Prop({ min: 0 })
+  tasaMercadoInformal?: number;
 
-    @Prop({ required: true, enum: Pago })
-    modoPago!:Pago;
+  @Prop({ min: 0 })
+  tasaBancoNacional?: number;
 
-    @Prop()
-    tasaBancoCentral!: number;  //????
+  @Prop({ required: true, min: 0 })
+  precioCompra!: number;
 
-    @Prop()
-    tasaBancoInformal!: number; //????
+  @Prop({ required: true, min: 1 })
+  cantidad!: number;
 
-    @Prop()
-    fluctuacion!: number; //????
+  @Prop({ required: true, min: 0, default: 0 })
+  iva!: number;
 
-    @Prop({required: true})
-    recargo!: number; // ???? 
+  @Prop({ required: true, min: 0 })
+  totalPagado!: number;
 
+  @Prop({ required: true, enum: Pago })
+  metodoPago!: Pago;
 }
 
+export const CompraSchema = SchemaFactory.createForClass(Compra);
 
-export const CompraSchema = SchemaFactory.createForClass(Compra); 
+// Una misma factura no puede registrarse dos veces para el mismo proveedor.
+CompraSchema.index({ numeroFactura: 1, nombreProveedor: 1 }, { unique: true });
+CompraSchema.index({ fechaCompra: -1 });
