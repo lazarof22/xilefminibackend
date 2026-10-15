@@ -26,6 +26,7 @@ export enum ModuloApp {
   TASAS = 'tasas',
   PUNTO_VENTA = 'punto_venta',
   CLIENTES = 'clientes',
+  PROVEEDORES = 'proveedores',
   NOMENCLADORES = 'nomencladores',
   CONFIGURACION = 'configuracion',
   LICENCIA = 'licencia',

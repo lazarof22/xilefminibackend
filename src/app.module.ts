@@ -41,6 +41,7 @@ import { TasaModule } from './modules/tasa/tasa.module';
 import { RegistroCompraModule } from './modules/inventario/registro-compra/registro-compra.module';
 import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
 import { IpvModule } from './modules/inventario/ipv/ipv.module'
+import {ProveedorModule} from './modules/clientes y provedores/proveedor/proveedor.module'
 
 
 @Module({
@@ -95,7 +96,8 @@ import { IpvModule } from './modules/inventario/ipv/ipv.module'
     TasaModule,
     RegistroCompraModule,
     CiudadModule,
-    IpvModule
+    IpvModule,
+    ProveedorModule
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -31,7 +31,7 @@ function leerEnv() {
 
 const TODOS_LOS_MODULOS = [
   'dashboard', 'inventario', 'ventas', 'compras', 'tasas',
-  'punto_venta', 'clientes', 'nomencladores', 'configuracion', 'licencia',
+  'punto_venta', 'clientes', 'proveedores', 'nomencladores', 'configuracion', 'licencia',
 ];
 
 async function main() {
