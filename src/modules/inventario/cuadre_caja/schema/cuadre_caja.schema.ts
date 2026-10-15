@@ -59,7 +59,7 @@ export class CuadreCaja {
   @Prop({ type: Date, default: Date.now })
   fecha!: Date;
 
-  @Prop({ type: Types.ObjectId, ref: 'Usuarios', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Usuario', required: true })
   empleado!: Types.ObjectId;
 
   @Prop({ required: true, min: 0 })
@@ -102,6 +102,11 @@ export class CuadreCaja {
   })
   estado!: string;
 
+  @Prop({ trim: true })
+  realizadoPor?: string;
+
+  @Prop({ trim: true })
+  observaciones?: string;
 }
 
 export const CuadreCajaSchema = SchemaFactory.createForClass(CuadreCaja);

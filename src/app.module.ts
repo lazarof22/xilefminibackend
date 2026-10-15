@@ -40,6 +40,7 @@ import { NomencladoresModule } from './modules/nomencladore generales/nomenclado
 import { TasaModule } from './modules/tasa/tasa.module';
 import { RegistroCompraModule } from './modules/inventario/registro-compra/registro-compra.module';
 import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
+import { IpvModule } from './modules/inventario/ipv/ipv.module'
 
 
 @Module({
@@ -94,6 +95,7 @@ import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
     TasaModule,
     RegistroCompraModule,
     CiudadModule,
+    IpvModule
   ],
   controllers: [AppController],
   providers: [AppService],

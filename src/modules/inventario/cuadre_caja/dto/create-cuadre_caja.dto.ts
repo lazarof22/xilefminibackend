@@ -178,4 +178,13 @@ export class CreateCuadreCajaDto {
   @Min(0, { message: 'El total de efectivo no puede ser negativo' })
   total_efectivo?: number;
 
+  @ApiPropertyOptional({ description: 'Nombre de quien realiza el cuadre' })
+  @IsOptional()
+  @IsString({ message: 'realizadoPor debe ser texto' })
+  realizadoPor?: string;
+
+  @ApiPropertyOptional({ description: 'Observaciones del cuadre' })
+  @IsOptional()
+  @IsString({ message: 'Las observaciones deben ser texto' })
+  observaciones?: string;
 }
