@@ -1,107 +1,100 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { JWT_SECRET, JWT_EXPIRES_IN } from './constants/constants';
-import { Usuario } from './schemas/empleado.schema';
-import { CreateAuthDto } from './dto/create-auth.dto';
-import { CargoEmpleado } from '../nomencladores/cargo_empleado/schema/cargo_empleado.schema';
-import { Departamento } from '../nomencladores/departamento/schema/departamento.schema';
+import { JWT_EXPIRES_IN, JWT_SECRET } from './constants/constants';
 import {
-  CupoUsuariosOps,
-  LicenciaService,
-  normalizarEmpresaId,
-} from '../licencia/licencia.service';
+  COLLATION_NOMBRE,
+  Usuarios,
+  UsuariosDocument,
+  modulosEfectivos,
+} from './schemas/usuarios.schema';
+
+export interface UsuarioSesion {
+  id: string;
+  nombre: string;
+  rol: string;
+  modulos: string[];
+}
+
+export interface RespuestaLogin {
+  access_token: string;
+  usuario: UsuarioSesion;
+}
+
+// Hash descartable para que una cuenta inexistente tarde lo mismo en
+// rechazarse que una contraseña incorrecta (no revela qué usuarios existen).
+const HASH_FALSO = bcrypt.hashSync('contraseña-inexistente', 10);
+
+export function aUsuarioSesion(usuario: {
+  _id: unknown;
+  nombre: string;
+  rol: string;
+  modulos?: readonly string[];
+}): UsuarioSesion {
+  return {
+    id: String(usuario._id),
+    nombre: usuario.nombre,
+    rol: usuario.rol,
+    modulos: modulosEfectivos(usuario),
+  };
+}
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectModel(Usuario.name) private userModel: Model<Usuario>,
-    @InjectModel(Departamento.name) private departamentoModel: Model<Departamento>,@InjectModel(CargoEmpleado.name) private cargoModel: Model<CargoEmpleado>,
+    @InjectModel(Usuarios.name) private userModel: Model<UsuariosDocument>,
     private jwtService: JwtService,
-    private readonly licenciaService: LicenciaService,
-  ) { }
+  ) {}
 
-
-  async findAll(): Promise<Usuario[]> {
-    return this.userModel
-      .find()
-      .select('-contraseña')
-      .sort({ createdAt: -1 })
+  /** Devuelve el usuario (sin contraseña) si las credenciales son correctas. */
+  async validateUser(
+    nombre: string,
+    contraseña: string,
+  ): Promise<UsuariosDocument | null> {
+    const user = await this.userModel
+      .findOne({ nombre: nombre.trim() })
+      .collation(COLLATION_NOMBRE)
+      .select('+contraseña')
       .exec();
-  }
 
-  async register(createAuthDto: CreateAuthDto): Promise<{ access_token: string }> {
-    const { ci_empleado, nombre_empleado, correo_empleado, contraseña, departamento, cargo, salario, rol, empresa_id } = createAuthDto;
-    const empresaId = normalizarEmpresaId(empresa_id?.toString());
-    const savedUser = await this.licenciaService.crearUsuarioConCupo(
-      empresaId,
-      this.opsCupoRegistro(empresaId, async () => {
-        const hashedPassword = await bcrypt.hash(contraseña, 10);
-        const user = new this.userModel({
-          ci_empleado,
-          nombre_empleado,
-          correo_empleado,
-          contraseña: hashedPassword,
-          departamento,
-          cargo,
-          salario,
-          rol: rol || 'empleado',
-          ...(empresaId ? { empresa_id: empresaId } : {}),
-        });
-        return user.save();
-      }),
+    const coincide = await bcrypt.compare(
+      contraseña,
+      user?.contraseña ?? HASH_FALSO,
     );
+    if (!user || !coincide) return null;
 
-    // Genera el token igual que en login
-    const payload = { correo_empleado: savedUser.correo_empleado, sub: savedUser._id, rol: savedUser.rol, nombre_empleado: savedUser.nombre_empleado, empresa_id: savedUser.empresa_id?.toString() ?? undefined };
-    const access_token = this.jwtService.sign(payload, {
-      secret: JWT_SECRET,
-      expiresIn: JWT_EXPIRES_IN,
-    });
-
-    return { access_token };
+    user.set('contraseña', undefined);
+    return user;
   }
 
-  /**
-   * License-cap callbacks for registration: users are counted per empresa, or
-   * install-wide when no empresa is given (same scope as the license lookup).
-   */
-  private opsCupoRegistro(
-    empresaId: string | undefined,
-    crear: () => Promise<Usuario & { _id: unknown }>,
-  ): CupoUsuariosOps<Usuario & { _id: unknown }> {
-    const filter = empresaId ? { empresa_id: empresaId } : {};
-    return {
-      contar: () => this.userModel.countDocuments(filter).exec(),
-      crear,
-      eliminar: async (creado) => {
-        await this.userModel.deleteOne({ _id: creado._id }).exec();
-      },
+  login(usuario: {
+    _id: unknown;
+    nombre: string;
+    rol: string;
+    modulos?: readonly string[];
+  }): RespuestaLogin {
+    const sesion = aUsuarioSesion(usuario);
+    const payload = {
+      sub: sesion.id,
+      nombre: sesion.nombre,
+      rol: sesion.rol,
+      modulos: sesion.modulos,
     };
-  }
-
-  async validateUser(correo_empleado: string, contraseña: string): Promise<any> {
-    const user = await this.userModel.findOne({ correo_empleado }).select('+contraseña');
-    if (user && (await bcrypt.compare(contraseña, user.contraseña))) {
-      const { contraseña, ...result } = user.toObject();
-      return result;
-    }
-    return null;
-  }
-
-  async login(usuario: any) {
-    const payload = { correo_empleado: usuario.correo_empleado, sub: usuario._id, rol: usuario.rol, nombre_empleado: usuario.nombre_empleado, empresa_id: usuario.empresa_id?.toString() ?? undefined };
     return {
       access_token: this.jwtService.sign(payload, {
         secret: JWT_SECRET,
         expiresIn: JWT_EXPIRES_IN,
       }),
+      usuario: sesion,
     };
   }
 
-  async validateUserById(userId: string) {
-    return this.userModel.findById(userId).select('-contraseña');
+  /** Datos actuales del usuario autenticado (rol y módulos al día). */
+  async perfil(userId: string): Promise<UsuarioSesion> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    return aUsuarioSesion(user);
   }
 }

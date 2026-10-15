@@ -28,7 +28,7 @@ import {
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais } from '../nomencladores/pais/schema/pais.schema';
-import { Usuario } from '../auth/schemas/empleado.schema';
+import { Usuarios } from '../auth/schemas/usuarios.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { FacturaInventarioService } from './factura-inventario.service';
 import {
@@ -69,7 +69,7 @@ export class FacturaService implements OnModuleInit {
     @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
     @InjectModel(Pais.name) private paisModel: Model<Pais>,
-    @InjectModel(Usuario.name) private usuarioModel: Model<Usuario>,
+    @InjectModel(Usuarios.name) private usuarioModel: Model<Usuarios>,
     private readonly empresaDatosService: EmpresaDatosService,
     private readonly inventario: FacturaInventarioService,
   ) {}
@@ -419,8 +419,8 @@ export class FacturaService implements OnModuleInit {
     }
     return {
       empleadoId: usuario._id,
-      nombre: usuario.nombre_empleado,
-      ci: usuario.ci_empleado,
+      nombre: usuario.nombre,
+      ci: '',
       fecha: obtenerFechaEnZona(FACTURA_TIMEZONE),
     };
   }

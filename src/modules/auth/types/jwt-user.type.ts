@@ -7,8 +7,11 @@
  */
 export interface JwtUser {
   userId: string;
-  correo_empleado: string;
+  nombre: string;
   rol: string;
+  /** Módulos habilitados (todos para el administrador). */
+  modulos: string[];
+  /** Reservado para licencias por empresa; los usuarios actuales no lo llevan. */
   empresa_id?: string;
 }
 

@@ -3,7 +3,7 @@ import { FacturaController } from './factura.controller';
 import { FacturaService } from './factura.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { UsuarioRol } from '../auth/schemas/empleado.schema';
+import { UsuarioRol } from '../auth/schemas/usuarios.schema';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import type { RequestWithUser } from '../auth/types/jwt-user.type';
 
@@ -108,7 +108,8 @@ describe('FacturaController', () => {
     const req = {
       user: {
         userId: 'user-1',
-        correo_empleado: 'facturador@xilef.test',
+        nombre: 'facturador',
+        modulos: [],
         rol: UsuarioRol.FACTURADOR,
       },
     } as RequestWithUser;

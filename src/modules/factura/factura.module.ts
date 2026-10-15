@@ -21,7 +21,7 @@ import {
   ProductoSchema,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais, PaisSchema } from '../nomencladores/pais/schema/pais.schema';
-import { Usuario, UsuarioSchema } from '../auth/schemas/empleado.schema';
+import { Usuarios, UsuariosSchema } from '../auth/schemas/usuarios.schema';
 import {
   Kardex,
   KardexSchema,
@@ -41,7 +41,7 @@ import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos
       { name: Almacen.name, schema: AlmacenSchema },
       { name: Producto.name, schema: ProductoSchema },
       { name: Pais.name, schema: PaisSchema },
-      { name: Usuario.name, schema: UsuarioSchema },
+      { name: Usuarios.name, schema: UsuariosSchema },
       { name: Kardex.name, schema: KardexSchema },
       { name: Estado.name, schema: EstadoSchema },
     ]),

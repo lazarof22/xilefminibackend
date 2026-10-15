@@ -28,7 +28,7 @@ import {
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais, PaisDocument } from '../nomencladores/pais/schema/pais.schema';
-import { Usuario, UsuarioDocument } from '../auth/schemas/empleado.schema';
+import { Usuarios, UsuariosDocument } from '../auth/schemas/usuarios.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { FacturaInventarioService } from './factura-inventario.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
@@ -114,7 +114,7 @@ type PaisModelMock = {
 };
 
 type UsuarioModelMock = {
-  findById: jest.Mock<QueryMock<UsuarioDocument | null>, unknown[]>;
+  findById: jest.Mock<QueryMock<UsuariosDocument | null>, unknown[]>;
 };
 
 type InventarioMock = {
@@ -250,14 +250,13 @@ describe('FacturaService', () => {
     // snapshotted into facturadoPor. Individual T4 tests override this to
     // simulate the account having been deleted after login (401).
     usuarioModelMock = {
-      findById: jest.fn<QueryMock<UsuarioDocument | null>, unknown[]>(),
+      findById: jest.fn<QueryMock<UsuariosDocument | null>, unknown[]>(),
     };
     usuarioModelMock.findById.mockReturnValue(
-      crearQueryMock<UsuarioDocument | null>({
+      crearQueryMock<UsuariosDocument | null>({
         _id: USER_ID,
-        nombre_empleado: 'Juan Pérez',
-        ci_empleado: '12345678901',
-      } as unknown as UsuarioDocument),
+        nombre: 'Juan Pérez',
+      } as unknown as UsuariosDocument),
     );
 
     inventarioMock = {
@@ -282,7 +281,7 @@ describe('FacturaService', () => {
         { provide: getModelToken(Almacen.name), useValue: almacenModelMock },
         { provide: getModelToken(Producto.name), useValue: productoModelMock },
         { provide: getModelToken(Pais.name), useValue: paisModelMock },
-        { provide: getModelToken(Usuario.name), useValue: usuarioModelMock },
+        { provide: getModelToken(Usuarios.name), useValue: usuarioModelMock },
         { provide: EmpresaDatosService, useValue: empresaDatosServiceMock },
       ],
     }).compile();
@@ -895,11 +894,10 @@ describe('FacturaService', () => {
 
     it("snapshots nombre, ci, empleadoId and today's fecha from the authenticated user", async () => {
       usuarioModelMock.findById.mockReturnValue(
-        crearQueryMock<UsuarioDocument | null>({
+        crearQueryMock<UsuariosDocument | null>({
           _id: USER_ID,
-          nombre_empleado: 'María López',
-          ci_empleado: '98765432109',
-        } as unknown as UsuarioDocument),
+          nombre: 'María López',
+        } as unknown as UsuariosDocument),
       );
 
       await crear(baseDto(), USER_ID);
@@ -909,14 +907,14 @@ describe('FacturaService', () => {
       expect(comoRegistro(construidoCon).facturadoPor).toEqual({
         empleadoId: USER_ID,
         nombre: 'María López',
-        ci: '98765432109',
+        ci: '',
         fecha: obtenerFechaEnZona(FACTURA_TIMEZONE),
       });
     });
 
     it('throws 401 when the authenticated user no longer exists (deleted after login)', async () => {
       usuarioModelMock.findById.mockReturnValue(
-        crearQueryMock<UsuarioDocument | null>(null),
+        crearQueryMock<UsuariosDocument | null>(null),
       );
 
       await expect(crear(baseDto(), USER_ID)).rejects.toBeInstanceOf(
@@ -927,7 +925,7 @@ describe('FacturaService', () => {
 
     it('never allocates a number when the authenticated user no longer exists (T9 rule)', async () => {
       usuarioModelMock.findById.mockReturnValue(
-        crearQueryMock<UsuarioDocument | null>(null),
+        crearQueryMock<UsuariosDocument | null>(null),
       );
 
       await expect(crear(baseDto(), USER_ID)).rejects.toBeInstanceOf(

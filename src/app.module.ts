@@ -33,15 +33,13 @@ import { NaturalezaCuentaModule } from './modules/nomencladores/naturaleza-cuent
 import { ElementoGastoModule } from './modules/nomencladores/elemento-gasto/elemento-gasto.module';
 import { ComprobanteTipoModule } from './modules/nomencladores/comprobante-tipo/comprobante-tipo.module';
 import { PaisModule } from './modules/nomencladores/pais/pais.module';
-import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
-import { UsuariosModule } from './modules/configuracion/usuarios/usuarios.module';
 import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empresa-datos.module';
 import { FacturaModule } from './modules/factura/factura.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
 import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 import { TasaModule } from './modules/tasa/tasa.module';
 import { RegistroCompraModule } from './modules/inventario/registro-compra/registro-compra.module';
-import { ReporteInventarioModule } from './modules/inventario/reporte-inventario/reporte-inventario.module';
+import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
 
 
 @Module({
@@ -89,17 +87,15 @@ import { ReporteInventarioModule } from './modules/inventario/reporte-inventario
     ElementoGastoModule,
     ComprobanteTipoModule,
     PaisModule,
-    CiudadModule,
-    UsuariosModule,
     EmpresaDatosModule,
     FacturaModule,
     ImportExportModule,
     NomencladoresModule,
     TasaModule,
     RegistroCompraModule,
-    ReporteInventarioModule
+    CiudadModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

@@ -1,112 +1,78 @@
-import { ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Model } from 'mongoose';
+import * as bcrypt from 'bcryptjs';
 import { AuthService } from './auth.service';
-import { Usuario } from './schemas/empleado.schema';
-import { CreateAuthDto } from './dto/create-auth.dto';
-import { CupoUsuariosOps, LicenciaService } from '../licencia/licencia.service';
-import { CargoEmpleado } from '../nomencladores/cargo_empleado/schema/cargo_empleado.schema';
-import { Departamento } from '../nomencladores/departamento/schema/departamento.schema';
+import {
+  UsuarioRol,
+  ModuloApp,
+  TODOS_LOS_MODULOS,
+} from './schemas/usuarios.schema';
 
-describe('AuthService.register — license user cap', () => {
-  const save = jest.fn();
-  const countDocuments = jest.fn();
-  const deleteOne = jest.fn();
-  const crearUsuarioConCupo = jest.fn();
+describe('AuthService', () => {
+  const hash = bcrypt.hashSync('secreto1', 4);
 
-  // Mongoose model stand-in: constructible (`new this.userModel(...)`) with
-  // static `countDocuments` / `deleteOne`.
-  const UserModel = Object.assign(
-    jest.fn().mockImplementation((data: Record<string, unknown>) => ({
-      ...data,
-      save,
-    })),
-    { countDocuments, deleteOne },
-  );
+  const consulta = <T>(resultado: T) => {
+    const q: Record<string, jest.Mock> = {};
+    q.collation = jest.fn().mockReturnValue(q);
+    q.select = jest.fn().mockReturnValue(q);
+    q.exec = jest.fn().mockResolvedValue(resultado);
+    return q;
+  };
 
-  let service: AuthService;
-  const dto = {
-    ci_empleado: '1',
-    nombre_empleado: 'Ana',
-    correo_empleado: 'ana@x.com',
-    contraseña: 'secret123',
-    departamento: 'd',
-    cargo: 'c',
-    salario: 1,
-    rol: 'empleado',
-    empresa_id: '507f1f77bcf86cd799439011',
-  } as unknown as CreateAuthDto;
+  const crearServicio = (usuario: unknown) => {
+    const findOne = jest.fn().mockReturnValue(consulta(usuario));
+    const findById = jest.fn().mockReturnValue(consulta(usuario));
+    const model = { findOne, findById } as never;
+    const jwt = new JwtService({ secret: 'test' });
+    return { service: new AuthService(model, jwt), findOne, jwt };
+  };
 
-  type Ops = CupoUsuariosOps<{ _id: string }>;
-
-  /** Runs the ops like LicenciaService would with a valid capped license. */
-  function runOps(): void {
-    crearUsuarioConCupo.mockImplementation(
-      async (_empresa: string | undefined, ops: Ops) => {
-        await ops.contar();
-        const creado = await ops.crear();
-        await ops.eliminar(creado);
-        return creado;
-      },
-    );
-  }
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    save.mockResolvedValue({
-      _id: 'u1',
-      correo_empleado: 'ana@x.com',
-      rol: 'empleado',
-    });
-    countDocuments.mockReturnValue({ exec: () => Promise.resolve(2) });
-    deleteOne.mockReturnValue({ exec: () => Promise.resolve({}) });
-    crearUsuarioConCupo.mockImplementation(
-      (_empresa: string | undefined, ops: Ops) => ops.crear(),
-    );
-    service = new AuthService(
-      UserModel as unknown as Model<Usuario>,
-      {} as Model<Departamento>,
-      {} as Model<CargoEmpleado>,
-      { sign: jest.fn().mockReturnValue('token') } as unknown as JwtService,
-      { crearUsuarioConCupo } as unknown as LicenciaService,
-    );
+  const usuarioBase = (extra: Record<string, unknown> = {}) => ({
+    _id: 'u1',
+    nombre: 'maria',
+    contraseña: hash,
+    rol: UsuarioRol.CAJERO,
+    modulos: [ModuloApp.PUNTO_VENTA],
+    set: jest.fn(),
+    ...extra,
   });
 
-  it('creates the user through the license cap helper, scoped to the empresa', async () => {
-    runOps();
-    await service.register(dto);
-    expect(crearUsuarioConCupo).toHaveBeenCalledWith(
-      '507f1f77bcf86cd799439011',
-      expect.any(Object),
-    );
-    expect(countDocuments).toHaveBeenCalledWith({
-      empresa_id: '507f1f77bcf86cd799439011',
-    });
-    expect(save).toHaveBeenCalled();
-    expect(deleteOne).toHaveBeenCalledWith({ _id: 'u1' });
+  it('valida credenciales correctas', async () => {
+    const { service, findOne } = crearServicio(usuarioBase());
+    const u = await service.validateUser(' maria ', 'secreto1');
+    expect(u).not.toBeNull();
+    expect(findOne).toHaveBeenCalledWith({ nombre: 'maria' });
   });
 
-  it.each([undefined, '', '   '])(
-    'counts every user of the install when the empresa is %p',
-    async (empresa_id) => {
-      runOps();
-      await service.register({
-        ...dto,
-        empresa_id,
-      } as unknown as CreateAuthDto);
-      expect(crearUsuarioConCupo).toHaveBeenCalledWith(
-        undefined,
-        expect.any(Object),
-      );
-      expect(countDocuments).toHaveBeenCalledWith({});
-    },
-  );
+  it('rechaza contraseña incorrecta', async () => {
+    const { service } = crearServicio(usuarioBase());
+    expect(await service.validateUser('maria', 'otra')).toBeNull();
+  });
 
-  it('does not create the user when the cap helper rejects', async () => {
-    crearUsuarioConCupo.mockRejectedValue(new ForbiddenException());
-    await expect(service.register(dto)).rejects.toBeInstanceOf(
-      ForbiddenException,
+  it('rechaza usuario inexistente', async () => {
+    const { service } = crearServicio(null);
+    expect(await service.validateUser('nadie', 'secreto1')).toBeNull();
+  });
+
+  it('login devuelve token y los módulos del usuario', () => {
+    const { service, jwt } = crearServicio(null);
+    const r = service.login(usuarioBase());
+    expect(r.usuario).toEqual({
+      id: 'u1',
+      nombre: 'maria',
+      rol: UsuarioRol.CAJERO,
+      modulos: [ModuloApp.PUNTO_VENTA],
+    });
+    const payload = jwt.decode(r.access_token) as Record<string, unknown>;
+    expect(payload.sub).toBe('u1');
+    expect(payload.rol).toBe(UsuarioRol.CAJERO);
+    expect(payload).not.toHaveProperty('contraseña');
+  });
+
+  it('el administrador siempre recibe todos los módulos', () => {
+    const { service } = crearServicio(null);
+    const r = service.login(
+      usuarioBase({ rol: UsuarioRol.ADMIN, modulos: [] }),
     );
-    expect(save).not.toHaveBeenCalled();
+    expect(r.usuario.modulos).toEqual(TODOS_LOS_MODULOS);
   });
 });

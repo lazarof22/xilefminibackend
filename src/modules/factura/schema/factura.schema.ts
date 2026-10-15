@@ -122,13 +122,14 @@ class ParticipanteFactura {
  */
 @Schema({ _id: false })
 class FacturadorFactura {
-  @Prop({ type: Types.ObjectId, ref: 'Usuario', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Usuarios', required: true })
   empleadoId!: Types.ObjectId;
 
   @Prop({ required: true })
   nombre!: string;
 
-  @Prop({ required: true })
+  /** Los usuarios del sistema ya no tienen CI: queda vacío en facturas nuevas. */
+  @Prop({ default: '' })
   ci!: string;
 
   @Prop({ required: true })

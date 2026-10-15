@@ -24,7 +24,7 @@ import { ListarFacturasQueryDto } from './dto/listar-facturas-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorator/roles.decorator';
-import { UsuarioRol } from '../auth/schemas/empleado.schema';
+import { UsuarioRol } from '../auth/schemas/usuarios.schema';
 import type { RequestWithUser } from '../auth/types/jwt-user.type';
 
 /**

@@ -7,7 +7,7 @@ import { CreateCuadreCajaDto } from './dto/create-cuadre_caja.dto';
 import { UpdateCuadreCajaDto } from './dto/update-cuadre_caja.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { CuadreCaja, DesgloseBilletes } from './schema/cuadre_caja.schema';
-import { Usuario } from '../../auth/schemas/empleado.schema';
+import { Usuarios } from '../../auth/schemas/usuarios.schema';
 import { Venta } from '../venta/schema/venta.schema';
 import { Pago } from '../pago/schema/pago.schema';
 import { Model, Types, UpdateQuery } from 'mongoose';
@@ -16,7 +16,7 @@ import { Model, Types, UpdateQuery } from 'mongoose';
 export class CuadreCajaService {
   constructor(
     @InjectModel(CuadreCaja.name) private cuadreCajaModel: Model<CuadreCaja>,
-    @InjectModel(Usuario.name) private usuarioModel: Model<Usuario>,
+    @InjectModel(Usuarios.name) private usuarioModel: Model<Usuarios>,
     @InjectModel(Venta.name) private ventaModel: Model<Venta>,
     @InjectModel(Pago.name) private pagoModel: Model<Pago>,
   ) {}
@@ -100,7 +100,7 @@ export class CuadreCajaService {
     }
     return this.cuadreCajaModel
       .find(filter)
-      .populate({ path: 'empleado', select: 'nombre_empleado ci_empleado' })
+      .populate({ path: 'empleado', select: 'nombre' })
       .sort({ createdAt: -1 })
       .exec();
   }
@@ -108,7 +108,7 @@ export class CuadreCajaService {
   async findOne(id: string): Promise<CuadreCaja> {
     const cuadre = await this.cuadreCajaModel
       .findById(id)
-      .populate({ path: 'empleado', select: 'nombre_empleado ci_empleado' })
+      .populate({ path: 'empleado', select: 'nombre' })
       .exec();
 
     if (!cuadre) {
