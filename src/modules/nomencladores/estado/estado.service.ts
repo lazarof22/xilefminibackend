@@ -22,18 +22,25 @@ export class EstadoService {
    return doc._id as Types.ObjectId;
  }
  
-   //Crear una estado
+   //Crear un estado
      async create(
        createEstadoDto: CreateEstadoDto,
      ): Promise<Estado> {
+       // Se guarda normalizado y los duplicados se buscan sin distinguir
+       // mayúsculas: "ACTIVO" ya existe si existe "Activo".
+       const nombre = normalizeName(createEstadoDto.estado);
+       if (!nombre) {
+         throw new BadRequestException('El nombre del estado es obligatorio');
+       }
+       const escaped = nombre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
        const existEstado = await this.estadoModel.findOne({
-         estado: createEstadoDto.estado,
+         estado: { $regex: new RegExp('^' + escaped + '$', 'i') },
        });
    
        if (existEstado) {
          throw new BadRequestException('Ya existe el estado');
        }
-       const nuevoEstado = new this.estadoModel(createEstadoDto);
+       const nuevoEstado = new this.estadoModel({ estado: nombre });
        return nuevoEstado.save();
      }
  

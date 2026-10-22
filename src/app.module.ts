@@ -36,7 +36,6 @@ import { PaisModule } from './modules/nomencladores/pais/pais.module';
 import { EmpresaDatosModule } from './modules/configuracion/empresa-datos/empresa-datos.module';
 import { FacturaModule } from './modules/factura/factura.module';
 import { ImportExportModule } from './modules/configuracion/import-export/import-export.module';
-import { NomencladoresModule } from './modules/nomencladore generales/nomencladoresg.module';
 import { TasaModule } from './modules/tasa/tasa.module';
 import { RegistroCompraModule } from './modules/inventario/registro-compra/registro-compra.module';
 import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
@@ -92,7 +91,6 @@ import {ProveedorModule} from './modules/clientes y provedores/proveedor/proveed
     EmpresaDatosModule,
     FacturaModule,
     ImportExportModule,
-    NomencladoresModule,
     TasaModule,
     RegistroCompraModule,
     CiudadModule,

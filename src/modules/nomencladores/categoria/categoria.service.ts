@@ -26,14 +26,21 @@ export class CategoriaService {
       async create(
         createCategoriaDto: CreateCategoriaDto,
       ): Promise<Categoria> {
+        // Se guarda normalizada ("bebidas  frías" -> "Bebidas Frías") y la
+        // búsqueda de duplicados ignora mayúsculas: "BEBIDAS" ya existe.
+        const nombre = normalizeName(createCategoriaDto.nombre_categoria);
+        if (!nombre) {
+          throw new BadRequestException('El nombre de la categoria es obligatorio');
+        }
+        const escaped = nombre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const existCat = await this.categoriaModel.findOne({
-          nombre_categoria: createCategoriaDto.nombre_categoria,
+          nombre_categoria: { $regex: new RegExp('^' + escaped + '$', 'i') },
         });
-    
+
         if (existCat) {
           throw new BadRequestException('Ya existe la categoria');
         }
-        const nuevaCat = new this.categoriaModel(createCategoriaDto);
+        const nuevaCat = new this.categoriaModel({ nombre_categoria: nombre });
         return nuevaCat.save();
       }
   
