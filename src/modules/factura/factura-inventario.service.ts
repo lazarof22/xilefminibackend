@@ -1,9 +1,19 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types } from 'mongoose';
 import { Producto } from '../inventario/producto/schemas/producto.schema';
 import { Kardex, KardexTipo } from '../inventario/kardex/schema/kardex.schema';
 import { Estado } from '../nomencladores/estado/schema/estado.schema';
+import { ReportePlusService } from '../inventario/reporte_plus/reporte_plus.service';
+import {
+  MetodoPagoReporte,
+  OrigenReporte,
+} from '../inventario/reporte_plus/schema/reporte_plus.schema';
 import { mismoId, variantesHex, variantesId } from './factura-ids';
 
 /** The part of an invoice the inventory movements need. */
@@ -11,7 +21,15 @@ export interface FacturaParaInventario {
   id: string;
   /** Written by factura as an ObjectId; a string is tolerated (T7c). */
   almacenId?: Types.ObjectId | string;
-  items: { productoId: string; cantidad: number }[];
+  items: {
+    productoId: string;
+    cantidad: number;
+    /** Datos opcionales que usa el Reporte Plus (una factura completa los trae). */
+    precio?: number;
+    recargo?: number;
+    total?: number;
+  }[];
+  impuesto?: { importe?: number };
 }
 
 /** Total quantity of one product across every item of the invoice. */
@@ -115,6 +133,8 @@ export class FacturaInventarioService {
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
     @InjectModel(Kardex.name) private kardexModel: Model<Kardex>,
     @InjectModel(Estado.name) private estadoModel: Model<Estado>,
+    // Opcional: sin el módulo Reporte Plus la factura funciona igual.
+    @Optional() private readonly reportePlus?: ReportePlusService,
   ) {}
 
   /**
@@ -167,6 +187,63 @@ export class FacturaInventarioService {
     }
 
     await this.registrarKardex(factura, aplicados, KardexTipo.VENTA);
+    await this.registrarReportePlus(factura, aplicados);
+  }
+
+  /**
+   * Cada factura confirmada también es una venta del turno: una fila por
+   * producto con método "factura". `enKardex: true` porque el movimiento ya
+   * se escribió arriba (el cierre de turno no lo duplica). Nunca rompe la
+   * confirmación: el stock ya cambió.
+   */
+  private async registrarReportePlus(
+    factura: FacturaParaInventario,
+    aplicados: MovimientoAplicado[],
+  ): Promise<void> {
+    if (!this.reportePlus || aplicados.length === 0) return;
+    try {
+      const ids = aplicados.map((a) => new Types.ObjectId(a.productoId));
+      const productos = await this.productoModel
+        .find({ _id: { $in: ids } })
+        .select('codigo_producto nombre_producto')
+        .lean()
+        .exec();
+      const porId = new Map(productos.map((p) => [String(p._id), p]));
+      const netoTotal = factura.items.reduce((s, i) => s + (i.total ?? 0), 0);
+      const importe = factura.impuesto?.importe ?? 0;
+
+      const lineas = aplicados.map((a) => {
+        const propios = factura.items.filter(
+          (i) => productoIdCanonico(i.productoId) === a.productoId,
+        );
+        const neto = propios.reduce((s, i) => s + (i.total ?? 0), 0);
+        const bruto = propios.reduce(
+          (s, i) => s + (i.precio ?? 0) * i.cantidad + (i.recargo ?? 0),
+          0,
+        );
+        const impuesto = netoTotal > 0 ? (importe * neto) / netoTotal : 0;
+        const producto = porId.get(a.productoId);
+        return {
+          productoId: a.productoId,
+          codigo: producto?.codigo_producto ?? '',
+          nombre: producto?.nombre_producto ?? '',
+          cantidadVendida: a.cantidad,
+          stockFinal: a.stockResultante,
+          metodoPago: MetodoPagoReporte.FACTURA,
+          total: neto + impuesto,
+          descuento: Math.max(0, bruto - neto),
+          impuesto,
+          origen: OrigenReporte.FACTURA,
+          referencia: factura.id,
+          enKardex: true,
+        };
+      });
+      await this.reportePlus.registrarLineas(lineas);
+    } catch (error) {
+      this.logger.error(
+        `Factura ${factura.id} confirmada pero no se pudo registrar en Reporte Plus: ${String(error)}`,
+      );
+    }
   }
 
   /**
@@ -208,6 +285,16 @@ export class FacturaInventarioService {
     }
 
     await this.registrarKardex(factura, aplicados, KardexTipo.DEVOLUCION);
+    // Si el turno sigue abierto, la factura cancelada ya no cuenta como venta.
+    if (this.reportePlus) {
+      try {
+        await this.reportePlus.eliminarPorReferencia(factura.id);
+      } catch (error) {
+        this.logger.error(
+          `No se pudo quitar la factura ${factura.id} del Reporte Plus: ${String(error)}`,
+        );
+      }
+    }
   }
 
   /**

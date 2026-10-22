@@ -30,6 +30,7 @@ import {
   Estado,
   EstadoSchema,
 } from '../nomencladores/estado/schema/estado.schema';
+import { ReportePlusModule } from '../inventario/reporte_plus/reporte_plus.module';
 import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos.module';
 
 @Module({
@@ -46,6 +47,7 @@ import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos
       { name: Estado.name, schema: EstadoSchema },
     ]),
     EmpresaDatosModule,
+    ReportePlusModule,
   ],
   controllers: [FacturaController],
   providers: [FacturaService, FacturaInventarioService],
