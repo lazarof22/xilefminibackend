@@ -41,6 +41,7 @@ import { RegistroCompraModule } from './modules/inventario/registro-compra/regis
 import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
 import { IpvModule } from './modules/inventario/ipv/ipv.module'
 import {ProveedorModule} from './modules/clientes y provedores/proveedor/proveedor.module'
+import { CausaDisminucionModule } from './modules/nomencladores/causa-disminucion/causa-disminucion.module';
 
 
 @Module({
@@ -95,7 +96,8 @@ import {ProveedorModule} from './modules/clientes y provedores/proveedor/proveed
     RegistroCompraModule,
     CiudadModule,
     IpvModule,
-    ProveedorModule
+    ProveedorModule,
+    CausaDisminucionModule
   ],
   controllers: [AppController],
   providers: [AppService],
