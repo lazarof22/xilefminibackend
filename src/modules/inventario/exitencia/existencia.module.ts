@@ -8,6 +8,23 @@ import {
 
 import { ExistenciaController } from './existencia.controller';
 import { ExistenciaService } from './existencia.service';
+import { ConciliacionController } from './conciliacion.controller';
+import { ConciliacionService } from './conciliacion.service';
+
+import {
+    ConfiguracionInventario,
+    ConfiguracionInventarioSchema,
+} from './schema/configuracion-inventario.schema';
+
+import {
+    ConciliacionExistencia,
+    ConciliacionExistenciaSchema,
+} from './schema/conciliacion-existencia.schema';
+
+import {
+    Kardex,
+    KardexSchema,
+} from '../kardex/schema/kardex.schema';
 
 import {
     Producto,
@@ -25,9 +42,9 @@ import {
 } from '../contenedor/schema/contenedor.schema';
 
 @Module({
-    controllers: [ExistenciaController],
+    controllers: [ExistenciaController, ConciliacionController],
 
-    providers: [ExistenciaService],
+    providers: [ExistenciaService, ConciliacionService],
 
     imports: [
         MongooseModule.forFeature([
@@ -46,6 +63,18 @@ import {
             {
                 name: Contenedor.name,
                 schema: ContenedorSchema,
+            },
+            {
+                name: ConfiguracionInventario.name,
+                schema: ConfiguracionInventarioSchema,
+            },
+            {
+                name: ConciliacionExistencia.name,
+                schema: ConciliacionExistenciaSchema,
+            },
+            {
+                name: Kardex.name,
+                schema: KardexSchema,
             },
         ]),
     ],

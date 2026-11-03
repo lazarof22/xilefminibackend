@@ -14,6 +14,7 @@ import {
 } from 'src/modules/inventario/kardex/schema/kardex.schema';
 import { Pago, PagoSchema } from '../pago/schema/pago.schema';
 import { ReportePlusModule } from '../reporte_plus/reporte_plus.module';
+import { ExistenciaModule } from '../exitencia/existencia.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { ReportePlusModule } from '../reporte_plus/reporte_plus.module';
       { name: Pago.name, schema: PagoSchema },
     ]),
     ReportePlusModule,
+    ExistenciaModule,
   ],
   controllers: [VentaController],
   providers: [VentaService],

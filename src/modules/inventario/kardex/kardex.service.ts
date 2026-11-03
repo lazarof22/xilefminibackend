@@ -6,6 +6,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Producto } from '../producto/schemas/producto.schema';
 import { NomencladorHelper } from '../../configuracion/nomenclador-helper/nomenclador-helper.service';
+import { ExistenciaService } from '../exitencia/existencia.service';
+import { ResultadoMovimiento } from '../exitencia/existencia.types';
 
 export interface KardexResultadoMensaje {
   message: string;
@@ -17,6 +19,7 @@ export class KardexService {
     @InjectModel(Kardex.name) private kardexModel: Model<Kardex>,
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
     private readonly nomencladorHelper: NomencladorHelper,
+    private readonly existenciaService: ExistenciaService,
   ) {}
 
   /**
@@ -70,6 +73,11 @@ export class KardexService {
       throw new BadRequestException('La cantidad debe ser mayor a 0');
     }
 
+    // Modo unificado (Fase 1): el ajuste mueve `Existencia`, no solo el total.
+    if (await this.existenciaService.estaUnificado()) {
+      return this.crearUnificado(createKardexDto);
+    }
+
     if (tipo === KardexTipo.SALIDA && producto.stock_inicial < cantidad) {
       throw new BadRequestException('Stock insuficiente');
     }
@@ -96,6 +104,92 @@ export class KardexService {
   }
 
 
+
+  /**
+   * Ajuste manual en modo unificado: una entrada suma a una ubicación y una
+   * salida resta de las ubicaciones del producto (o de la indicada). Solo
+   * se admiten ENTRADA y SALIDA: los demás tipos los escribe cada módulo
+   * junto con su propio movimiento. Si el kardex no se puede guardar, el
+   * movimiento de stock se deshace (un ajuste sin su kardex sería silencioso).
+   */
+  private async crearUnificado(
+    createKardexDto: CreateKardexDto,
+  ): Promise<Kardex> {
+    const { productoId, tipo, cantidad, motivo, almacenId, contenedorId } =
+      createKardexDto;
+
+    if (tipo !== KardexTipo.ENTRADA && tipo !== KardexTipo.SALIDA) {
+      throw new BadRequestException(
+        'En el modo unificado solo se registran manualmente entradas y salidas (ajustes de inventario)',
+      );
+    }
+
+    const movimiento: ResultadoMovimiento =
+      tipo === KardexTipo.ENTRADA
+        ? await this.existenciaService.reponerProducto({
+            productoId,
+            cantidad,
+            almacenId,
+            contenedorId,
+          })
+        : await this.existenciaService.descontarProducto({
+            productoId,
+            cantidad,
+            almacenId,
+            contenedorId,
+          });
+
+    let kardexCreado: Kardex;
+
+    try {
+      kardexCreado = await this.kardexModel.create({
+        productoId: new Types.ObjectId(productoId),
+        tipo,
+        cantidad,
+        stock: movimiento.stockTotal,
+        motivo,
+      });
+    } catch (error) {
+      await this.deshacerMovimiento(tipo, productoId, movimiento);
+      throw error;
+    }
+
+    await this.inactivarProductoSiStockCero(
+      new Types.ObjectId(productoId),
+      movimiento.stockTotal,
+    );
+
+    return kardexCreado;
+  }
+
+  /** Revierte el movimiento de stock de un ajuste cuyo kardex no se guardó. */
+  private async deshacerMovimiento(
+    tipo: KardexTipo,
+    productoId: string,
+    movimiento: ResultadoMovimiento,
+  ): Promise<void> {
+    try {
+      if (tipo === KardexTipo.SALIDA) {
+        await this.existenciaService.reponerProducto({
+          productoId,
+          ubicaciones: movimiento.ubicaciones,
+        });
+        return;
+      }
+      for (const u of movimiento.ubicaciones) {
+        await this.existenciaService.descontarProducto({
+          productoId,
+          cantidad: u.cantidad,
+          almacenId: u.almacen,
+          contenedorId: u.contenedor,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `Kardex: no se pudo deshacer el ajuste de ${productoId} tras fallar su registro, corregir a mano: ${(error as Error).message}`,
+      );
+    }
+  }
 
   //Buscar todos los kardex
   async findAll(): Promise<Kardex[]> {
@@ -135,6 +229,14 @@ export class KardexService {
   async update(id: string, updateKardexDto: UpdateKardexDto): Promise<Kardex | KardexResultadoMensaje> {
     const { cantidad: nuevaCantidad } = updateKardexDto;
 
+    // Un movimiento ya registrado no se edita en el modo unificado: el saldo
+    // está repartido por ubicación y el kardex es la evidencia. Se corrige
+    // con un nuevo ajuste.
+    if (await this.existenciaService.estaUnificado()) {
+      throw new BadRequestException(
+        'En el modo unificado los movimientos de kardex no se modifican; registre un ajuste de inventario',
+      );
+    }
 
     const kardexExistente = await this.kardexModel.findById(id);
     if (!kardexExistente) {

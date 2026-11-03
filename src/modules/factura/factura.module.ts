@@ -32,6 +32,7 @@ import {
 } from '../nomencladores/estado/schema/estado.schema';
 import { ReportePlusModule } from '../inventario/reporte_plus/reporte_plus.module';
 import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos.module';
+import { ExistenciaModule } from '../inventario/exitencia/existencia.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos
     ]),
     EmpresaDatosModule,
     ReportePlusModule,
+    ExistenciaModule,
   ],
   controllers: [FacturaController],
   providers: [FacturaService, FacturaInventarioService],

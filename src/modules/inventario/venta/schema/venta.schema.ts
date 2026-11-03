@@ -6,6 +6,19 @@ export type VentaDocument = HydratedDocument<Venta>;
 
 
 
+/** De qué ubicación salió parte de una línea (solo en modo unificado). */
+@Schema({ _id: false })
+class UbicacionVenta {
+    @Prop({ type: Types.ObjectId, ref: 'Almacen', required: true })
+    almacen!: Types.ObjectId;
+
+    @Prop({ type: Types.ObjectId, ref: 'Contenedor', required: true })
+    contenedor!: Types.ObjectId;
+
+    @Prop({ required: true })
+    cantidad!: number;
+}
+
 @Schema()
 class ItemVenta {
     @Prop({ type: Types.ObjectId, ref: 'Producto', required: true })
@@ -16,6 +29,10 @@ class ItemVenta {
 
     @Prop({ default: 0 })
     descuentoMonto!: number;
+
+    /** Ubicaciones de las que se descontó la línea; ausente en ventas anteriores a la Fase 1. */
+    @Prop({ type: [UbicacionVenta], default: undefined })
+    ubicaciones?: UbicacionVenta[];
 
 }
 

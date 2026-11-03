@@ -35,5 +35,21 @@ export class ExistenciaController {
             productoId,
         );
     }
+
+    @ApiOperation({
+        summary:
+            'Indica si el inventario ya usa las existencias por ubicación como saldo único',
+    })
+    @ApiResponse({
+        status: 200,
+        description: '{ unificado, unificadoEn }',
+    })
+    @Get('estado')
+    async obtenerEstado() {
+        const { unificado, unificadoEn } =
+            await this.existenciaService.obtenerEstadoUnificacion();
+
+        return { unificado, unificadoEn };
+    }
 }
 

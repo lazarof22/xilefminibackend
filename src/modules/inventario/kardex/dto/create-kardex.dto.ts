@@ -29,6 +29,19 @@ export class CreateKardexDto {
     @IsString()
     motivo!: string;
 
+    /**
+     * Modo unificado: ubicación del ajuste. Opcional; si se omite, la entrada
+     * va a la ubicación por defecto del producto y la salida se reparte
+     * entre sus ubicaciones (primero la ubicación por defecto).
+     */
+    @IsOptional()
+    @IsMongoId()
+    almacenId?: string;
+
+    @IsOptional()
+    @IsMongoId()
+    contenedorId?: string;
+
 
 
 }

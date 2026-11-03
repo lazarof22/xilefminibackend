@@ -7,6 +7,7 @@ import { Cliente } from '../../clientes y provedores/cliente/schemas/cliente.sch
 import { Producto } from '../producto/schemas/producto.schema';
 import { Kardex } from '../kardex/schema/kardex.schema';
 import { ReportePlusService } from '../reporte_plus/reporte_plus.service';
+import { ExistenciaService } from '../exitencia/existencia.service';
 
 const lean = (v: unknown) => ({
   lean: () => ({ exec: () => Promise.resolve(v) }),
@@ -77,6 +78,11 @@ describe('VentaService -> Reporte Plus', () => {
           useValue: { findById: jest.fn(() => lean(pago)) },
         },
         { provide: ReportePlusService, useValue: { registrarLineas } },
+        // Fase 1: con el modo unificado apagado la venta descuenta Producto.stock_inicial.
+        {
+          provide: ExistenciaService,
+          useValue: { estaUnificado: jest.fn().mockResolvedValue(false) },
+        },
       ],
     }).compile();
     service = mod.get(VentaService);

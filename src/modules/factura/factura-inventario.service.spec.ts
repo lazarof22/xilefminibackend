@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import {
   FacturaInventarioService,
@@ -16,6 +16,8 @@ import {
   Estado,
   EstadoDocument,
 } from '../nomencladores/estado/schema/estado.schema';
+import { ExistenciaService } from '../inventario/exitencia/existencia.service';
+import { StockInsuficienteException } from '../inventario/exitencia/stock-insuficiente.exception';
 
 const ALMACEN_ID = '507f1f77bcf86cd799439011';
 const PRODUCTO_A = '507f1f77bcf86cd7994390aa';
@@ -59,6 +61,12 @@ type ProductoModelMock = {
 type KardexModelMock = {
   insertMany: jest.Mock<Promise<unknown[]>, unknown[]>;
   create: jest.Mock;
+};
+
+type ExistenciaServiceMock = {
+  estaUnificado: jest.Mock<Promise<boolean>, []>;
+  descontarProducto: jest.Mock;
+  reponerProducto: jest.Mock;
 };
 
 type EstadoModelMock = {
@@ -112,6 +120,7 @@ describe('FacturaInventarioService', () => {
   let productoModelMock: ProductoModelMock;
   let kardexModelMock: KardexModelMock;
   let estadoModelMock: EstadoModelMock;
+  let existenciaMock: ExistenciaServiceMock;
   let errorSpy: jest.SpyInstance;
   let warnSpy: jest.SpyInstance;
 
@@ -139,12 +148,21 @@ describe('FacturaInventarioService', () => {
       create: jest.fn(),
     };
 
+    // Por defecto el modo unificado (Fase 1) está apagado: todo el resto de
+    // este archivo prueba el comportamiento original sobre Producto.stock_inicial.
+    existenciaMock = {
+      estaUnificado: jest.fn<Promise<boolean>, []>().mockResolvedValue(false),
+      descontarProducto: jest.fn(),
+      reponerProducto: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FacturaInventarioService,
         { provide: getModelToken(Producto.name), useValue: productoModelMock },
         { provide: getModelToken(Kardex.name), useValue: kardexModelMock },
         { provide: getModelToken(Estado.name), useValue: estadoModelMock },
+        { provide: ExistenciaService, useValue: existenciaMock },
       ],
     }).compile();
 
@@ -543,9 +561,7 @@ describe('FacturaInventarioService', () => {
       decrementosDevuelven(producto(PRODUCTO_A), producto(PRODUCTO_B));
       kardexModelMock.insertMany.mockRejectedValue(new Error('red caida'));
 
-      await expect(service.rebajarStock(facturaBase())).resolves.toBe(
-        undefined,
-      );
+      await expect(service.rebajarStock(facturaBase())).resolves.toEqual([]);
 
       expect(productoModelMock.updateOne).not.toHaveBeenCalled();
       const mensaje = primerError();
@@ -578,9 +594,7 @@ describe('FacturaInventarioService', () => {
         }),
       );
 
-      await expect(service.rebajarStock(facturaBase())).resolves.toBe(
-        undefined,
-      );
+      await expect(service.rebajarStock(facturaBase())).resolves.toEqual([]);
 
       expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
         expect.any(Array),
@@ -713,6 +727,215 @@ describe('FacturaInventarioService', () => {
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining('Kardex devolucion de la factura FAC-000012'),
       );
+    });
+  });
+
+  describe('modo unificado (Fase 1: Existencia es la fuente del saldo)', () => {
+    const ALM = new Types.ObjectId(ALMACEN_ID);
+    const CONT_1 = new Types.ObjectId('507f1f77bcf86cd799439021');
+    const CONT_2 = new Types.ObjectId('507f1f77bcf86cd799439022');
+
+    beforeEach(() => {
+      existenciaMock.estaUnificado.mockResolvedValue(true);
+      // El producto existe y no está inactivo (se lee para validarlo).
+      productoModelMock.findById.mockImplementation((id: unknown) =>
+        crearQueryMock(
+          producto(String(id), { nombre_producto: `Prod ${String(id).slice(-2)}` }),
+        ),
+      );
+    });
+
+    it('descuenta cada producto agregado de Existencia en el almacén de la factura y devuelve las ubicaciones', async () => {
+      existenciaMock.descontarProducto
+        .mockResolvedValueOnce({
+          ubicaciones: [{ almacen: ALM, contenedor: CONT_1, cantidad: 2 }],
+          stockTotal: 8,
+        })
+        .mockResolvedValueOnce({
+          ubicaciones: [
+            { almacen: ALM, contenedor: CONT_1, cantidad: 1 },
+            { almacen: ALM, contenedor: CONT_2, cantidad: 2 },
+          ],
+          stockTotal: 0,
+        });
+
+      const ubicaciones = await service.rebajarStock(facturaBase());
+
+      expect(existenciaMock.descontarProducto.mock.calls).toEqual([
+        [{ productoId: PRODUCTO_A, cantidad: 2, almacenId: ALMACEN_ID }],
+        [{ productoId: PRODUCTO_B, cantidad: 3, almacenId: ALMACEN_ID }],
+      ]);
+      // No toca Producto.stock_inicial: de eso se encarga ExistenciaService.
+      expect(productoModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(ubicaciones).toEqual([
+        { productoId: new Types.ObjectId(PRODUCTO_A), almacen: ALM, contenedor: CONT_1, cantidad: 2 },
+        { productoId: new Types.ObjectId(PRODUCTO_B), almacen: ALM, contenedor: CONT_1, cantidad: 1 },
+        { productoId: new Types.ObjectId(PRODUCTO_B), almacen: ALM, contenedor: CONT_2, cantidad: 2 },
+      ]);
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({ tipo: KardexTipo.VENTA, cantidad: 2, stock: 8 }),
+          expect.objectContaining({ tipo: KardexTipo.VENTA, cantidad: 3, stock: 0 }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('sin almacén en la factura no restringe la ubicación', async () => {
+      existenciaMock.descontarProducto.mockResolvedValue({
+        ubicaciones: [{ almacen: ALM, contenedor: CONT_1, cantidad: 1 }],
+        stockTotal: 1,
+      });
+
+      await service.rebajarStock(facturaBase({ almacenId: undefined }));
+
+      expect(existenciaMock.descontarProducto).toHaveBeenCalledWith({
+        productoId: PRODUCTO_A,
+        cantidad: 2,
+        almacenId: undefined,
+      });
+    });
+
+    it('si un producto no tiene stock devuelve lo ya descontado, no escribe Kardex y lanza 409 con disponible y solicitado', async () => {
+      const aplicadas = [{ almacen: ALM, contenedor: CONT_1, cantidad: 2 }];
+      existenciaMock.descontarProducto
+        .mockResolvedValueOnce({ ubicaciones: aplicadas, stockTotal: 8 })
+        .mockRejectedValueOnce(
+          new StockInsuficienteException('"Tornillo"', 1, 3),
+        );
+      existenciaMock.reponerProducto.mockResolvedValue({ ubicaciones: [], stockTotal: 10 });
+
+      const error = await service.rebajarStock(facturaBase()).catch((e) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(String(error.message)).toContain('FAC-000012');
+      expect(String(error.message)).toContain('disponible 1, solicitado 3');
+      expect(existenciaMock.reponerProducto).toHaveBeenCalledTimes(1);
+      expect(existenciaMock.reponerProducto).toHaveBeenCalledWith({
+        productoId: PRODUCTO_A,
+        ubicaciones: aplicadas,
+      });
+      expect(kardexModelMock.insertMany).not.toHaveBeenCalled();
+    });
+
+    it('rechaza un producto inactivo (409) sin descontar nada de él', async () => {
+      estadoModelMock.findOne.mockReturnValue(
+        crearQueryMock<EstadoDocument | null>({
+          _id: new Types.ObjectId(ESTADO_INACTIVO_ID),
+        } as unknown as EstadoDocument),
+      );
+      productoModelMock.findById.mockReturnValue(
+        crearQueryMock(
+          producto(PRODUCTO_A, { estado: ESTADO_INACTIVO_ID, nombre_producto: 'Viejo' }),
+        ),
+      );
+
+      await expect(service.rebajarStock(facturaBase())).rejects.toThrow(
+        /está inactivo/,
+      );
+      expect(existenciaMock.descontarProducto).not.toHaveBeenCalled();
+    });
+
+    it('un error inesperado al descontar devuelve lo aplicado y relanza el error original', async () => {
+      const aplicadas = [{ almacen: ALM, contenedor: CONT_1, cantidad: 2 }];
+      existenciaMock.descontarProducto
+        .mockResolvedValueOnce({ ubicaciones: aplicadas, stockTotal: 8 })
+        .mockRejectedValueOnce(new Error('timeout'));
+      existenciaMock.reponerProducto.mockResolvedValue({ ubicaciones: [], stockTotal: 10 });
+
+      await expect(service.rebajarStock(facturaBase())).rejects.toThrow('timeout');
+      expect(existenciaMock.reponerProducto).toHaveBeenCalledWith({
+        productoId: PRODUCTO_A,
+        ubicaciones: aplicadas,
+      });
+    });
+
+    it('cancelar devuelve a las ubicaciones exactas guardadas en la factura y escribe el Kardex devolucion', async () => {
+      existenciaMock.reponerProducto
+        .mockResolvedValueOnce({ ubicaciones: [], stockTotal: 10 })
+        .mockResolvedValueOnce({ ubicaciones: [], stockTotal: 3 });
+
+      await service.restaurarStock(
+        facturaBase({
+          inventarioUbicaciones: [
+            { productoId: PRODUCTO_A, almacen: ALM, contenedor: CONT_1, cantidad: 2 },
+            { productoId: PRODUCTO_B, almacen: ALM, contenedor: CONT_1, cantidad: 1 },
+            { productoId: PRODUCTO_B, almacen: ALM, contenedor: CONT_2, cantidad: 2 },
+          ],
+        }),
+      );
+
+      expect(existenciaMock.reponerProducto.mock.calls).toEqual([
+        [
+          {
+            productoId: PRODUCTO_A,
+            ubicaciones: [{ almacen: ALM, contenedor: CONT_1, cantidad: 2 }],
+          },
+        ],
+        [
+          {
+            productoId: PRODUCTO_B,
+            ubicaciones: [
+              { almacen: ALM, contenedor: CONT_1, cantidad: 1 },
+              { almacen: ALM, contenedor: CONT_2, cantidad: 2 },
+            ],
+          },
+        ],
+      ]);
+      expect(productoModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({ tipo: KardexTipo.DEVOLUCION, cantidad: 2, stock: 10 }),
+          expect.objectContaining({ tipo: KardexTipo.DEVOLUCION, cantidad: 3, stock: 3 }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('cancelar una factura confirmada antes de la Fase 1 (sin ubicaciones) repone por la política por defecto en su almacén', async () => {
+      existenciaMock.reponerProducto.mockResolvedValue({ ubicaciones: [], stockTotal: 5 });
+
+      await service.restaurarStock(facturaBase());
+
+      expect(existenciaMock.reponerProducto).toHaveBeenCalledWith({
+        productoId: PRODUCTO_A,
+        cantidad: 2,
+        almacenId: ALMACEN_ID,
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('no guardó las ubicaciones de origen'),
+      );
+    });
+
+    it('cancelar omite un producto que ya no existe y sigue con el resto', async () => {
+      existenciaMock.reponerProducto
+        .mockRejectedValueOnce(new NotFoundException('El producto no existe'))
+        .mockResolvedValueOnce({ ubicaciones: [], stockTotal: 3 });
+
+      await service.restaurarStock(facturaBase());
+
+      expect(existenciaMock.reponerProducto).toHaveBeenCalledTimes(2);
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [expect.objectContaining({ cantidad: 3 })],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('una factura con ubicaciones guardadas se revierte por Existencia aunque el modo se haya apagado', async () => {
+      existenciaMock.estaUnificado.mockResolvedValue(false);
+      existenciaMock.reponerProducto.mockResolvedValue({ ubicaciones: [], stockTotal: 1 });
+
+      await service.restaurarStock(
+        facturaBase({
+          items: [{ productoId: PRODUCTO_A, cantidad: 2 }],
+          inventarioUbicaciones: [
+            { productoId: PRODUCTO_A, almacen: ALM, contenedor: CONT_1, cantidad: 2 },
+          ],
+        }),
+      );
+
+      expect(existenciaMock.reponerProducto).toHaveBeenCalledTimes(1);
+      expect(productoModelMock.findOneAndUpdate).not.toHaveBeenCalled();
     });
   });
 });

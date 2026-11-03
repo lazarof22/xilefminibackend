@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   Logger,
+  NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -9,12 +10,26 @@ import { Model, QueryFilter, Types } from 'mongoose';
 import { Producto } from '../inventario/producto/schemas/producto.schema';
 import { Kardex, KardexTipo } from '../inventario/kardex/schema/kardex.schema';
 import { Estado } from '../nomencladores/estado/schema/estado.schema';
+import { ExistenciaService } from '../inventario/exitencia/existencia.service';
+import { StockInsuficienteException } from '../inventario/exitencia/stock-insuficiente.exception';
 import { ReportePlusService } from '../inventario/reporte_plus/reporte_plus.service';
 import {
   MetodoPagoReporte,
   OrigenReporte,
 } from '../inventario/reporte_plus/schema/reporte_plus.schema';
 import { mismoId, variantesHex, variantesId } from './factura-ids';
+
+/**
+ * De qué ubicación salió (y a cuál volvería) parte de un producto de la
+ * factura. Solo existe para facturas confirmadas con el modo unificado
+ * activo (Fase 1): permite que la cancelación devuelva el stock exacto.
+ */
+export interface UbicacionInventarioFactura {
+  productoId: Types.ObjectId | string;
+  almacen: Types.ObjectId | string;
+  contenedor: Types.ObjectId | string;
+  cantidad: number;
+}
 
 /** The part of an invoice the inventory movements need. */
 export interface FacturaParaInventario {
@@ -30,6 +45,8 @@ export interface FacturaParaInventario {
     total?: number;
   }[];
   impuesto?: { importe?: number };
+  /** Ubicaciones de las que `rebajarStock` descontó (modo unificado). */
+  inventarioUbicaciones?: UbicacionInventarioFactura[];
 }
 
 /** Total quantity of one product across every item of the invoice. */
@@ -41,6 +58,8 @@ export interface LineaInventario {
 /** Stock applied to a product (the resulting stock feeds the Kardex entry). */
 interface MovimientoAplicado extends LineaInventario {
   stockResultante: number;
+  /** Modo unificado: de qué ubicaciones salió. */
+  ubicaciones?: { almacen: Types.ObjectId; contenedor: Types.ObjectId; cantidad: number }[];
 }
 
 /**
@@ -124,6 +143,11 @@ function detalleErroresKardex(error: unknown): string {
  * a failure is undone by compensating writes. Stock (`Producto.stock_inicial`,
  * the same live field `VentaService` uses) is the source of truth; a Kardex
  * write that fails after stock changed is logged, never rolled back.
+ *
+ * Fase 1 (existencias unificadas): una vez activado el modo unificado
+ * (`ExistenciaService.estaUnificado`), el saldo sale de `Existencia`, por
+ * ubicación, y `Producto.stock_inicial` solo se mantiene sincronizado. Antes
+ * de activarlo, todo funciona exactamente como se describe arriba.
  */
 @Injectable()
 export class FacturaInventarioService {
@@ -133,6 +157,7 @@ export class FacturaInventarioService {
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
     @InjectModel(Kardex.name) private kardexModel: Model<Kardex>,
     @InjectModel(Estado.name) private estadoModel: Model<Estado>,
+    private readonly existenciaService: ExistenciaService,
     // Opcional: sin el módulo Reporte Plus la factura funciona igual.
     @Optional() private readonly reportePlus?: ReportePlusService,
   ) {}
@@ -149,7 +174,20 @@ export class FacturaInventarioService {
    * reconciliation, the decrements known applied are compensated, and the
    * original error is rethrown.
    */
-  async rebajarStock(factura: FacturaParaInventario): Promise<void> {
+  async rebajarStock(
+    factura: FacturaParaInventario,
+  ): Promise<UbicacionInventarioFactura[]> {
+    if (await this.existenciaService.estaUnificado()) {
+      return this.rebajarStockUnificado(factura);
+    }
+
+    await this.rebajarStockLegacy(factura);
+    return [];
+  }
+
+  private async rebajarStockLegacy(
+    factura: FacturaParaInventario,
+  ): Promise<void> {
     const estadoInactivoId = await this.obtenerEstadoInactivoId();
     const aplicados: MovimientoAplicado[] = [];
 
@@ -253,6 +291,24 @@ export class FacturaInventarioService {
    * the products must still get their stock back.
    */
   async restaurarStock(factura: FacturaParaInventario): Promise<void> {
+    // Una factura confirmada en modo unificado trae sus ubicaciones y se
+    // devuelve a ellas. Sin ubicaciones (confirmada antes de la Fase 1) el
+    // stock vuelve por la política por defecto si el modo unificado ya está
+    // activo: lo contado en la conciliación no incluía esa mercancía.
+    if (
+      (factura.inventarioUbicaciones?.length ?? 0) > 0 ||
+      (await this.existenciaService.estaUnificado())
+    ) {
+      await this.restaurarStockUnificado(factura);
+      return;
+    }
+
+    await this.restaurarStockLegacy(factura);
+  }
+
+  private async restaurarStockLegacy(
+    factura: FacturaParaInventario,
+  ): Promise<void> {
     const aplicados: MovimientoAplicado[] = [];
 
     for (const linea of agregarCantidadesPorProducto(factura.items)) {
@@ -284,6 +340,14 @@ export class FacturaInventarioService {
       }
     }
 
+    await this.finalizarRestauracion(factura, aplicados);
+  }
+
+  /** Kardex de la devolución y baja de la factura en el Reporte Plus. */
+  private async finalizarRestauracion(
+    factura: FacturaParaInventario,
+    aplicados: MovimientoAplicado[],
+  ): Promise<void> {
     await this.registrarKardex(factura, aplicados, KardexTipo.DEVOLUCION);
     // Si el turno sigue abierto, la factura cancelada ya no cuenta como venta.
     if (this.reportePlus) {
@@ -295,6 +359,164 @@ export class FacturaInventarioService {
         );
       }
     }
+  }
+
+  // ─── Modo unificado (Fase 1) ─────────────────────────────────────
+
+  /**
+   * Descuenta de `Existencia`, en el almacén de la factura. Misma garantía
+   * que el modo anterior: si un producto no se puede descontar (no existe,
+   * inactivo, sin stock en ese almacén) se devuelve lo ya descontado y se
+   * lanza 409 nombrando el producto. Devuelve de qué ubicaciones salió cada
+   * producto para guardarlo en la factura (cancelación exacta).
+   */
+  private async rebajarStockUnificado(
+    factura: FacturaParaInventario,
+  ): Promise<UbicacionInventarioFactura[]> {
+    const estadoInactivoId = await this.obtenerEstadoInactivoId();
+    const almacenId = factura.almacenId ? String(factura.almacenId) : undefined;
+    const aplicados: MovimientoAplicado[] = [];
+
+    const rechazar = async (motivo: string): Promise<never> => {
+      await this.compensarRebajasUnificado(factura, aplicados);
+      throw new ConflictException(
+        `No se puede confirmar la factura ${factura.id}: ${motivo}`,
+      );
+    };
+
+    for (const linea of agregarCantidadesPorProducto(factura.items)) {
+      const producto = Types.ObjectId.isValid(linea.productoId)
+        ? await this.productoModel.findById(linea.productoId).exec()
+        : null;
+
+      if (!producto) {
+        return rechazar(`el producto ${linea.productoId} no existe`);
+      }
+
+      const nombre = `"${producto.nombre_producto}" (${linea.productoId})`;
+
+      if (estadoInactivoId && mismoId(producto.estado, estadoInactivoId)) {
+        return rechazar(`el producto ${nombre} está inactivo`);
+      }
+
+      try {
+        const movimiento = await this.existenciaService.descontarProducto({
+          productoId: linea.productoId,
+          cantidad: linea.cantidad,
+          almacenId,
+        });
+        aplicados.push({
+          ...linea,
+          stockResultante: movimiento.stockTotal,
+          ubicaciones: movimiento.ubicaciones,
+        });
+      } catch (error) {
+        if (error instanceof StockInsuficienteException) {
+          return rechazar(
+            `stock insuficiente para el producto ${nombre}${almacenId ? ' en el almacén de la factura' : ''}: disponible ${error.disponible}, solicitado ${error.solicitado}`,
+          );
+        }
+        await this.compensarRebajasUnificado(factura, aplicados);
+        throw error;
+      }
+    }
+
+    await this.registrarKardex(factura, aplicados, KardexTipo.VENTA);
+    await this.registrarReportePlus(factura, aplicados);
+
+    return aplicados.flatMap((aplicado) =>
+      (aplicado.ubicaciones ?? []).map((ubicacion) => ({
+        productoId: new Types.ObjectId(aplicado.productoId),
+        almacen: ubicacion.almacen,
+        contenedor: ubicacion.contenedor,
+        cantidad: ubicacion.cantidad,
+      })),
+    );
+  }
+
+  /**
+   * Devuelve a `Existencia` lo que se descontó. Un fallo se registra con lo
+   * necesario para corregirlo a mano y no impide devolver el resto.
+   */
+  private async compensarRebajasUnificado(
+    factura: FacturaParaInventario,
+    aplicados: MovimientoAplicado[],
+  ): Promise<void> {
+    for (const aplicado of aplicados) {
+      try {
+        await this.existenciaService.reponerProducto({
+          productoId: aplicado.productoId,
+          ubicaciones: aplicado.ubicaciones,
+        });
+      } catch (error) {
+        this.logger.error(
+          `Compensación de stock fallida, corregir a mano (${this.detalle(factura, aplicado)}): ${String(error)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Devuelve el stock a `Existencia`: a las ubicaciones guardadas en la
+   * factura o, si no las tiene, por la política por defecto en el almacén
+   * de la factura. Un producto que ya no existe se omite y un fallo se
+   * registra: la factura ya está `cancelada` (terminal) y el resto de los
+   * productos debe recuperar su stock.
+   */
+  private async restaurarStockUnificado(
+    factura: FacturaParaInventario,
+  ): Promise<void> {
+    const aplicados: MovimientoAplicado[] = [];
+    const almacenId = factura.almacenId ? String(factura.almacenId) : undefined;
+
+    for (const linea of agregarCantidadesPorProducto(factura.items)) {
+      const detalle = this.detalle(factura, linea);
+      const guardadas = (factura.inventarioUbicaciones ?? []).filter(
+        (u) => productoIdCanonico(String(u.productoId)) === linea.productoId,
+      );
+
+      try {
+        const movimiento = await this.existenciaService.reponerProducto(
+          guardadas.length > 0
+            ? {
+                productoId: linea.productoId,
+                ubicaciones: guardadas.map((u) => ({
+                  almacen: new Types.ObjectId(String(u.almacen)),
+                  contenedor: new Types.ObjectId(String(u.contenedor)),
+                  cantidad: u.cantidad,
+                })),
+              }
+            : {
+                productoId: linea.productoId,
+                cantidad: linea.cantidad,
+                almacenId,
+              },
+        );
+
+        if (guardadas.length === 0) {
+          this.logger.warn(
+            `La factura no guardó las ubicaciones de origen: el stock volvió por la política por defecto (${detalle})`,
+          );
+        }
+
+        aplicados.push({
+          ...linea,
+          stockResultante: movimiento.stockTotal,
+        });
+      } catch (error) {
+        if (error instanceof NotFoundException) {
+          this.logger.warn(
+            `Producto inexistente al restaurar stock, se omite (${detalle})`,
+          );
+          continue;
+        }
+        this.logger.error(
+          `No se pudo restaurar el stock, corregir a mano (${detalle}): ${String(error)}`,
+        );
+      }
+    }
+
+    await this.finalizarRestauracion(factura, aplicados);
   }
 
   /**

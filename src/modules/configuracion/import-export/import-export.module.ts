@@ -12,6 +12,7 @@ import {
 } from '../../contabilidad/cuenta/schema/cuenta.schema';
 import { NomencladorHelperModule } from '../nomenclador-helper/nomenclador-helper.module';
 import { CuentaModule } from '../../contabilidad/cuenta/cuenta.module';
+import { ExistenciaModule } from '../../inventario/exitencia/existencia.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CuentaModule } from '../../contabilidad/cuenta/cuenta.module';
     ]),
     NomencladorHelperModule,
     CuentaModule,
+    ExistenciaModule,
   ],
   controllers: [ImportExportController],
   providers: [ImportExportService],

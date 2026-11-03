@@ -876,16 +876,25 @@ export class FacturaService implements OnModuleInit {
     const reclamada = await this.transicionar(id, EstadoFactura.CONFIRMADA, {
       camposExtra: { inventarioAplicado: true, inventarioEnProceso: true },
     });
+    let ubicaciones: Awaited<ReturnType<FacturaInventarioService['rebajarStock']>>;
     try {
-      await this.inventario.rebajarStock(reclamada);
+      ubicaciones = await this.inventario.rebajarStock(reclamada);
     } catch (error) {
       await this.revertirConfirmacion(reclamada, error);
       throw error;
     }
+    // Modo unificado (Fase 1): se guarda de qué ubicaciones salió el stock
+    // para que `cancelar` lo devuelva exacto. Antes de la unificación no hay.
     const finalizada = await this.limpiarMarcadorInventario(
       reclamada,
       EstadoFactura.CONFIRMADA,
-      { $unset: { inventarioEnProceso: 1 }, $inc: { revision: 1 } },
+      {
+        $unset: { inventarioEnProceso: 1 },
+        $inc: { revision: 1 },
+        ...(ubicaciones?.length
+          ? { $set: { inventarioUbicaciones: ubicaciones } }
+          : {}),
+      },
       'stock ya rebajado',
     );
     return finalizada ?? reclamada;

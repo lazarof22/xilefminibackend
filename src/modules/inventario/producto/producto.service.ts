@@ -124,6 +124,20 @@ export class ProductoService {
       }
     }
 
+    // Modo unificado (Fase 1): el stock vive en las existencias por ubicación;
+    // un producto con stock inicial pero sin ubicación quedaría con saldo que
+    // no se puede vender ni transferir.
+    if (
+      stock_inicial !== undefined &&
+      stock_inicial > 0 &&
+      !(almacen && contenedor) &&
+      (await this.existenciaService.estaUnificado())
+    ) {
+      throw new BadRequestException(
+        'Un producto con stock inicial necesita almacén y contenedor',
+      );
+    }
+
     // Crear el producto
     const nuevoProducto =
       new this.productoModel(createProductoDto);
@@ -184,6 +198,35 @@ export class ProductoService {
 
   //Actualizar un producto
   async update(id: string, UpdateProductoDto: UpdateProductoDto): Promise<Producto> {
+    // Modo unificado (Fase 1): el saldo vive en las existencias por ubicación
+    // y se mueve con ventas, compras, transferencias y ajustes. Editarlo aquí
+    // lo desincronizaría, así que un cambio de stock se rechaza (reenviar el
+    // mismo valor que ya tiene es inofensivo y se ignora).
+    if (
+      UpdateProductoDto.stock_inicial !== undefined &&
+      (await this.existenciaService.estaUnificado())
+    ) {
+      const actual = await this.productoModel
+        .findById(id)
+        .select('stock_inicial')
+        .lean()
+        .exec();
+
+      if (!actual) {
+        throw new NotFoundException('No se encontró el producto');
+      }
+
+      if (Math.abs((Number(actual.stock_inicial) || 0) - UpdateProductoDto.stock_inicial) > 1e-9) {
+        throw new BadRequestException(
+          'El stock no se edita directamente: use "Ajuste de Inventario" o registre una compra',
+        );
+      }
+
+      const { stock_inicial: _sinCambio, ...resto } = UpdateProductoDto;
+      void _sinCambio;
+      UpdateProductoDto = resto;
+    }
+
     const updatepro = await this.productoModel.findByIdAndUpdate(id, UpdateProductoDto, { new: true }).exec();
 
     if (!updatepro) {

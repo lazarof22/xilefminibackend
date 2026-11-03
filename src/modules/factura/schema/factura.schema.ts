@@ -136,6 +136,25 @@ class FacturadorFactura {
   fecha!: string;
 }
 
+/**
+ * Ubicación de la que salió parte de un producto al confirmar (Fase 1,
+ * modo unificado). La cancelación devuelve exactamente esas cantidades.
+ */
+@Schema({ _id: false })
+class InventarioUbicacionFactura {
+  @Prop({ type: Types.ObjectId, ref: 'Producto', required: true })
+  productoId!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Almacen', required: true })
+  almacen!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Contenedor', required: true })
+  contenedor!: Types.ObjectId;
+
+  @Prop({ required: true })
+  cantidad!: number;
+}
+
 @Schema({ timestamps: true, id: false })
 export class Factura {
   @Prop({ required: true, unique: true })
@@ -293,6 +312,12 @@ export class Factura {
 
   @Prop({ type: Boolean })
   inventarioEnProceso?: boolean;
+
+  // Fase 1 (existencias unificadas): de qué ubicaciones salió el stock al
+  // confirmar, para que `cancelar` lo devuelva exacto. Ausente en facturas
+  // confirmadas antes de activar el modo unificado.
+  @Prop({ type: [InventarioUbicacionFactura], default: undefined })
+  inventarioUbicaciones?: InventarioUbicacionFactura[];
 }
 
 export const FacturaSchema = SchemaFactory.createForClass(Factura);

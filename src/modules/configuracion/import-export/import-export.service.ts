@@ -14,6 +14,7 @@ import {
   NaturalezaCuenta,
 } from '../../contabilidad/cuenta/schema/cuenta.schema';
 import { NomencladorHelper } from '../nomenclador-helper/nomenclador-helper.service';
+import { ExistenciaService } from '../../inventario/exitencia/existencia.service';
 
 interface CsvRow {
   codigo: string;
@@ -53,6 +54,7 @@ export class ImportExportService {
     @InjectModel(Cuenta.name)
     private readonly cuentaModel: Model<CuentaDocument>,
     private readonly nomencladorHelper: NomencladorHelper,
+    private readonly existenciaService: ExistenciaService,
   ) {}
 
   private parseCsv(csv: string): CsvRow[] {
@@ -97,6 +99,14 @@ export class ImportExportService {
     let imported = 0;
     const errors: string[] = [];
 
+    // Modo unificado (Fase 1): el stock es la suma de las existencias por
+    // ubicación y un CSV no trae ubicación. Por eso no pisa el stock de los
+    // productos existentes y los nuevos se crean en 0 (el stock se registra
+    // con una compra o un ajuste de inventario, que sí piden ubicación).
+    const unificado = await this.existenciaService.estaUnificado();
+    let stockIgnorado = 0;
+    let nuevosSinStock = 0;
+
     for (const row of rows) {
       try {
         if (!row.codigo || !row.nombre) {
@@ -130,7 +140,11 @@ export class ImportExportService {
           existing.nombre_producto = row.nombre;
           existing.precio_compra = precioCompra;
           existing.precio_venta = precioVenta;
-          existing.stock_inicial = stockInicial;
+          if (unificado) {
+            if (stockInicial !== existing.stock_inicial) stockIgnorado++;
+          } else {
+            existing.stock_inicial = stockInicial;
+          }
           existing.stock_minimo = stockMinimo;
           if (categoriaId) existing.categoria_producto = categoriaId;
           if (estadoId) existing.estado = estadoId;
@@ -141,16 +155,28 @@ export class ImportExportService {
             nombre_producto: row.nombre,
             precio_compra: precioCompra,
             precio_venta: precioVenta,
-            stock_inicial: stockInicial,
+            stock_inicial: unificado ? 0 : stockInicial,
             stock_minimo: stockMinimo,
             categoria_producto: categoriaId,
             estado: estadoId,
           });
+          if (unificado && stockInicial > 0) nuevosSinStock++;
         }
         imported++;
       } catch (err) {
         errors.push(`${row.codigo}: ${(err as Error).message}`);
       }
+    }
+
+    if (stockIgnorado > 0) {
+      errors.push(
+        `Aviso: el stock de ${stockIgnorado} producto(s) existente(s) no se modificó; con el inventario unificado se cambia con "Ajuste de Inventario"`,
+      );
+    }
+    if (nuevosSinStock > 0) {
+      errors.push(
+        `Aviso: ${nuevosSinStock} producto(s) nuevo(s) se crearon con stock 0; registre su stock con "Registrar Compra" o "Ajuste de Inventario"`,
+      );
     }
     return { imported, errors };
   }
