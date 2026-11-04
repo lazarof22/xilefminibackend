@@ -2,6 +2,7 @@ import {
   IsString,
   IsOptional,
   IsEmail,
+  IsMongoId,
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -43,11 +44,23 @@ export class UpdateEmpresaDatosDto {
   @MaxLength(50)
   ruc_nit?: string;
 
-  @ApiPropertyOptional({ example: 'Caracas' })
+  @ApiPropertyOptional({
+    example: 'La Habana',
+    description:
+      'Texto libre (compatibilidad con datos antiguos). Se resuelve contra el nomenclador Ciudad del país indicado; prefiera `ciudadId`.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(100)
   ciudad?: string;
+
+  @ApiPropertyOptional({
+    example: '665f1c2e9b1d4a0012345678',
+    description: 'ObjectId de una Ciudad del nomenclador',
+  })
+  @IsOptional()
+  @IsMongoId({ message: 'La ciudad seleccionada no es válida' })
+  ciudadId?: string;
 
   @ApiPropertyOptional({ example: 'Venezuela', description: 'Nombre del país o ObjectId' })
   @IsOptional()

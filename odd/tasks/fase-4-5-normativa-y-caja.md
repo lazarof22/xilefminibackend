@@ -1,0 +1,39 @@
+# Fase 4 y 5: documentos normativos, caja y configuración
+
+Objective: implement phases 4 and 5 of `Xilef Mini — Diseño de Facturación y Punto de Venta Cuba.docx` (backend + frontend, connected).
+Branch: `feat/fase-4-5-normativa-y-caja` (both repos). Delivery: `ask-on-risk`. Runner: backend `npx jest`; frontend has no test runner (checks: `tsc -b`, `eslint`, `vite build`).
+Mirror: Engram project is ambiguous (xilef-signer / xilefminibackend); mirror PENDING until the user picks one.
+
+## Specs
+
+- S1 (doc §6.1/§8 fase 4) Extend `Existencia` with `reservada` and `disponible` (`disponible = cantidad - reservada`, kept in the SAME atomic write that changes `cantidad` or `reservada`); add `sección`, `estante`, `casilla` to `Contenedor` and `dirección` to `Almacén`.
+- S2 (doc §6.6 "Kardex extendido a Submayor SC-2-13") Kardex gets `importeCUP`, `importeDivisa`, `costoPromedio`, `ubicacionFisica`, `referenciaContable`; all optional so existing writers stay valid.
+- S3 (doc §6.2) `Recepcion` SC-2-04: `numeroConsecutivo`, `fechaEmision`, `entidadReceptora`, `almacenReceptor`, `proveedor`, `documentoOrigen {tipo: factura|conduce|otro, numero, fecha}`, `transportista`, `lineas`, `total` (server), `responsableRecepcion`, `responsableComprobacion`, `inventarioAplicado`. "El saldo del inventario se actualiza AL REGISTRAR (no al crear borrador)". Wraps `RegistroCompra` lines.
+- S4 (doc §6.6 / §7.3) `Devolucion` SC-2-08: `numeroConsecutivo`, `tipo: venta|proveedor`, `origenRef`, `motivo` (obligatorio), `cliente`, `lineas {producto, cantidadSolicitada, cantidadEntregada}`, `autorizadoPor`, `recibidoPor`, `firma`, `formaDevolucionDinero: efectivo|nota_credito|descuenta_deuda`. "una devolución siempre referencia su origen"; stock repuesto vía `ExistenciaService` + Kardex `DEVOLUCION`; "una devolución a proveedor no debe registrarse como compra negativa". Money part integrates with phases 2/3 (other developer) through a thin seam; do NOT edit `venta`, `pago`, `tasa` internals.
+- S5 (doc §6.6) `AjusteInventario` SC-2-16: `numeroConsecutivo`, `causa`, `autorizadoPor`, `lineas {producto, saldoAntes, ajuste(+/-), saldoDespues}`, `firmadoPor`; "exige causa y autorización; el Kardex registra el saldo antes/después; no permite ajuste silencioso". Permission: Administrador, Económico.
+- S6 (doc §6.6) `TurnoCaja`: `cajeroId`, `fechaApertura`, `fechaCierre`, `fondoInicial` POR MONEDA (map), `estado: abierto|cerrado`, `cuadre`, `arqueo`. Endpoints `POST /turno-caja`, `PATCH /turno-caja/:id/cerrar`. Extracciones y cuadre se vinculan al TurnoCaja abierto.
+- S7 (doc §6.6) `ArqueoCaja` SC-3-06: documento formal separado del cuadre; `turnoCajaId`, `responsableArqueo`, `responsableCustodia`, `efectivoContado` y `diferencia` POR MONEDA, `observaciones`, `firmadoPor`. `POST /arqueo-caja`. Permission: Administrador, Económico, Gerente.
+- S8 (doc §6.6) Resumen del turno: "efectivo esperado, cuentas por cobrar y cobros electrónicos se reportan por separado; el cuadre compara solo contra el efectivo esperado". Una venta a crédito no altera el efectivo esperado. Archivar las líneas del turno (no solo el resumen) al cerrar.
+- S9 (doc §6.6) `DepositoBancario` por turno con alerta de plazo, "activable solo tras confirmar la norma" (flag de configuración, apagado por defecto).
+- S10 (doc §6.7) `ConfiguracionTributaria { impuestoVentasPct, vigenteDesde, activa }` fuera de Tasa, `GET/PUT /configuracion-tributaria`; `Producto.gravado: 'gravado'|'exento'` (exentos no calculan impuesto); admite bonificaciones por programa/sector. Tasa gana `fluctuacion`. `EmpresaDatos.ciudad` pasa a referencia al nomenclador Ciudad.
+- S11 (doc §6.9) Permisos por acción: Anular factura/venta → Administrador, Gerente; Descuento manual/cambio de precio → Administrador, Gerente; Extracción de caja → Administrador, Gerente; Ajuste de inventario → Administrador, Económico; Arqueo → Administrador, Económico, Gerente; Cerrar turno → Cajero, Administrador. Extender el patrón `JwtAuthGuard + RolesGuard + @Roles` de `factura` al resto. PRECONDITION: the frontend must send the token on every call (several components use raw `fetch`).
+- S12 (user) Frontend: "respeta en el frontend el estilo con que se esta haciendo la paleta de colores" (theme in `src/theme/MuiProvider.tsx`; no ad-hoc hex colors; follow existing dialogs such as `AjusteInventarioDialog.tsx` / `dialogEstilos.ts`). UI copy in Spanish (existing project language).
+- S13 (user) "dejarlo conectado": every backend endpoint above has a frontend service (`src/service/*Api.ts` using `apiRequest`) and UI.
+
+Boundaries: phases 2 and 3 are done by someone else: do not edit `venta`, `pago`, `tasa` (except `fluctuacion`), `PagoXDialog.tsx`, `Carrito.tsx`, `ventaService.ts`. `app.module.ts` is edited only by the parent.
+
+## Tasks
+
+- [ ] T1 Base inventario: S1 + S2 (writer A) — route: delegated (parallel units)
+- [ ] T2 Tributaria + Tasa.fluctuacion + EmpresaDatos.ciudad + Producto.gravado: S10 (writer B) — delegated
+- [ ] T3 Caja: S6, S7, S8, S9 (writer C) — delegated
+- [ ] T4 Recepción SC-2-04 + Ajuste SC-2-16: S3, S5 (writer D, after T1) — delegated
+- [ ] T5 Devolución SC-2-08: S4 (writer E, after T1) — delegated
+- [ ] T6 Permisos + frontend token everywhere: S11 (parent/writer, last)
+- [ ] T7 Registro en app.module, build, suite, differential check, close
+
+## Log
+
+- L1 (2026-11-03, user, verbatim): "la 2 y 3 la va a hacer alguien mas a mi me toca 4 y 5 , tengo que implemetar tanto backend como frontend y dejarlo conectado, respeta en el frontend el estilo con que se esta haciendo la paleta de colores, empieza a implementar"
+- L2 (parent): Route declaration — writer trigger (a) parallelism: T1/T2/T3 have disjoint edit surfaces and each needs several minutes; T4/T5 launched together after T1. T6 last because it touches many files and depends on all others.
+- L3 (parent): Risk found — frontend uses raw `fetch` without token in CustomDataGridR, Inventario.tsx, Ventas.tsx, PuntoVenta.tsx, pago dialogs, ReporteInventarioTab, AddClientDialog, Clientes.tsx; guards before the token fix would break the app. Pago dialogs/PuntoVenta/ventaService are being edited by the phase 2/3 developer → coordinate.

@@ -6,6 +6,7 @@ import {
   EmpresaDatos,
   EmpresaDatosSchema,
 } from './schemas/empresa-datos.schema';
+import { CiudadModule } from '../../nomencladores/ciudad/ciudad.module';
 import { NomencladorHelperModule } from '../nomenclador-helper/nomenclador-helper.module';
 
 @Module({
@@ -14,6 +15,7 @@ import { NomencladorHelperModule } from '../nomenclador-helper/nomenclador-helpe
       { name: EmpresaDatos.name, schema: EmpresaDatosSchema },
     ]),
     NomencladorHelperModule,
+    CiudadModule,
   ],
   controllers: [EmpresaDatosController],
   providers: [EmpresaDatosService],

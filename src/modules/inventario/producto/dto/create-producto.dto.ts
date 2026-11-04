@@ -1,5 +1,8 @@
-import { IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsIn, IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Types } from "mongoose";
+import { GRAVADO_VALORES } from "../schemas/producto.schema";
+import type { Gravado } from "../schemas/producto.schema";
 
 export class CreateProductoDto {
 
@@ -42,6 +45,15 @@ export class CreateProductoDto {
     @IsString()
     @IsNotEmpty()
     estado!: string;
+
+    @ApiPropertyOptional({
+        enum: GRAVADO_VALORES,
+        default: 'gravado',
+        description: 'Tratamiento tributario; los productos exentos no calculan impuesto.',
+    })
+    @IsOptional()
+    @IsIn(GRAVADO_VALORES, { message: 'gravado debe ser "gravado" o "exento"' })
+    gravado?: Gravado;
 
     @IsOptional()
     @IsMongoId()

@@ -71,7 +71,8 @@ Si no existe registro previo, crea uno con `nombre: "Sin nombre"`.
 | telefono | string | |
 | email | string | |
 | ruc_nit | string | |
-| ciudad | string | |
+| ciudad | string | |  (nombre imprimible; texto libre en datos antiguos)
+| ciudadId | ObjectId (ref Ciudad) | | (nuevo; se envía en `PUT`, tiene prioridad sobre `ciudad`)
 | pais | string | |
 | logo | string | (base64) |
 | createdAt | Date | auto |
@@ -82,3 +83,9 @@ Si no existe registro previo, crea uno con `nombre: "Sin nombre"`.
 - **Upsert**: Si existe un registro, lo actualiza. Si no, lo crea.
 - **Logo**: Misma lógica. Si no hay registro, crea uno temporal.
 - **Colección**: `empresa_datos` (un solo documento).
+
+## Ciudad (referencia al nomenclador)
+
+- `ciudadId` referencia a `Ciudad`; `ciudad` conserva siempre un texto imprimible (la factura copia el emisor desde ahí).
+- `GET /empresa` devuelve en `ciudad` el nombre actual de la Ciudad referenciada; si el documento es antiguo (solo texto) o la Ciudad ya no existe, devuelve el texto guardado.
+- `PUT /empresa` con `ciudadId`: valida que exista. Con `ciudad` en texto (compatibilidad): reutiliza la Ciudad del país con ese nombre o la crea; sin país solo guarda el texto. `ciudad: ""` limpia ambos campos.

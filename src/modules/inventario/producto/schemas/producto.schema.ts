@@ -2,6 +2,9 @@ import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { HydratedDocument, Types } from "mongoose";
 
 
+export const GRAVADO_VALORES = ['gravado', 'exento'] as const;
+export type Gravado = (typeof GRAVADO_VALORES)[number];
+
 export type ProductoDocument = HydratedDocument<Producto>;
 
 @Schema()
@@ -29,6 +32,10 @@ export class Producto {
 
     @Prop({ required: true })
     estado!: string;
+
+    /** Tratamiento tributario (doc §6.7). Los exentos nunca calculan impuesto. */
+    @Prop({ type: String, enum: GRAVADO_VALORES, default: 'gravado' })
+    gravado!: Gravado;
 
     @Prop({ type: Types.ObjectId, ref: 'Almacen' })
     almacen?: Types.ObjectId;

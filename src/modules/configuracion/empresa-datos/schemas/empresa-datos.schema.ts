@@ -23,8 +23,17 @@ export class EmpresaDatos {
   @Prop()
   ruc_nit?: string;
 
+  /**
+   * Nombre imprimible de la ciudad. Es el texto libre de los documentos
+   * antiguos y, cuando hay `ciudadId`, una copia del nombre del nomenclador.
+   * La factura toma de aquí el emisor, así que siempre debe ser un string.
+   */
   @Prop()
   ciudad?: string;
+
+  /** Referencia al nomenclador Ciudad (doc §6.7). Ausente en datos antiguos. */
+  @Prop({ type: Types.ObjectId, ref: 'Ciudad' })
+  ciudadId?: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Pais' })
   pais?: Types.ObjectId;

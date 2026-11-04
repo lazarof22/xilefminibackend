@@ -29,6 +29,16 @@ export class CreateTasaDto {
     @Min(0)
     iva?: number;
 
+    @ApiProperty({
+        required: false,
+        default: 0,
+        example: -1.5,
+        description: "Variación respecto a la tasa anterior de la moneda.",
+    })
+    @IsOptional()
+    @IsNumber()
+    fluctuacion?: number;
+
     @ApiProperty({ required: false, default: true })
     @IsOptional()
     @IsBoolean()
