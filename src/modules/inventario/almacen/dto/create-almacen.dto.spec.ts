@@ -7,70 +7,70 @@ function dtoValido(
 ): Record<string, unknown> {
   return {
     nombreAlmacen: 'Almacén Central',
-    codigo: 'ALM-001',
+    codigoAlmacen: 'ALM-001',
     ...overrides,
   };
 }
 
 describe('CreateAlmacenDto (T2)', () => {
-  it('accepts a valid payload with codigo', async () => {
+  it('accepts a valid payload with codigoAlmacen', async () => {
     const instancia = plainToInstance(CreateAlmacenDto, dtoValido());
     const errores = await validate(instancia);
     expect(errores).toHaveLength(0);
   });
 
-  it('requires codigo', async () => {
+  it('requires codigoAlmacen', async () => {
     const instancia = plainToInstance(
       CreateAlmacenDto,
-      dtoValido({ codigo: undefined }),
+      dtoValido({ codigoAlmacen: undefined }),
     );
     const errores = await validate(instancia);
-    expect(errores.some((e) => e.property === 'codigo')).toBe(true);
+    expect(errores.some((e) => e.property === 'codigoAlmacen')).toBe(true);
   });
 
-  it('rejects an empty codigo', async () => {
+  it('rejects an empty codigoAlmacen', async () => {
     const instancia = plainToInstance(
       CreateAlmacenDto,
-      dtoValido({ codigo: '' }),
+      dtoValido({ codigoAlmacen: '' }),
     );
     const errores = await validate(instancia);
-    expect(errores.some((e) => e.property === 'codigo')).toBe(true);
+    expect(errores.some((e) => e.property === 'codigoAlmacen')).toBe(true);
   });
 
-  it('rejects a codigo longer than 20 characters', async () => {
+  it('rejects a codigoAlmacen longer than 20 characters', async () => {
     const instancia = plainToInstance(
       CreateAlmacenDto,
-      dtoValido({ codigo: 'A'.repeat(21) }),
+      dtoValido({ codigoAlmacen: 'A'.repeat(21) }),
     );
     const errores = await validate(instancia);
-    expect(errores.some((e) => e.property === 'codigo')).toBe(true);
+    expect(errores.some((e) => e.property === 'codigoAlmacen')).toBe(true);
   });
 
-  it('rejects a non-string codigo', async () => {
+  it('rejects a non-string codigoAlmacen', async () => {
     const instancia = plainToInstance(
       CreateAlmacenDto,
-      dtoValido({ codigo: 123 }),
+      dtoValido({ codigoAlmacen: 123 }),
     );
     const errores = await validate(instancia);
-    expect(errores.some((e) => e.property === 'codigo')).toBe(true);
+    expect(errores.some((e) => e.property === 'codigoAlmacen')).toBe(true);
   });
 
-  it('rejects a whitespace-only codigo', async () => {
+  it('rejects a whitespace-only codigoAlmacen', async () => {
     const instancia = plainToInstance(
       CreateAlmacenDto,
-      dtoValido({ codigo: '   ' }),
+      dtoValido({ codigoAlmacen: '   ' }),
     );
     const errores = await validate(instancia);
-    expect(errores.some((e) => e.property === 'codigo')).toBe(true);
+    expect(errores.some((e) => e.property === 'codigoAlmacen')).toBe(true);
   });
 
-  it('trims surrounding whitespace from a valid codigo', async () => {
+  it('trims surrounding whitespace from a valid codigoAlmacen', async () => {
     const instancia = plainToInstance(
       CreateAlmacenDto,
-      dtoValido({ codigo: '  ALM-001  ' }),
+      dtoValido({ codigoAlmacen: '  ALM-001  ' }),
     );
     const errores = await validate(instancia);
     expect(errores).toHaveLength(0);
-    expect(instancia.codigo).toBe('ALM-001');
+    expect(instancia.codigoAlmacen).toBe('ALM-001');
   });
 });

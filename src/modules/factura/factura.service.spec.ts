@@ -224,7 +224,7 @@ describe('FacturaService', () => {
       crearQueryMock<AlmacenDocument | null>({
         _id: ALMACEN_ID,
         nombreAlmacen: 'Almacén Central',
-        codigo: 'ALM-001',
+        codigoAlmacen: 'ALM-001',
       } as unknown as AlmacenDocument),
     );
 
@@ -642,7 +642,7 @@ describe('FacturaService', () => {
         crearQueryMock<AlmacenDocument | null>({
           _id: ALMACEN_ID,
           nombreAlmacen: 'Almacén Sin Código',
-          codigo: undefined,
+          codigoAlmacen: undefined,
         } as unknown as AlmacenDocument),
       );
 
@@ -1109,7 +1109,7 @@ describe('FacturaService', () => {
           crearQueryMock<AlmacenDocument | null>({
             _id: otroAlmacenId,
             nombreAlmacen: 'Otro almacén',
-            codigo: 'ALM-002',
+            codigoAlmacen: 'ALM-002',
           } as unknown as AlmacenDocument),
         );
         facturaModelMock.findOneAndUpdate.mockReturnValue(

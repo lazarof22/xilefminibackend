@@ -25,7 +25,7 @@ function rolesOf(handler: Handler): string[] | undefined {
 
 function req(user: { rol: string; empresa_id?: string }): RequestConUsuario {
   return {
-    user: { userId: 'u1', correo_empleado: 'a@b.c', ...user },
+    user: { userId: 'u1', nombre: 'Usuario Prueba', modulos: [], ...user },
     headers: { 'user-agent': 'jest' },
     ip: '127.0.0.1',
   };

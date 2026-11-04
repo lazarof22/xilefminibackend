@@ -72,22 +72,22 @@ describe('AlmacenService', () => {
   function dto(overrides: Partial<CreateAlmacenDto> = {}): CreateAlmacenDto {
     return {
       nombreAlmacen: 'Almacén Central',
-      codigo: 'ALM-001',
+      codigoAlmacen: 'ALM-001',
       ...overrides,
     };
   }
 
   describe('create (T2)', () => {
-    it('creates an almacén with a codigo', async () => {
+    it('creates an almacén with a codigoAlmacen', async () => {
       await service.create(dto());
 
       expect(almacenModelMock).toHaveBeenCalledWith(
-        expect.objectContaining({ codigo: 'ALM-001' }),
+        expect.objectContaining({ codigoAlmacen: 'ALM-001' }),
       );
       expect(savedAlmacen.save).toHaveBeenCalled();
     });
 
-    it('maps a duplicate codigo (E11000) to a 409 ConflictException', async () => {
+    it('maps a duplicate codigoAlmacen (E11000) to a 409 ConflictException', async () => {
       const duplicado = Object.assign(new Error('E11000 duplicate key'), {
         code: 11000,
       });
@@ -106,7 +106,7 @@ describe('AlmacenService', () => {
   });
 
   describe('update (T2)', () => {
-    it('maps a duplicate codigo (E11000) to a 409 ConflictException', async () => {
+    it('maps a duplicate codigoAlmacen (E11000) to a 409 ConflictException', async () => {
       const duplicado = Object.assign(new Error('E11000 duplicate key'), {
         code: 11000,
       });
@@ -114,7 +114,7 @@ describe('AlmacenService', () => {
         crearQueryMockRechazado<Almacen | null>(duplicado),
       );
 
-      const updateDto: UpdateAlmacenDto = { codigo: 'ALM-002' };
+      const updateDto: UpdateAlmacenDto = { codigoAlmacen: 'ALM-002' };
       await expect(
         service.update('almacen-1', updateDto),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -126,7 +126,7 @@ describe('AlmacenService', () => {
       );
 
       await expect(
-        service.update('almacen-1', { codigo: 'ALM-002' }),
+        service.update('almacen-1', { codigoAlmacen: 'ALM-002' }),
       ).rejects.toThrow('conexion perdida');
     });
   });
