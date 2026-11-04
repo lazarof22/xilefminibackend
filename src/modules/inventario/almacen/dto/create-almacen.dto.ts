@@ -22,5 +22,11 @@ export class CreateAlmacenDto {
     @IsString({ message: 'El código debe ser una cadena de texto' })
     @MaxLength(20, { message: 'El código no puede tener más de 20 caracteres' })
     codigoAlmacen!: string;
+
+    @ApiPropertyOptional({ description: 'Dirección del almacén', maxLength: 200 })
+    @IsOptional()
+    @IsString({ message: 'La dirección debe ser una cadena de texto' })
+    @MaxLength(200, { message: 'La dirección no puede tener más de 200 caracteres' })
+    direccion?: string;
 }
 

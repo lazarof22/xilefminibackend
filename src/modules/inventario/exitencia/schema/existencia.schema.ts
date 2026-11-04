@@ -31,10 +31,42 @@ export class Existencia {
         min: 0,
     })
     cantidad!: number;
+
+    /** Unidades comprometidas (reservadas) que aún no han salido. */
+    @Prop({
+        required: true,
+        min: 0,
+        default: 0,
+    })
+    reservada!: number;
+
+    /**
+     * `disponible = cantidad - reservada`. Se mantiene SIEMPRE en la misma
+     * escritura atómica que cambia `cantidad` o `reservada` (`$inc` sobre
+     * ambos campos); nunca se recalcula en una segunda escritura.
+     *
+     * Sin `required` ni `default`: los documentos anteriores a esta fase no lo
+     * tienen y `ExistenciaService.onModuleInit` los rellena. Un documento
+     * nuevo lo recibe en la validación (ver el hook de abajo).
+     */
+    @Prop({
+        min: 0,
+    })
+    disponible!: number;
 }
 
 export const ExistenciaSchema =
     SchemaFactory.createForClass(Existencia);
+
+/**
+ * Un documento nuevo guardado con `create`/`save` sin `disponible` lo recibe
+ * derivado de `cantidad` y `reservada`.
+ */
+ExistenciaSchema.pre('validate', function () {
+    if (this.disponible === undefined || this.disponible === null) {
+        this.disponible = this.cantidad - (this.reservada ?? 0);
+    }
+});
 
 /**
  * Una combinación producto + almacén + contenedor

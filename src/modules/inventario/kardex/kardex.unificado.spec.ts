@@ -291,4 +291,45 @@ describe('KardexService.create — ajuste de inventario', () => {
       ).rejects.toThrow('No se encontró el producto');
     });
   });
+
+  describe('campos contables del Submayor SC-2-13', () => {
+    const contables = {
+      importeCUP: 1200,
+      importeDivisa: 10,
+      costoPromedio: 600,
+      ubicacionFisica: 'Central / Estante 1 / A3',
+      referenciaContable: 'SC-2-13-0001',
+    };
+
+    it('antes del modo unificado se guardan en el kardex', async () => {
+      const e = escenario();
+
+      await e.servicio.create(
+        e.dto({ tipo: KardexTipo.ENTRADA, cantidad: 2, ...contables }),
+      );
+
+      expect(e.kardex.docs[0]).toMatchObject(contables);
+    });
+
+    it('en modo unificado se guardan en el kardex', async () => {
+      const e = escenario();
+      await e.existenciaService.activarModoUnificado('admin');
+
+      await e.servicio.create(
+        e.dto({ tipo: KardexTipo.SALIDA, cantidad: 2, ...contables }),
+      );
+
+      expect(e.kardex.docs[0]).toMatchObject(contables);
+    });
+
+    it('sin ellos el kardex no lleva esos campos', async () => {
+      const e = escenario();
+
+      await e.servicio.create(e.dto({ tipo: KardexTipo.ENTRADA, cantidad: 2 }));
+
+      expect(Object.keys(e.kardex.docs[0])).not.toEqual(
+        expect.arrayContaining(['importeCUP', 'costoPromedio']),
+      );
+    });
+  });
 });

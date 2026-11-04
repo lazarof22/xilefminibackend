@@ -78,6 +78,8 @@ function coincide(doc: Doc, filtro: Doc): boolean {
           return !igual(valor, v, estricto);
         case '$in':
           return (v as unknown[]).some((x) => igual(valor, x, estricto));
+        case '$exists':
+          return (valor !== undefined) === Boolean(v);
         default:
           throw new Error(`Operador de filtro no soportado: ${operador}`);
       }
@@ -85,7 +87,58 @@ function coincide(doc: Doc, filtro: Doc): boolean {
   });
 }
 
-function aplicar(doc: Doc, update: Doc): void {
+/**
+ * Evalúa lo justo de una expresión de agregación para los updates con
+ * pipeline: literales, `'$campo'`, `$ifNull`, `$subtract` y `$add`.
+ */
+function evaluar(expresion: unknown, doc: Doc): any {
+  if (typeof expresion === 'string' && expresion.startsWith('$')) {
+    return doc[expresion.slice(1)];
+  }
+
+  if (
+    typeof expresion === 'object' &&
+    expresion !== null &&
+    !(expresion instanceof Types.ObjectId) &&
+    !(expresion instanceof Date) &&
+    !Array.isArray(expresion)
+  ) {
+    const [[operador, argumentos]] = Object.entries(expresion as Doc);
+    const [a, b] = (argumentos as unknown[]).map((x) => evaluar(x, doc));
+
+    switch (operador) {
+      case '$ifNull':
+        return a ?? b;
+      case '$subtract':
+        return a - b;
+      case '$add':
+        return a + b;
+      default:
+        throw new Error(`Expresión de pipeline no soportada: ${operador}`);
+    }
+  }
+
+  return expresion;
+}
+
+function aplicar(doc: Doc, update: Doc | Doc[]): void {
+  if (Array.isArray(update)) {
+    // Update con pipeline: cada etapa `$set` ve el resultado de la anterior.
+    for (const etapa of update) {
+      if (!etapa.$set) {
+        throw new Error('Etapa de pipeline de update no soportada');
+      }
+      const valores = Object.fromEntries(
+        Object.entries(etapa.$set as Doc).map(([campo, expr]) => [
+          campo,
+          evaluar(expr, doc),
+        ]),
+      );
+      Object.assign(doc, valores);
+    }
+    return;
+  }
+
   for (const [operador, campos] of Object.entries(update)) {
     for (const [campo, v] of Object.entries(campos as Doc)) {
       if (operador === '$inc') {
@@ -205,9 +258,23 @@ export class FakeModel {
   /** Inserta directamente (preparación de la prueba); devuelve el documento guardado. */
   insertar(doc: Doc): Doc {
     const nuevo = { _id: new Types.ObjectId(), ...doc };
+    this.completarExistencia(nuevo);
     this.verificarUnico(nuevo);
     this.docs.push(nuevo);
     return nuevo;
+  }
+
+  /**
+   * Como el esquema de `Existencia` (`reservada` por defecto 0 y `disponible`
+   * derivado): solo para documentos con forma de existencia.
+   */
+  private completarExistencia(doc: Doc): void {
+    if (!('producto' in doc && 'contenedor' in doc && 'cantidad' in doc)) {
+      return;
+    }
+
+    doc.reservada ??= 0;
+    doc.disponible ??= doc.cantidad - doc.reservada;
   }
 
   private claveUnica(doc: Doc): string | undefined {
@@ -237,7 +304,7 @@ export class FakeModel {
   }
 
   /** Aplica un update comprobando antes que no rompa el índice único. */
-  private actualizar(doc: Doc, update: Doc): void {
+  private actualizar(doc: Doc, update: Doc | Doc[]): void {
     const prueba = { ...doc };
     aplicar(prueba, update);
     this.verificarUnico(prueba, doc);
@@ -282,6 +349,22 @@ export class FakeModel {
     });
   }
 
+  /** Aplica el update (con operadores o pipeline) a todos los documentos que cumplan el filtro. */
+  updateMany(
+    filtro: Doc,
+    update: Doc | Doc[],
+  ): Consulta<{ matchedCount: number; modifiedCount: number }> {
+    return new Consulta(() => {
+      this.antesDeEscribir(filtro, update);
+      const coincidentes = this.docs.filter((d) => coincide(d, filtro));
+      coincidentes.forEach((doc) => this.actualizar(doc, update));
+      return {
+        matchedCount: coincidentes.length,
+        modifiedCount: coincidentes.length,
+      };
+    });
+  }
+
   updateOne(
     filtro: Doc,
     update: Doc,
@@ -303,8 +386,13 @@ export class FakeModel {
 
   findOneAndUpdate(
     filtro: Doc,
-    update: Doc,
-    opciones: { upsert?: boolean; new?: boolean; returnDocument?: string } = {},
+    update: Doc | Doc[],
+    opciones: {
+      upsert?: boolean;
+      new?: boolean;
+      returnDocument?: string;
+      updatePipeline?: boolean;
+    } = {},
   ): Consulta<Doc | null> {
     const devolverNuevo =
       opciones.new === true || opciones.returnDocument === 'after';
@@ -409,14 +497,16 @@ export class FakeModel {
     }
   }
 
-  private antesDeEscribir(filtro: Doc, update: Doc): void {
+  private antesDeEscribir(filtro: Doc, update: Doc | Doc[]): void {
     this.escrituras += 1;
-    this.hooks.antesDeEscribir?.(this.escrituras, filtro, update);
-    const error = this.fallarSi?.(filtro, update);
+    // Un update con pipeline llega a los ganchos como el propio array.
+    const actualizacion = update as Doc;
+    this.hooks.antesDeEscribir?.(this.escrituras, filtro, actualizacion);
+    const error = this.fallarSi?.(filtro, actualizacion);
     if (error) throw error;
   }
 
-  private insertarPorUpsert(filtro: Doc, update: Doc): Doc {
+  private insertarPorUpsert(filtro: Doc, update: Doc | Doc[]): Doc {
     const base: Doc = {};
 
     for (const [campo, valor] of Object.entries(filtro)) {
@@ -426,7 +516,14 @@ export class FakeModel {
     // Se arma el documento completo ANTES de insertarlo, para que el índice
     // único (si lo hay) vea la clave definitiva.
     const nuevo: Doc = { _id: new Types.ObjectId(), ...base };
-    Object.assign(nuevo, (update.$setOnInsert as Doc) ?? {});
+    if (!Array.isArray(update)) {
+      Object.assign(nuevo, (update.$setOnInsert as Doc) ?? {});
+    }
+    // Como `setDefaultsOnInsert`: lo que el upsert no fija toma su valor por
+    // defecto antes de aplicar los `$inc`.
+    if ('producto' in nuevo && 'contenedor' in nuevo) {
+      nuevo.reservada ??= 0;
+    }
     aplicar(nuevo, update);
     this.verificarUnico(nuevo);
     this.docs.push(nuevo);

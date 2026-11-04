@@ -392,6 +392,7 @@ describe('ExistenciaService — saldo unificado (Fase 1)', () => {
         e.existencias.hooks.antesDeEscribir = (n) => {
           if (n === 1) {
             e.existencias.docs[0].cantidad = 0;
+            e.existencias.docs[0].disponible = 0;
             e.productos.docs[0].stock_inicial -= 1;
           }
         };
@@ -414,6 +415,7 @@ describe('ExistenciaService — saldo unificado (Fase 1)', () => {
         e.existencias.hooks.antesDeEscribir = (n) => {
           if (n === 1) {
             e.existencias.docs[1].cantidad = 0;
+            e.existencias.docs[1].disponible = 0;
             e.productos.docs[0].stock_inicial -= 1;
           }
         };

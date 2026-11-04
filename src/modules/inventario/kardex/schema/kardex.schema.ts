@@ -11,6 +11,7 @@ export enum KardexTipo {
   TRANSFERENCIA_SALIDA = 'transferencia_salida',
   TRANSFERENCIA_ENTRADA = 'transferencia_entrada',
   DEVOLUCION = 'devolucion',
+  AJUSTE = 'ajuste',
 }
 
 @Schema({ timestamps: true })
@@ -47,6 +48,23 @@ export class Kardex {
   // existing writers and documents stay valid.
   @Prop()
   referencia?: string;
+
+  // Submayor SC-2-13 (doc §6.6). All optional so the existing writers
+  // (factura, compra, transferencia) and stored documents stay valid.
+  @Prop({ min: 0 })
+  importeCUP?: number;
+
+  @Prop({ min: 0 })
+  importeDivisa?: number;
+
+  @Prop({ min: 0 })
+  costoPromedio?: number;
+
+  @Prop()
+  ubicacionFisica?: string;
+
+  @Prop()
+  referenciaContable?: string;
 }
 
 export const KardexSchema = SchemaFactory.createForClass(Kardex);

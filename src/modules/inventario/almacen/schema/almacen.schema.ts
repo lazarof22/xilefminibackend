@@ -23,6 +23,11 @@ export class Almacen {
     // CreateAlmacenDto (required there).
     @Prop({ trim: true, unique: true, sparse: true })
     codigoAlmacen?: string;
+
+    // Dirección postal del almacén (doc §6.1). Opcional: los almacenes
+    // anteriores no la tienen.
+    @Prop({ trim: true })
+    direccion?: string;
 }
 
 export const AlmacenSchema = SchemaFactory.createForClass(Almacen);

@@ -157,6 +157,38 @@ $env:MONGO_TEST_URI="mongodb://127.0.0.1:27017/xilef_test_fase1"; npx jest exist
 Incluyen la prueba que los modelos en memoria no pueden hacer: dos ventas simultáneas de la
 última unidad no la venden dos veces.
 
+## Reservas: `reservada` y `disponible`
+
+Cada `Existencia` lleva, además de `cantidad`, dos campos:
+
+| Campo | Significado |
+| --- | --- |
+| `reservada` (≥ 0, por defecto 0) | unidades comprometidas que aún no han salido |
+| `disponible` (≥ 0) | `cantidad - reservada`: lo que se puede vender o transferir |
+
+**Invariante: `disponible = cantidad - reservada`.** Se mantiene en la **misma escritura
+atómica** que cambia `cantidad` o `reservada` (un `$inc` sobre ambos campos; nunca una segunda
+escritura que lo recalcule). Todas las rutas de escritura de `ExistenciaService` la respetan
+(`aumentar`, `disminuir`, `descontarProducto`, `reponerProducto`, `crearExistenciaInicial`,
+`fijarCantidad` —con un update de pipeline—, la normalización y las compensaciones).
+
+| Operación | Filtro | Escritura |
+| --- | --- | --- |
+| Venta / transferencia (`descontarProducto`, `disminuir`) | `disponible >= n` | `$inc { cantidad: -n, disponible: -n }` |
+| `reservar` | `disponible >= n` | `$inc { reservada: +n, disponible: -n }` |
+| `liberarReserva` | `reservada >= n` | `$inc { reservada: -n, disponible: +n }` |
+| `consumirReserva` (salida de lo ya reservado) | `reservada >= n` | `$inc { cantidad: -n, reservada: -n }` (`disponible` no cambia) |
+
+La venta filtra por `disponible`, no por `cantidad`: con 10 en existencia y 8 reservadas, vender
+5 se rechaza (`StockInsuficienteException`, "disponible 2, solicitado 5"). `consumirReserva`
+también baja el total sincronizado `Producto.stock_inicial`.
+
+**Datos anteriores.** Las existencias guardadas antes de esta fase no tienen `disponible`.
+`ExistenciaService.onModuleInit` ejecuta un relleno idempotente (`updateMany` con pipeline solo
+donde falta `disponible`: `reservada = 0` y `disponible = cantidad - reservada`). Si falla, solo
+avisa en el log y el arranque continúa; mientras no se complete, las ventas sobre esas filas se
+rechazan (el filtro exige `disponible`), así que conviene revisar el log al arrancar.
+
 ## Notas para desarrolladores
 
 * Casi todos los esquemas del proyecto declaran los ids como `@Prop({ type: Types.ObjectId })`.
@@ -177,7 +209,8 @@ Incluyen la prueba que los modelos en memoria no pueden hacer: dos ventas simult
 
 ## Pendiente para fases siguientes
 
-* Reservas (`reservada` / `disponible`) por ubicación.
+* Consumir las reservas desde los flujos de negocio (la venta, la recepción y la devolución
+  usarán `reservar` / `liberarReserva` / `consumirReserva`; hoy solo existen en el servicio).
 * El Kardex todavía no guarda almacén y contenedor (Fase 4, Submayor de Inventarios).
 * `Venta.remove` no devuelve stock (Fase 4).
 * Guards y roles en `venta`, `kardex` y `existencias` (salvo la conciliación) — Fases 2 y 5.

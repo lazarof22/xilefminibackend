@@ -4,6 +4,7 @@ import {
     Injectable,
     Logger,
     NotFoundException,
+    OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types } from 'mongoose';
@@ -38,6 +39,14 @@ import { Producto } from '../producto/schemas/producto.schema';
 import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
 
+/** Datos de una operación de reserva sobre una ubicación concreta. */
+export interface OperacionReserva {
+    productoId: string | Types.ObjectId;
+    almacenId: string | Types.ObjectId;
+    contenedorId: string | Types.ObjectId;
+    cantidad: number;
+}
+
 /** Veces que se relee y reparte un descuento si otro movimiento vació una fila a la vez. */
 const MAX_INTENTOS_DESCUENTO = 5;
 
@@ -51,7 +60,7 @@ const esClaveDuplicada = (err: unknown): boolean =>
     (err as { code?: unknown }).code === 11000;
 
 @Injectable()
-export class ExistenciaService {
+export class ExistenciaService implements OnModuleInit {
     constructor(
         @InjectModel(Existencia.name)
         private readonly existenciaModel: Model<Existencia>,
@@ -70,6 +79,52 @@ export class ExistenciaService {
     ) {}
 
     private readonly logger = new Logger(ExistenciaService.name);
+
+    /**
+     * Rellena `reservada` y `disponible` en las existencias anteriores a la
+     * fase de reservas. Es a prueba de fallos: si no se puede, avisa en el log
+     * y el arranque sigue (un reintento al reiniciar lo completa).
+     */
+    async onModuleInit(): Promise<void> {
+        try {
+            const rellenadas = await this.rellenarDisponible();
+
+            if (rellenadas > 0) {
+                this.logger.log(
+                    `Existencias migradas a reservada/disponible: ${rellenadas}`,
+                );
+            }
+        } catch (error) {
+            this.logger.warn(
+                `No se pudo rellenar reservada/disponible en las existencias antiguas; las ventas sobre filas sin disponible se rechazarán hasta completarlo: ${String(error)}`,
+            );
+        }
+    }
+
+    /**
+     * Pone `reservada = 0` (si falta) y `disponible = cantidad - reservada`
+     * SOLO en las filas sin `disponible`. Una sola escritura con pipeline de
+     * agregación por documento; idempotente. Devuelve cuántas filas completó.
+     */
+    async rellenarDisponible(): Promise<number> {
+        const resultado = await this.existenciaModel
+            .updateMany({ disponible: { $exists: false } }, [
+                {
+                    $set: {
+                        reservada: { $ifNull: ['$reservada', 0] },
+                        disponible: {
+                            $subtract: [
+                                '$cantidad',
+                                { $ifNull: ['$reservada', 0] },
+                            ],
+                        },
+                    },
+                },
+            ], { updatePipeline: true })
+            .exec();
+
+        return resultado.modifiedCount;
+    }
 
     /**
      * Crear una existencia inicial.
@@ -152,6 +207,8 @@ export class ExistenciaService {
                     almacen: almacen._id,
                     contenedor: contenedor._id,
                     cantidad,
+                    reservada: 0,
+                    disponible: cantidad,
                 },
             ],
             {
@@ -275,7 +332,7 @@ export class ExistenciaService {
                     almacen,
                     contenedor,
                 },
-                { $setOnInsert: { cantidad } },
+                { $setOnInsert: { cantidad, reservada: 0, disponible: cantidad } },
                 { upsert: true },
             );
         } catch (error) {
@@ -340,6 +397,7 @@ export class ExistenciaService {
                 {
                     $inc: {
                         cantidad,
+                        disponible: cantidad,
                     },
                 },
                 {
@@ -363,8 +421,9 @@ export class ExistenciaService {
     /**
      * Disminuir cantidad en una ubicación.
      *
-     * La condición cantidad >= cantidad solicitada se ejecuta
-     * directamente en MongoDB para evitar valores negativos.
+     * La condición disponible >= cantidad solicitada se ejecuta
+     * directamente en MongoDB: evita valores negativos y que se mueva
+     * mercancía reservada. `cantidad` y `disponible` bajan en la misma escritura.
      */
     async disminuir(
         productoId: Types.ObjectId,
@@ -385,11 +444,12 @@ export class ExistenciaService {
                     producto: productoId,
                     almacen: almacenId,
                     contenedor: contenedorId,
-                    cantidad: { $gte: cantidad },
+                    disponible: { $gte: cantidad },
                 },
                 {
                     $inc: {
                         cantidad: -cantidad,
+                        disponible: -cantidad,
                     },
                 },
                 {
@@ -680,6 +740,178 @@ export class ExistenciaService {
         }
     }
 
+    // ─── Reservas (doc §6.1) ─────────────────────────────────────────
+    //
+    //  Reservar compromete mercancía sin sacarla: `cantidad` no cambia,
+    //  `reservada` sube y `disponible` baja. Cada operación es UNA escritura
+    //  condicional por fila: dos reservas simultáneas nunca comprometen más
+    //  de lo disponible, y una venta (que filtra por `disponible`) nunca toca
+    //  lo reservado. Consumir una reserva propia es la salida real: baja
+    //  `cantidad` y `reservada`, y `disponible` no cambia.
+
+    /** Reserva `cantidad` en una ubicación si hay disponible suficiente. */
+    async reservar(opts: OperacionReserva): Promise<void> {
+        const { filtro, cantidad, nombre } = await this.prepararReserva(opts);
+
+        const fila = await this.existenciaModel
+            .findOneAndUpdate(
+                {
+                    ...filtro,
+                    disponible: {
+                        $gte: Math.max(0, cantidad - TOLERANCIA_SALDO),
+                    },
+                },
+                { $inc: { reservada: cantidad, disponible: -cantidad } },
+                { returnDocument: 'after' },
+            )
+            .lean()
+            .exec();
+
+        if (!fila) {
+            throw await this.errorDeReserva(
+                filtro,
+                nombre,
+                cantidad,
+                'disponible',
+            );
+        }
+    }
+
+    /** Libera `cantidad` reservada en una ubicación: vuelve a estar disponible. */
+    async liberarReserva(opts: OperacionReserva): Promise<void> {
+        const { filtro, cantidad, nombre } = await this.prepararReserva(opts);
+
+        const fila = await this.existenciaModel
+            .findOneAndUpdate(
+                {
+                    ...filtro,
+                    reservada: {
+                        $gte: Math.max(0, cantidad - TOLERANCIA_SALDO),
+                    },
+                },
+                { $inc: { reservada: -cantidad, disponible: cantidad } },
+                { returnDocument: 'after' },
+            )
+            .lean()
+            .exec();
+
+        if (!fila) {
+            throw await this.errorDeReserva(
+                filtro,
+                nombre,
+                cantidad,
+                'reservada',
+            );
+        }
+    }
+
+    /**
+     * Consume una reserva propia: la mercancía reservada sale de verdad.
+     * Baja `cantidad` y `reservada` (`disponible` no cambia) y el total
+     * sincronizado del producto.
+     */
+    async consumirReserva(
+        opts: OperacionReserva,
+    ): Promise<ResultadoMovimiento> {
+        const { filtro, cantidad, nombre, productoId, almacen, contenedor } =
+            await this.prepararReserva(opts);
+
+        const fila = await this.existenciaModel
+            .findOneAndUpdate(
+                {
+                    ...filtro,
+                    reservada: {
+                        $gte: Math.max(0, cantidad - TOLERANCIA_SALDO),
+                    },
+                },
+                { $inc: { cantidad: -cantidad, reservada: -cantidad } },
+                { returnDocument: 'after' },
+            )
+            .lean()
+            .exec();
+
+        if (!fila) {
+            throw await this.errorDeReserva(
+                filtro,
+                nombre,
+                cantidad,
+                'reservada',
+            );
+        }
+
+        const stockTotal = await this.moverCacheProducto(productoId, -cantidad);
+
+        return {
+            ubicaciones: [{ almacen, contenedor, cantidad }],
+            stockTotal,
+        };
+    }
+
+    private async prepararReserva(opts: OperacionReserva): Promise<{
+        productoId: Types.ObjectId;
+        almacen: Types.ObjectId;
+        contenedor: Types.ObjectId;
+        cantidad: number;
+        filtro: Record<string, unknown>;
+        nombre: string;
+    }> {
+        const productoId = this.comoObjectId(
+            opts.productoId,
+            'El ID del producto no es válido',
+        );
+        const almacen = this.comoObjectId(
+            opts.almacenId,
+            'El ID del almacén no es válido',
+        );
+        const contenedor = this.comoObjectId(
+            opts.contenedorId,
+            'El ID del contenedor no es válido',
+        );
+        const cantidad = this.cantidadValida(opts.cantidad);
+
+        return {
+            productoId,
+            almacen,
+            contenedor,
+            cantidad,
+            filtro: this.filtroUbicacion(productoId, almacen, contenedor),
+            nombre: `del producto ${String(productoId)}`,
+        };
+    }
+
+    /** Error claro cuando la escritura condicional de una reserva no aplicó. */
+    private async errorDeReserva(
+        filtro: Record<string, unknown>,
+        nombre: string,
+        solicitado: number,
+        campo: 'disponible' | 'reservada',
+    ): Promise<BadRequestException> {
+        const fila = await this.existenciaModel
+            .findOne(filtro)
+            .select('cantidad reservada disponible')
+            .lean()
+            .exec();
+
+        if (!fila) {
+            return new BadRequestException(
+                'El producto no existe en la ubicación indicada',
+            );
+        }
+
+        if (campo === 'disponible') {
+            return new StockInsuficienteException(
+                nombre,
+                Math.max(0, this.disponibleDe(fila)),
+                solicitado,
+                'en la ubicación indicada',
+            );
+        }
+
+        return new BadRequestException(
+            `Reserva insuficiente en la ubicación indicada: reservada ${Number(fila.reservada) || 0}, solicitado ${solicitado}`,
+        );
+    }
+
     /**
      * Deja una existencia en una cantidad exacta (la crea si no existe) y
      * devuelve la cantidad anterior. Solo para la conciliación: no mueve el
@@ -705,8 +937,23 @@ export class ExistenciaService {
             const anterior = await this.existenciaModel
                 .findOneAndUpdate(
                     filtro,
-                    { $set: { cantidad: fijada } },
-                    { returnDocument: 'before' },
+                    // Pipeline: `disponible` se recalcula con la `reservada`
+                    // vigente en la MISMA escritura que fija la cantidad.
+                    [
+                        {
+                            $set: {
+                                cantidad: fijada,
+                                reservada: { $ifNull: ['$reservada', 0] },
+                                disponible: {
+                                    $subtract: [
+                                        fijada,
+                                        { $ifNull: ['$reservada', 0] },
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                    { returnDocument: 'before', updatePipeline: true },
                 )
                 .lean()
                 .exec();
@@ -721,6 +968,8 @@ export class ExistenciaService {
                     almacen: almacenId,
                     contenedor: contenedorId,
                     cantidad: fijada,
+                    reservada: 0,
+                    disponible: fijada,
                 });
 
                 return 0;
@@ -781,7 +1030,7 @@ export class ExistenciaService {
     ): Promise<ResultadoNormalizacion> {
         const filas = await this.existenciaModel
             .find(productoId ? { producto: { $in: ambosTipos(productoId) } } : {})
-            .select('producto almacen contenedor cantidad')
+            .select('producto almacen contenedor cantidad reservada disponible')
             .lean()
             .exec();
 
@@ -827,6 +1076,7 @@ export class ExistenciaService {
             const sobrantes = grupo.filter((f) => f !== elegida);
             const retiradas: (typeof filas)[number][] = [];
             let retirado = 0;
+            let reservadaRetirada = 0;
 
             try {
                 for (const sobrante of sobrantes) {
@@ -837,8 +1087,11 @@ export class ExistenciaService {
 
                     if (borrada) {
                         retiradas.push(borrada);
-                        retirado = redondear(
-                            retirado + (Number(borrada.cantidad) || 0),
+                        const cantidadBorrada = Number(borrada.cantidad) || 0;
+                        const reservadaBorrada = Number(borrada.reservada) || 0;
+                        retirado = redondear(retirado + cantidadBorrada);
+                        reservadaRetirada = redondear(
+                            reservadaRetirada + reservadaBorrada,
                         );
                     }
                 }
@@ -848,8 +1101,18 @@ export class ExistenciaService {
                         { _id: elegida._id },
                         {
                             $set: { producto, almacen, contenedor },
-                            ...(retirado !== 0
-                                ? { $inc: { cantidad: retirado } }
+                            ...(retirado !== 0 || reservadaRetirada !== 0
+                                ? {
+                                      // cantidad, reservada y disponible
+                                      // cambian en la misma escritura.
+                                      $inc: {
+                                          cantidad: retirado,
+                                          reservada: reservadaRetirada,
+                                          disponible: redondear(
+                                              retirado - reservadaRetirada,
+                                          ),
+                                      },
+                                  }
                                 : {}),
                         },
                     )
@@ -971,7 +1234,9 @@ export class ExistenciaService {
 
         for (let intento = 0; intento < MAX_INTENTOS_FILA_NUEVA; intento++) {
             const resultado = await this.existenciaModel
-                .updateOne(filtro, { $inc: { cantidad } })
+                .updateOne(filtro, {
+                    $inc: { cantidad, disponible: cantidad },
+                })
                 .exec();
 
             if (resultado.matchedCount > 0) {
@@ -984,6 +1249,8 @@ export class ExistenciaService {
                     almacen: almacenId,
                     contenedor: contenedorId,
                     cantidad,
+                    reservada: 0,
+                    disponible: cantidad,
                 });
 
                 return;
@@ -1007,6 +1274,8 @@ export class ExistenciaService {
             almacen: Types.ObjectId;
             contenedor: Types.ObjectId;
             cantidad: number;
+            reservada?: number;
+            disponible?: number;
         }[],
     ): Promise<void> {
         for (const fila of filas) {
@@ -1018,6 +1287,8 @@ export class ExistenciaService {
                     almacen: fila.almacen,
                     contenedor: fila.contenedor,
                     cantidad: Number(fila.cantidad) || 0,
+                    reservada: Number(fila.reservada) || 0,
+                    disponible: this.disponibleDe(fila),
                 });
             } catch (error) {
                 this.logger.error(
@@ -1032,18 +1303,35 @@ export class ExistenciaService {
     ): Promise<FilaExistencia[]> {
         const filas = await this.existenciaModel
             .find({ ...filtro, cantidad: { $gt: EPSILON } })
-            .select('almacen contenedor cantidad')
+            .select('almacen contenedor cantidad reservada disponible')
             .lean()
             .exec();
 
         // Las ubicaciones que se devuelven (y que quedan en la venta o la
-        // factura) son siempre ObjectId, aunque la fila antigua las tenga en texto.
-        return filas.map((fila) => ({
-            _id: fila._id,
-            almacen: aObjectId(fila.almacen) ?? fila.almacen,
-            contenedor: aObjectId(fila.contenedor) ?? fila.contenedor,
-            cantidad: Number(fila.cantidad) || 0,
-        }));
+        // factura) son siempre ObjectId, aunque la fila antigua las tenga en
+        // texto. `cantidad` aquí es lo VENDIBLE (`disponible`): la mercancía
+        // reservada no entra en el reparto.
+        return filas
+            .map((fila) => ({
+                _id: fila._id,
+                almacen: aObjectId(fila.almacen) ?? fila.almacen,
+                contenedor: aObjectId(fila.contenedor) ?? fila.contenedor,
+                cantidad: this.disponibleDe(fila),
+            }))
+            .filter((fila) => fila.cantidad > EPSILON);
+    }
+
+    /** `disponible` de una fila; si le falta (aún sin migrar) se deriva. */
+    private disponibleDe(fila: {
+        cantidad: number;
+        reservada?: number;
+        disponible?: number;
+    }): number {
+        return typeof fila.disponible === 'number'
+            ? fila.disponible
+            : redondear(
+                  (Number(fila.cantidad) || 0) - (Number(fila.reservada) || 0),
+              );
     }
 
     /**
@@ -1059,14 +1347,20 @@ export class ExistenciaService {
                 .updateOne(
                     {
                         _id: asignacion.existenciaId,
-                        cantidad: {
+                        // Sobre `disponible`, no sobre `cantidad`: lo reservado no se vende.
+                        disponible: {
                             $gte: Math.max(
                                 0,
                                 asignacion.cantidad - TOLERANCIA_SALDO,
                             ),
                         },
                     },
-                    { $inc: { cantidad: -asignacion.cantidad } },
+                    {
+                        $inc: {
+                            cantidad: -asignacion.cantidad,
+                            disponible: -asignacion.cantidad,
+                        },
+                    },
                 )
                 .exec();
 
@@ -1110,7 +1404,12 @@ export class ExistenciaService {
                 await this.existenciaModel
                     .updateOne(
                         { _id: asignacion.existenciaId },
-                        { $inc: { cantidad: asignacion.cantidad } },
+                        {
+                            $inc: {
+                                cantidad: asignacion.cantidad,
+                                disponible: asignacion.cantidad,
+                            },
+                        },
                     )
                     .exec();
             } catch (error) {
@@ -1135,14 +1434,19 @@ export class ExistenciaService {
                                 ubicacion.almacen,
                                 ubicacion.contenedor,
                             ),
-                            cantidad: {
+                            disponible: {
                                 $gte: Math.max(
                                     0,
                                     ubicacion.cantidad - TOLERANCIA_SALDO,
                                 ),
                             },
                         },
-                        { $inc: { cantidad: -ubicacion.cantidad } },
+                        {
+                            $inc: {
+                                cantidad: -ubicacion.cantidad,
+                                disponible: -ubicacion.cantidad,
+                            },
+                        },
                     )
                     .exec();
             } catch (error) {

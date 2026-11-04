@@ -54,6 +54,34 @@ export class KardexService {
     }
   }
 
+  /** Campos contables del Submayor SC-2-13 que el DTO trae; los ausentes no se escriben. */
+  private camposContables(
+    dto: CreateKardexDto,
+  ): Partial<
+    Pick<
+      CreateKardexDto,
+      | 'importeCUP'
+      | 'importeDivisa'
+      | 'costoPromedio'
+      | 'ubicacionFisica'
+      | 'referenciaContable'
+    >
+  > {
+    const campos = [
+      'importeCUP',
+      'importeDivisa',
+      'costoPromedio',
+      'ubicacionFisica',
+      'referenciaContable',
+    ] as const;
+
+    return Object.fromEntries(
+      campos
+        .filter((campo) => dto[campo] !== undefined)
+        .map((campo) => [campo, dto[campo]]),
+    );
+  }
+
   //Crear un kardex y actualizar el stock del producto
   async create(
     createKardexDto: CreateKardexDto,
@@ -91,7 +119,8 @@ export class KardexService {
         tipo,
         cantidad,
         stock: nuevoStock,
-        motivo
+        motivo,
+        ...this.camposContables(createKardexDto),
       })
     ]);
 
@@ -148,6 +177,7 @@ export class KardexService {
         cantidad,
         stock: movimiento.stockTotal,
         motivo,
+        ...this.camposContables(createKardexDto),
       });
     } catch (error) {
       await this.deshacerMovimiento(tipo, productoId, movimiento);

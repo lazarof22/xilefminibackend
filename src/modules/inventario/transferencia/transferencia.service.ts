@@ -463,7 +463,7 @@ export class TransferenciaService {
         }
 
         return new BadRequestException(
-            `Stock insuficiente en origen. Disponible: ${existenciaReal.cantidad}`,
+            `Stock insuficiente en origen. Disponible: ${existenciaReal.disponible ?? existenciaReal.cantidad}`,
         );
     }
 

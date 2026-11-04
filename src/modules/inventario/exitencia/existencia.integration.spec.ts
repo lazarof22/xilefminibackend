@@ -528,17 +528,22 @@ describeConBase('Existencias contra MongoDB real (Fase 1)', () => {
       );
 
     /** Fila con ids de texto, como las de `sincronizarUbicacionInicial`. */
-    const filaAntigua = (
+    // Datos anteriores a la fase de reservas: sin `reservada` ni `disponible`.
+    // Al arrancar, `onModuleInit` los rellena (aquí se hace a mano, justo
+    // después de insertarlos).
+    const filaAntigua = async (
       producto: Types.ObjectId,
       contenedor: Types.ObjectId,
       cantidad: number,
-    ) =>
-      existenciaModel.collection.insertOne({
+    ) => {
+      await existenciaModel.collection.insertOne({
         producto,
         almacen: String(A1),
         contenedor: String(contenedor),
         cantidad,
       });
+      await servicio.rellenarDisponible();
+    };
 
     beforeEach(catalogosComoTexto);
 
@@ -689,6 +694,141 @@ describeConBase('Existencias contra MongoDB real (Fase 1)', () => {
         expect(await filasCrudas(P)).toHaveLength(1);
         expect(await sumaDe(P)).toBe(3);
         expect(await stockDe(P)).toBe(3);
+      },
+    );
+  });
+
+  // ─── Reservas: reservada / disponible (doc §6.1) ──────────────────
+  describe('reservada y disponible', () => {
+    const filaDe = async (
+      producto: Types.ObjectId,
+      contenedor: Types.ObjectId,
+    ) => (await existenciaModel.findOne({ producto, contenedor }).lean())!;
+
+    it('una existencia creada con el modelo recibe reservada 0 y disponible = cantidad', async () => {
+      const P = await crearProducto('RES-1', 5, [[A1, C1, 5]]);
+
+      expect(await filaDe(P, C1)).toMatchObject({
+        cantidad: 5,
+        reservada: 0,
+        disponible: 5,
+      });
+    });
+
+    it('reservar, vender lo disponible y consumir mantienen disponible = cantidad - reservada', async () => {
+      const P = await crearProducto('RES-2', 10, [[A1, C1, 10]]);
+
+      await servicio.reservar({
+        productoId: P,
+        almacenId: A1,
+        contenedorId: C1,
+        cantidad: 8,
+      });
+      expect(await filaDe(P, C1)).toMatchObject({
+        cantidad: 10,
+        reservada: 8,
+        disponible: 2,
+      });
+
+      // Vender lo reservado se rechaza; lo disponible sí se vende.
+      await expect(
+        servicio.descontarProducto({ productoId: P, cantidad: 5 }),
+      ).rejects.toBeInstanceOf(StockInsuficienteException);
+      await servicio.descontarProducto({ productoId: P, cantidad: 2 });
+      expect(await filaDe(P, C1)).toMatchObject({
+        cantidad: 8,
+        reservada: 8,
+        disponible: 0,
+      });
+
+      await servicio.consumirReserva({
+        productoId: P,
+        almacenId: A1,
+        contenedorId: C1,
+        cantidad: 5,
+      });
+      expect(await filaDe(P, C1)).toMatchObject({
+        cantidad: 3,
+        reservada: 3,
+        disponible: 0,
+      });
+      expect(await stockDe(P)).toBe(3);
+
+      await servicio.liberarReserva({
+        productoId: P,
+        almacenId: A1,
+        contenedorId: C1,
+        cantidad: 3,
+      });
+      expect(await filaDe(P, C1)).toMatchObject({
+        cantidad: 3,
+        reservada: 0,
+        disponible: 3,
+      });
+    });
+
+    it('fijarCantidad (pipeline) recalcula disponible con la reserva vigente', async () => {
+      const P = await crearProducto('RES-3', 10, [[A1, C1, 10]]);
+      await servicio.reservar({
+        productoId: P,
+        almacenId: A1,
+        contenedorId: C1,
+        cantidad: 4,
+      });
+
+      const anterior = await servicio.fijarCantidad(P, A1, C1, 12);
+
+      expect(anterior).toBe(10);
+      expect(await filaDe(P, C1)).toMatchObject({
+        cantidad: 12,
+        reservada: 4,
+        disponible: 8,
+      });
+    });
+
+    it('rellenarDisponible completa solo las filas sin disponible y es idempotente', async () => {
+      const P = await crearProducto('RES-4', 9, []);
+      // Documento anterior a esta fase, insertado sin pasar por el esquema.
+      await existenciaModel.collection.insertOne({
+        producto: P,
+        almacen: A1,
+        contenedor: C1,
+        cantidad: 9,
+      });
+      await existenciaModel.collection.insertOne({
+        producto: P,
+        almacen: A1,
+        contenedor: C2,
+        cantidad: 5,
+        reservada: 2,
+      });
+
+      expect(await servicio.rellenarDisponible()).toBe(2);
+      expect(await filaDe(P, C1)).toMatchObject({ reservada: 0, disponible: 9 });
+      expect(await filaDe(P, C2)).toMatchObject({ reservada: 2, disponible: 3 });
+      expect(await servicio.rellenarDisponible()).toBe(0);
+    });
+
+    itAtomico(
+      'dos reservas simultáneas de lo último disponible: solo una gana',
+      async () => {
+        const P = await crearProducto('RES-5', 5, [[A1, C1, 5]]);
+        const reservar = () =>
+          servicio.reservar({
+            productoId: P,
+            almacenId: A1,
+            contenedorId: C1,
+            cantidad: 5,
+          });
+
+        const resultados = await Promise.allSettled([reservar(), reservar()]);
+
+        expect(resultados.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+        expect(await filaDe(P, C1)).toMatchObject({
+          cantidad: 5,
+          reservada: 5,
+          disponible: 0,
+        });
       },
     );
   });
