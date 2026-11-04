@@ -141,7 +141,9 @@ export class AjusteInventarioService {
       throw new BadRequestException('El ajuste necesita al menos una línea');
     }
     for (const linea of lineas) {
-      if ('saldoAntes' in linea || 'saldoDespues' in linea) {
+      // Se mira el VALOR: una instancia de clase (la que entrega el
+      // ValidationPipe) trae las propiedades definidas como `undefined`.
+      if (linea.saldoAntes !== undefined || linea.saldoDespues !== undefined) {
         throw new BadRequestException(
           'El saldo antes y después lo calcula el servidor',
         );

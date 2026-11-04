@@ -45,6 +45,16 @@ export class UpdateEmpresaDatosDto {
   ruc_nit?: string;
 
   @ApiPropertyOptional({
+    example: '1234567',
+    description:
+      'Código de la entidad (REEUP). Los documentos SC-2 (recepción, devolución, ajuste) lo llevan en la cabecera.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  codigo_entidad?: string;
+
+  @ApiPropertyOptional({
     example: 'La Habana',
     description:
       'Texto libre (compatibilidad con datos antiguos). Se resuelve contra el nomenclador Ciudad del país indicado; prefiera `ciudadId`.',

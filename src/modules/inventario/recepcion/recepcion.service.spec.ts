@@ -303,6 +303,35 @@ describe('RecepcionService (SC-2-04)', () => {
       expect(e.recepciones.docs).toHaveLength(0);
     });
 
+    it('usa el código de la entidad (REEUP) de la empresa y, si no hay, el RUC/NIT', async () => {
+      const e = escenario();
+      e.empresa.obtener.mockResolvedValue({
+        nombre: 'Xilef SA',
+        codigo_entidad: 'REEUP-777',
+        ruc_nit: '01234567890',
+      });
+      const conReeup = await e.servicio.crear(e.dto(), e.usuario);
+      expect(conReeup.entidadReceptora).toEqual({
+        codigo: 'REEUP-777',
+        nombre: 'Xilef SA',
+      });
+
+      e.empresa.obtener.mockResolvedValue({ nombre: 'Xilef SA', ruc_nit: '555' });
+      const conNit = await e.servicio.crear(e.dto(), e.usuario);
+      expect(conNit.entidadReceptora.codigo).toBe('555');
+    });
+
+    it('rechaza con un mensaje claro si la empresa no tiene código de entidad ni RUC/NIT', async () => {
+      const e = escenario();
+      e.empresa.obtener.mockResolvedValue({ nombre: 'Xilef SA' });
+
+      await expect(e.servicio.crear(e.dto(), e.usuario)).rejects.toThrow(
+        'código de la entidad',
+      );
+      expect(e.recepciones.docs).toHaveLength(0);
+      expect(e.consecutivo.siguiente).not.toHaveBeenCalled();
+    });
+
     it('exige los datos de la empresa para la entidad receptora', async () => {
       const e = escenario();
       e.empresa.obtener.mockResolvedValue(null);

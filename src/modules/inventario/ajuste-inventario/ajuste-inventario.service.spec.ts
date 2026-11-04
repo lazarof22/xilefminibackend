@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
 import { Types } from 'mongoose';
 import { ExistenciaService } from '../exitencia/existencia.service';
 import { FakeModel } from '../exitencia/fake-mongo-spec';
@@ -188,6 +189,20 @@ describe('AjusteInventarioService (SC-2-16)', () => {
       expect(String(e.kardex.docs[0].motivo)).toContain('6');
       expect(String(e.kardex.docs[0].motivo)).toContain('4');
       expect(e.ajustes.docs).toHaveLength(1);
+    });
+
+    it('acepta el DTO tal como llega del ValidationPipe: instancias de clase con saldoAntes/saldoDespues sin definir', async () => {
+      const e = escenario();
+      await e.existenciaService.activarModoUnificado('admin');
+      // `plainToInstance` crea las propiedades `saldoAntes`/`saldoDespues` con
+      // valor `undefined` (campos de clase): `'saldoAntes' in linea` es true.
+      const dto = plainToInstance(CreateAjusteInventarioDto, e.dto());
+      expect('saldoAntes' in dto.lineas[0]).toBe(true);
+
+      const r = await e.servicio.crear(dto, e.usuario());
+
+      expect(r.lineas[0]).toMatchObject({ saldoAntes: 6, saldoDespues: 4 });
+      expect(e.stock()).toBe(8);
     });
 
     it('un aumento acepta una causa libre, la entrada va a la ubicación indicada', async () => {

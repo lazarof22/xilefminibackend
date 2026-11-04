@@ -23,6 +23,10 @@ export class EmpresaDatos {
   @Prop()
   ruc_nit?: string;
 
+  /** Código de la entidad (REEUP): los modelos SC-2 lo exigen en cada documento. */
+  @Prop()
+  codigo_entidad?: string;
+
   /**
    * Nombre imprimible de la ciudad. Es el texto libre de los documentos
    * antiguos y, cuando hay `ciudadId`, una copia del nombre del nomenclador.

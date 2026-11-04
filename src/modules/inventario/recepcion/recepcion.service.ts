@@ -390,7 +390,15 @@ export class RecepcionService {
         'Configure los datos de la empresa antes de crear recepciones (entidad receptora)',
       );
     }
-    return { codigo: empresa.ruc_nit ?? '', nombre: empresa.nombre };
+    // SC-2-04 exige nombre y código de la entidad: REEUP de la empresa o, en su
+    // defecto, su RUC/NIT. Sin ninguno el documento no puede emitirse.
+    const codigo = (empresa.codigo_entidad || empresa.ruc_nit || '').trim();
+    if (!codigo) {
+      throw new BadRequestException(
+        'Configure el código de la entidad (REEUP o RUC/NIT) en los datos de la empresa antes de crear recepciones',
+      );
+    }
+    return { codigo, nombre: empresa.nombre };
   }
 
   private async validarReferencias(
