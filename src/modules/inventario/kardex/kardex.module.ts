@@ -22,6 +22,6 @@ import { ExistenciaModule } from '../exitencia/existencia.module';
   NomencladorHelperModule,
   ExistenciaModule,
 ],
-  exports: [MongooseModule],
+  exports: [MongooseModule, KardexService],
 })
 export class KardexModule { }

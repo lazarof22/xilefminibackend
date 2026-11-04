@@ -14,6 +14,26 @@ import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { Kardex, KardexTipo } from '../kardex/schema/kardex.schema';
 
+/**
+ * Datos con los que un documento (p. ej. la Recepción SC-2-04) deja su
+ * rastro en el kardex de la compra. Todo es opcional: sin contexto el
+ * kardex queda exactamente como lo escribía `create`.
+ */
+export interface ContextoMovimientoCompra {
+    /** Documento que origina el movimiento (por defecto, el id de la compra). */
+    referencia?: string;
+    motivo?: string;
+    importeCUP?: number;
+    costoPromedio?: number;
+    ubicacionFisica?: string;
+}
+
+/** Lo que dejó escrito una compra: el registro y su movimiento de kardex. */
+export interface LineaCompraRegistrada {
+    registro: RegistroCompra;
+    kardexId?: string;
+}
+
 @Injectable()
 export class RegistroCompraService {
     private readonly logger = new Logger(RegistroCompraService.name);
@@ -48,7 +68,22 @@ export class RegistroCompraService {
      * independiente): si el kardex falla, se elimina la compra para no
      * dejar un registro sin su movimiento.
      */
-    async create(dto: CreateRegistroCompraDto): Promise<RegistroCompra> {
+    async create(
+        dto: CreateRegistroCompraDto,
+        contexto?: ContextoMovimientoCompra,
+    ): Promise<RegistroCompra> {
+        return (await this.registrarLinea(dto, contexto)).registro;
+    }
+
+    /**
+     * Igual que `create`, pero devuelve también el id del kardex escrito para
+     * que quien registra varias líneas (la Recepción) pueda deshacer una a
+     * una si alguna posterior falla.
+     */
+    async registrarLinea(
+        dto: CreateRegistroCompraDto,
+        contexto: ContextoMovimientoCompra = {},
+    ): Promise<LineaCompraRegistrada> {
         const [producto, almacen, contenedor] = await Promise.all([
             this.productoModel
                 .findById(dto.producto)
@@ -98,16 +133,20 @@ export class RegistroCompraService {
             fecha,
         });
 
+        let kardexId: string | undefined;
+
         try {
-            await this.kardexModel.create({
+            const kardex = await this.kardexModel.create({
                 fecha,
                 productoId: producto._id,
                 tipo: KardexTipo.COMPRA,
                 cantidad: dto.cantidad,
                 stock: Math.max(0, Number(producto.stock_inicial) || 0),
-                motivo: 'Compra',
-                referencia: registro._id.toString(),
+                motivo: contexto.motivo ?? 'Compra',
+                referencia: contexto.referencia ?? registro._id.toString(),
+                ...this.camposContables(contexto),
             });
+            kardexId = kardex._id?.toString();
         } catch (error) {
             try {
                 await this.registroCompraModel.deleteOne({ _id: registro._id });
@@ -120,7 +159,39 @@ export class RegistroCompraService {
             throw error;
         }
 
-        return registro;
+        return { registro, kardexId };
+    }
+
+    /**
+     * Deshace una línea registrada cuyo documento no llegó a completarse:
+     * elimina la compra y su kardex. Solo para compensar un registro en
+     * curso; un movimiento ya completo se corrige con otro movimiento.
+     */
+    async descartarLinea(linea: {
+        registroId: string;
+        kardexId?: string;
+    }): Promise<void> {
+        if (linea.kardexId) {
+            await this.kardexModel.deleteOne({ _id: linea.kardexId });
+        }
+        await this.registroCompraModel.deleteOne({ _id: linea.registroId });
+    }
+
+    /** Campos contables del contexto que vienen definidos (los ausentes no se escriben). */
+    private camposContables(
+        contexto: ContextoMovimientoCompra,
+    ): Partial<
+        Pick<
+            ContextoMovimientoCompra,
+            'importeCUP' | 'costoPromedio' | 'ubicacionFisica'
+        >
+    > {
+        const campos = ['importeCUP', 'costoPromedio', 'ubicacionFisica'] as const;
+        return Object.fromEntries(
+            campos
+                .filter((campo) => contexto[campo] !== undefined)
+                .map((campo) => [campo, contexto[campo]]),
+        );
     }
 
     async findAll(): Promise<RegistroCompra[]> {

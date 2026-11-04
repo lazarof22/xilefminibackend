@@ -25,6 +25,6 @@ import { Kardex, KardexSchema } from '../kardex/schema/kardex.schema';
             { name: Kardex.name, schema: KardexSchema },
         ]),
     ],
-    exports: [MongooseModule],
+    exports: [MongooseModule, RegistroCompraService],
 })
 export class RegistroCompraModule {}

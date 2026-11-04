@@ -45,7 +45,7 @@ describe('RegistroCompraService', () => {
   let productoModel: { findById: jest.Mock };
   let almacenModel: { findById: jest.Mock };
   let contenedorModel: { findById: jest.Mock };
-  let kardexModel: { create: jest.Mock };
+  let kardexModel: { create: jest.Mock; deleteOne?: jest.Mock };
 
   beforeEach(async () => {
     registroModel = {
@@ -203,6 +203,73 @@ describe('RegistroCompraService', () => {
       await expect(service.create(dto)).rejects.toThrow(BadRequestException);
       expect(registroModel.create).not.toHaveBeenCalled();
       expect(kardexModel.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('registrarLinea (recepción SC-2-04)', () => {
+    const kardexId = new Types.ObjectId();
+
+    beforeEach(() => {
+      kardexModel.create.mockResolvedValue({ _id: kardexId });
+    });
+
+    it('escribe el kardex COMPRA con la referencia del documento y el costo, y devuelve su id', async () => {
+      const res = await service.registrarLinea(dto, {
+        referencia: 'REC-000007',
+        motivo: 'Recepción REC-000007',
+        importeCUP: 42,
+        costoPromedio: 3.5,
+        ubicacionFisica: 'Central / Estante 1',
+      });
+
+      expect(kardexModel.create).toHaveBeenCalledWith({
+        fecha: new Date('2026-10-05T12:00:00.000Z'),
+        productoId,
+        tipo: KardexTipo.COMPRA,
+        cantidad: 12,
+        stock: 12,
+        motivo: 'Recepción REC-000007',
+        referencia: 'REC-000007',
+        importeCUP: 42,
+        costoPromedio: 3.5,
+        ubicacionFisica: 'Central / Estante 1',
+      });
+      expect(res.registro).toEqual({ _id: registroId });
+      expect(res.kardexId).toBe(kardexId.toString());
+    });
+
+    it('sin contexto escribe exactamente el mismo kardex que create (compatibilidad)', async () => {
+      await service.registrarLinea(dto);
+
+      expect(kardexModel.create).toHaveBeenCalledWith({
+        fecha: new Date('2026-10-05T12:00:00.000Z'),
+        productoId,
+        tipo: KardexTipo.COMPRA,
+        cantidad: 12,
+        stock: 12,
+        motivo: 'Compra',
+        referencia: registroId.toString(),
+      });
+    });
+
+    it('create sigue devolviendo solo el registro de compra', async () => {
+      await expect(service.create(dto)).resolves.toEqual({ _id: registroId });
+    });
+
+    it('descartarLinea elimina la compra y su kardex por id', async () => {
+      kardexModel.deleteOne = jest.fn().mockResolvedValue({});
+
+      await service.descartarLinea({
+        registroId: registroId.toString(),
+        kardexId: kardexId.toString(),
+      });
+
+      expect(kardexModel.deleteOne).toHaveBeenCalledWith({
+        _id: kardexId.toString(),
+      });
+      expect(registroModel.deleteOne).toHaveBeenCalledWith({
+        _id: registroId.toString(),
+      });
     });
   });
 

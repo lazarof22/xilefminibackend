@@ -122,6 +122,16 @@ describe('KardexService.create — ajuste de inventario', () => {
       expect(e.cantidad(e.C3)).toBe(1);
     });
 
+    it('guarda la referencia también antes de unificar', async () => {
+      const e = escenario();
+
+      await e.servicio.create(
+        e.dto({ tipo: KardexTipo.ENTRADA, cantidad: 1, referencia: 'AJU-000002' }),
+      );
+
+      expect(e.kardex.docs[0]).toMatchObject({ referencia: 'AJU-000002' });
+    });
+
     it('una entrada solo sube el stock del producto', async () => {
       const e = escenario();
 
@@ -160,6 +170,26 @@ describe('KardexService.create — ajuste de inventario', () => {
         stock: 15,
         motivo: 'Ajuste de prueba',
       });
+    });
+
+    it('guarda la referencia del documento que origina el ajuste', async () => {
+      const e = escenario();
+      await e.existenciaService.activarModoUnificado('admin');
+
+      await e.servicio.create(
+        e.dto({ tipo: KardexTipo.SALIDA, cantidad: 1, referencia: 'AJU-000001' }),
+      );
+
+      expect(e.kardex.docs[0]).toMatchObject({ referencia: 'AJU-000001' });
+    });
+
+    it('sin referencia no escribe el campo', async () => {
+      const e = escenario();
+      await e.existenciaService.activarModoUnificado('admin');
+
+      await e.servicio.create(e.dto({ tipo: KardexTipo.SALIDA, cantidad: 1 }));
+
+      expect(e.kardex.docs[0]).not.toHaveProperty('referencia');
     });
 
     it('una entrada puede indicar la ubicación', async () => {

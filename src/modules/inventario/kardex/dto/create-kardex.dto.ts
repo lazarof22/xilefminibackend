@@ -43,6 +43,12 @@ export class CreateKardexDto {
     @IsMongoId()
     contenedorId?: string;
 
+    /** Documento que origina el movimiento (p. ej. `AJU-000012`). */
+    @ApiPropertyOptional({ description: 'Documento que origina el movimiento' })
+    @IsOptional()
+    @IsString()
+    referencia?: string;
+
     /** Submayor SC-2-13: importe del movimiento en pesos (CUP). */
     @ApiPropertyOptional({ description: 'Importe del movimiento en CUP', minimum: 0 })
     @IsOptional()

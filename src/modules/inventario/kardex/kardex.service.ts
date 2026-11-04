@@ -54,7 +54,7 @@ export class KardexService {
     }
   }
 
-  /** Campos contables del Submayor SC-2-13 que el DTO trae; los ausentes no se escriben. */
+  /** Referencia y campos contables del Submayor SC-2-13 que el DTO trae; los ausentes no se escriben. */
   private camposContables(
     dto: CreateKardexDto,
   ): Partial<
@@ -65,6 +65,7 @@ export class KardexService {
       | 'costoPromedio'
       | 'ubicacionFisica'
       | 'referenciaContable'
+      | 'referencia'
     >
   > {
     const campos = [
@@ -73,6 +74,7 @@ export class KardexService {
       'costoPromedio',
       'ubicacionFisica',
       'referenciaContable',
+      'referencia',
     ] as const;
 
     return Object.fromEntries(
