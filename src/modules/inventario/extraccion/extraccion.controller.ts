@@ -13,11 +13,10 @@ import { CreateExtraccionDto } from './dto/create-extraccion.dto';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
-
-/** `request.user` lo rellena `JwtAuthGuard`; se deja opcional para no romper los tests del servicio. */
-interface RequestOpcional {
-  user?: { userId: string };
-}
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
+import type { RequestWithUser } from '../../auth/types/jwt-user.type';
 
 @ApiTags('Extraccion')
 @ApiBearerAuth()
@@ -29,12 +28,17 @@ export class ExtraccionController {
   @Post()
   @ApiOperation({
     summary:
-      'Registrar una extracción de caja (se vincula al turno abierto del cajero autenticado, si lo hay)',
+      'Registrar una extracción de caja (se vincula al turno abierto del usuario autenticado). ' +
+      'Requiere ser administrador o gerente, o enviar `tokenAutorizador` de uno de ellos.',
   })
   @ApiResponse({ status: 201, description: 'Extracción registrada' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
-  create(@Body() dto: CreateExtraccionDto, @Req() req: RequestOpcional) {
-    return this.extraccionService.create(dto, req.user?.userId);
+  @ApiResponse({
+    status: 403,
+    description: 'Sin autorización de un administrador o gerente',
+  })
+  create(@Body() dto: CreateExtraccionDto, @Req() req: RequestWithUser) {
+    return this.extraccionService.create(dto, req.user);
   }
 
   @Get()
@@ -54,7 +58,12 @@ export class ExtraccionController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Eliminar una extracción' })
+  @UseGuards(RolesGuard)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.GERENTE)
+  @ApiOperation({
+    summary: 'Eliminar una extracción (administrador o gerente)',
+  })
+  @ApiResponse({ status: 403, description: 'Rol sin permiso' })
   @ApiParam({ name: 'id', description: 'ID de la extracción' })
   @ApiResponse({ status: 200, description: 'Extracción eliminada' })
   @ApiResponse({ status: 404, description: 'No encontrada' })

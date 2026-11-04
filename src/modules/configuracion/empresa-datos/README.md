@@ -2,6 +2,8 @@
 
 Gestiona los datos de la empresa que usa XILEF. Un solo registro con upsert.
 
+> `/empresa` es exclusivo de estos datos (singleton). El listado de empresas clientes/proveedores (módulo `clientes y provedores/empresa`) vive en `/empresas`; `empresa-rutas.spec.ts` verifica que ningún otro controlador use `/empresa`.
+
 ## Endpoints
 
 ### `GET /empresa` (público)

@@ -11,6 +11,7 @@ import { JWT_SECRET } from './constants/constants';
 import { LocalStrategy } from './strategies/local.strategies';
 import { JwtStrategy } from './strategies/jwt.strategies';
 import { RolesGuard } from './guards/roles.guard';
+import { AutorizadorSupervisorService } from './autorizador-supervisor.service';
 import { LicenciaModule } from '../licencia/licencia.module';
 
 @Module({
@@ -32,7 +33,8 @@ import { LicenciaModule } from '../licencia/licencia.module';
     LocalStrategy,
     JwtStrategy,
     RolesGuard,
+    AutorizadorSupervisorService,
   ],
-  exports: [UsuariosService],
+  exports: [UsuariosService, AutorizadorSupervisorService],
 })
 export class AuthModule {}

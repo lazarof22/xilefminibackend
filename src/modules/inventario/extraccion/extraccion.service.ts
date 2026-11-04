@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
@@ -11,6 +12,16 @@ import {
   EstadoTurnoCaja,
   TurnoCaja,
 } from '../turno-caja/schema/turno-caja.schema';
+import {
+  AutorizadorSupervisorService,
+  MENSAJE_EXTRACCION_NO_AUTORIZADA,
+  esRolSupervisor,
+  type Supervisor,
+} from '../../auth/autorizador-supervisor.service';
+import type { JwtUser } from '../../auth/types/jwt-user.type';
+
+/** Quien extrae: el usuario de la sesión (`request.user`). */
+export type ActorExtraccion = Pick<JwtUser, 'userId' | 'nombre' | 'rol'>;
 
 @Injectable()
 export class ExtraccionService {
@@ -18,21 +29,42 @@ export class ExtraccionService {
     @InjectModel(Extraccion.name)
     private extraccionModel: Model<ExtraccionDocument>,
     @InjectModel(TurnoCaja.name) private turnoModel: Model<TurnoCaja>,
+    private readonly autorizador: AutorizadorSupervisorService,
   ) {}
 
   /**
-   * `cajeroId` (usuario autenticado, si lo hay) vincula la extracción a su
-   * turno abierto. Sin usuario o sin turno abierto la extracción se guarda
-   * igual, con `turnoCaja` sin definir.
+   * Una extracción de caja la autoriza un administrador o gerente: o es quien
+   * extrae (sesión propia) o aporta el token de acceso de un supervisor
+   * (`dto.tokenAutorizador`). El token solo se verifica; nunca se guarda.
+   */
+  private async autorizar(
+    dto: CreateExtraccionDto,
+    actor: ActorExtraccion,
+  ): Promise<Supervisor> {
+    if (esRolSupervisor(actor.rol)) {
+      return { userId: actor.userId, nombre: actor.nombre };
+    }
+    if (!dto.tokenAutorizador) {
+      throw new ForbiddenException(MENSAJE_EXTRACCION_NO_AUTORIZADA);
+    }
+    return this.autorizador.verificar(dto.tokenAutorizador);
+  }
+
+  /**
+   * El usuario autenticado (`actor`) vincula la extracción a su turno abierto;
+   * sin turno abierto la extracción se guarda igual, con `turnoCaja` sin
+   * definir.
    */
   async create(
     dto: CreateExtraccionDto,
-    cajeroId?: string,
+    actor: ActorExtraccion,
   ): Promise<Extraccion> {
     if (dto.monto <= 0) {
       throw new BadRequestException('El monto debe ser mayor que cero');
     }
+    const supervisor = await this.autorizar(dto, actor);
 
+    const cajeroId = actor.userId;
     const cajero =
       cajeroId && isValidObjectId(cajeroId)
         ? new Types.ObjectId(cajeroId)
@@ -53,6 +85,10 @@ export class ExtraccionService {
       moneda: dto.moneda?.trim() || 'CUP',
       empleadoId: cajero,
       turnoCaja: turno?._id,
+      autorizadoPor: {
+        usuarioId: new Types.ObjectId(supervisor.userId),
+        nombre: supervisor.nombre,
+      },
     });
 
     return extraccion.save();

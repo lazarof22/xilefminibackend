@@ -1,8 +1,9 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Types } from 'mongoose';
-import { ExtraccionService } from './extraccion.service';
+import { ExtraccionService, type ActorExtraccion } from './extraccion.service';
+import { AutorizadorSupervisorService } from '../../auth/autorizador-supervisor.service';
 import { Extraccion } from './schema/extraccion.schema';
 import {
   EstadoTurnoCaja,
@@ -22,6 +23,13 @@ describe('ExtraccionService', () => {
   let turno: Record<string, jest.Mock>;
   const cajero = new Types.ObjectId();
   const turnoId = new Types.ObjectId();
+  const gerenteId = new Types.ObjectId();
+  const actor = (rol: string): ActorExtraccion => ({
+    userId: cajero.toHexString(),
+    nombre: 'maria',
+    rol,
+  });
+  let verificar: jest.Mock;
 
   beforeEach(async () => {
     guardado = undefined;
@@ -36,11 +44,15 @@ describe('ExtraccionService', () => {
       { find: jest.fn(), findById: jest.fn(), findByIdAndDelete: jest.fn() },
     );
     turno = { findOne: jest.fn(() => chain({ _id: turnoId })) };
+    verificar = jest
+      .fn()
+      .mockResolvedValue({ userId: gerenteId.toHexString(), nombre: 'jefe' });
     const mod = await Test.createTestingModule({
       providers: [
         ExtraccionService,
         { provide: getModelToken(Extraccion.name), useValue: extraccionModel },
         { provide: getModelToken(TurnoCaja.name), useValue: turno },
+        { provide: AutorizadorSupervisorService, useValue: { verificar } },
       ],
     }).compile();
     service = mod.get(ExtraccionService);
@@ -49,7 +61,7 @@ describe('ExtraccionService', () => {
   it('vincula la extracción al turno abierto del cajero y guarda la moneda', async () => {
     await service.create(
       { monto: 100, causa: 'Compra', moneda: 'USD' },
-      cajero.toHexString(),
+      actor('administrador'),
     );
     expect(turno.findOne).toHaveBeenCalledWith({
       cajeroId: cajero,
@@ -66,21 +78,48 @@ describe('ExtraccionService', () => {
 
   it('sin turno abierto sigue funcionando: turnoCaja queda sin definir y la moneda es CUP', async () => {
     turno.findOne.mockImplementation(() => chain(null));
-    await service.create({ monto: 10, causa: 'x' }, cajero.toHexString());
+    await service.create({ monto: 10, causa: 'x' }, actor('gerente'));
     expect(guardado?.turnoCaja).toBeUndefined();
     expect(guardado?.moneda).toBe('CUP');
   });
 
-  it('sin usuario autenticado (flujo actual) no consulta turnos', async () => {
-    await service.create({ monto: 10, causa: 'x' });
+  it('un cajero sin token de supervisor no extrae y no consulta nada', async () => {
+    await expect(
+      service.create({ monto: 10, causa: 'x' }, actor('cajero')),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(verificar).not.toHaveBeenCalled();
     expect(turno.findOne).not.toHaveBeenCalled();
-    expect(guardado?.turnoCaja).toBeUndefined();
-    expect(guardado?.empleadoId).toBeUndefined();
+    expect(guardado).toBeUndefined();
+  });
+
+  it('un cajero con token de supervisor: guarda quién autorizó y no persiste el token', async () => {
+    await service.create(
+      { monto: 10, causa: 'x', tokenAutorizador: 'jwt-secreto' },
+      actor('cajero'),
+    );
+    expect(verificar).toHaveBeenCalledWith('jwt-secreto');
+    expect(guardado?.autorizadoPor).toEqual({
+      usuarioId: gerenteId,
+      nombre: 'jefe',
+    });
+    expect(JSON.stringify(guardado)).not.toContain('jwt-secreto');
+  });
+
+  it('si el cajero es administrador ignora el token y se autoriza a sí mismo', async () => {
+    await service.create(
+      { monto: 10, causa: 'x', tokenAutorizador: 'jwt' },
+      actor('administrador'),
+    );
+    expect(verificar).not.toHaveBeenCalled();
+    expect(guardado?.autorizadoPor).toEqual({
+      usuarioId: cajero,
+      nombre: 'maria',
+    });
   });
 
   it('sigue rechazando montos no positivos', async () => {
     await expect(
-      service.create({ monto: 0, causa: 'x' }),
+      service.create({ monto: 0, causa: 'x' }, actor('administrador')),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

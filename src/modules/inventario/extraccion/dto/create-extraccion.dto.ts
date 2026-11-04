@@ -38,4 +38,14 @@ export class CreateExtraccionDto {
   @IsNotEmpty()
   @IsOptional()
   moneda?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Token de acceso (JWT) de un administrador o gerente que autoriza la extracción. ' +
+      'Obligatorio si quien extrae no es administrador ni gerente. No se guarda.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  tokenAutorizador?: string;
 }
