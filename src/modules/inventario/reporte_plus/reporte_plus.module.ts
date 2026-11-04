@@ -7,6 +7,18 @@ import {
   TurnoReportePlus,
   TurnoReportePlusSchema,
 } from './schema/turno_reporte_plus.schema';
+import {
+  LineaTurnoArchivada,
+  LineaTurnoArchivadaSchema,
+} from './schema/linea-turno-archivada.schema';
+import {
+  TurnoCaja,
+  TurnoCajaSchema,
+} from '../turno-caja/schema/turno-caja.schema';
+import {
+  DepositoBancario,
+  DepositoBancarioSchema,
+} from '../deposito-bancario/schema/deposito-bancario.schema';
 import { Kardex, KardexSchema } from '../kardex/schema/kardex.schema';
 import {
   Extraccion,
@@ -20,6 +32,9 @@ import {
       { name: TurnoReportePlus.name, schema: TurnoReportePlusSchema },
       { name: Kardex.name, schema: KardexSchema },
       { name: Extraccion.name, schema: ExtraccionSchema },
+      { name: TurnoCaja.name, schema: TurnoCajaSchema },
+      { name: DepositoBancario.name, schema: DepositoBancarioSchema },
+      { name: LineaTurnoArchivada.name, schema: LineaTurnoArchivadaSchema },
     ]),
   ],
   controllers: [ReportePlusController],

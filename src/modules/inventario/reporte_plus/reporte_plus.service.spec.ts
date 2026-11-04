@@ -14,6 +14,9 @@ import {
 import { TurnoReportePlus } from './schema/turno_reporte_plus.schema';
 import { Kardex, KardexTipo } from '../kardex/schema/kardex.schema';
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
+import { TurnoCaja } from '../turno-caja/schema/turno-caja.schema';
+import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
+import { LineaTurnoArchivada } from './schema/linea-turno-archivada.schema';
 
 const chain = <T>(valor: T) => {
   const c: Record<string, jest.Mock> = {};
@@ -40,6 +43,9 @@ describe('ReportePlusService', () => {
   let turno: Record<string, jest.Mock>;
   let kardex: Record<string, jest.Mock>;
   let extraccion: Record<string, jest.Mock>;
+  let turnoCaja: Record<string, jest.Mock>;
+  let deposito: Record<string, jest.Mock>;
+  let archivadas: Record<string, jest.Mock>;
   let filas: ReturnType<typeof fila>[];
 
   beforeEach(async () => {
@@ -62,6 +68,12 @@ describe('ReportePlusService', () => {
       deleteMany: jest.fn().mockResolvedValue({}),
     };
     extraccion = { find: jest.fn(() => chain([{ monto: 30 }, { monto: 20 }])) };
+    turnoCaja = { find: jest.fn(() => chain([])) };
+    deposito = { find: jest.fn(() => chain([])) };
+    archivadas = {
+      insertMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({}),
+    };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -70,6 +82,12 @@ describe('ReportePlusService', () => {
         { provide: getModelToken(TurnoReportePlus.name), useValue: turno },
         { provide: getModelToken(Kardex.name), useValue: kardex },
         { provide: getModelToken(Extraccion.name), useValue: extraccion },
+        { provide: getModelToken(TurnoCaja.name), useValue: turnoCaja },
+        { provide: getModelToken(DepositoBancario.name), useValue: deposito },
+        {
+          provide: getModelToken(LineaTurnoArchivada.name),
+          useValue: archivadas,
+        },
       ],
     }).compile();
     service = mod.get(ReportePlusService);
@@ -115,6 +133,79 @@ describe('ReportePlusService', () => {
       expect(r.movimientos).toBe(7);
     });
 
+    describe('efectivo esperado, cuentas por cobrar y cobros electrónicos por separado', () => {
+      it('reporta las tres cifras por separado y por moneda', async () => {
+        filas = [
+          fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 300 }),
+          fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 20, moneda: 'USD' }),
+          fila({ metodoPago: MetodoPagoReporte.CREDITO, total: 500 }),
+          fila({ metodoPago: MetodoPagoReporte.TRANSFERENCIA, total: 70 }),
+          fila({ metodoPago: MetodoPagoReporte.FACTURA, total: 900 }),
+        ];
+        turnoCaja.find.mockImplementation(() =>
+          chain([
+            { fondoInicial: { CUP: 1000, USD: 50 } },
+            { fondoInicial: { CUP: 200 } },
+          ]),
+        );
+        extraccion.find.mockImplementation(() =>
+          chain([{ monto: 100 }, { monto: 5, moneda: 'USD' }]),
+        );
+        deposito.find.mockImplementation(() => chain([{ monto: 200 }]));
+
+        const r = await service.resumen();
+
+        // CUP: 1000 + 200 + 300 - 100 - 200 ; USD: 50 + 20 - 5
+        expect(r.efectivoEsperado).toEqual({ CUP: 1200, USD: 65 });
+        expect(r.cuentasPorCobrar).toEqual({ CUP: 500, USD: 0 });
+        expect(r.cobrosElectronicos).toEqual({ CUP: 70, USD: 0 });
+        expect(r.facturado).toEqual({ CUP: 900, USD: 0 });
+        expect(r.detalleEfectivo.CUP).toMatchObject({
+          fondoInicial: 1200,
+          efectivoRecibido: 300,
+          extracciones: 100,
+          depositosBancarios: 200,
+        });
+      });
+
+      it('una venta a crédito, una transferencia o una factura no alteran el efectivo esperado', async () => {
+        filas = [fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 50 })];
+        const sin = await service.resumen();
+        filas = [
+          fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 50 }),
+          fila({ metodoPago: MetodoPagoReporte.CREDITO, total: 400 }),
+          fila({ metodoPago: MetodoPagoReporte.TRANSFERENCIA, total: 60 }),
+          fila({ metodoPago: MetodoPagoReporte.FACTURA, total: 70 }),
+        ];
+        const con = await service.resumen();
+        expect(con.efectivoEsperado).toEqual(sin.efectivoEsperado);
+        expect(con.cuentasPorCobrar.CUP).toBe(400);
+      });
+
+      it('una venta a cuenta casa (total 0) no es una extracción ni mueve ninguna cifra', async () => {
+        filas = [fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 0 })];
+        const r = await service.resumen();
+        expect(r.totalExtracciones).toBe(50); // solo las extracciones reales
+        expect(r.efectivoEsperado.CUP).toBe(-50);
+        expect(r.detalleEfectivo.CUP.efectivoRecibido).toBe(0);
+      });
+
+      it('consulta los depósitos desde el cierre del último turno', async () => {
+        const cierre = new Date('2026-10-18T08:00:00');
+        turno.findOne.mockImplementation(() => chain({ cierre }));
+        await service.resumen();
+        expect(deposito.find.mock.calls[0][0].fecha.$gte).toEqual(cierre);
+        expect(turnoCaja.find).toHaveBeenCalledWith({ estado: 'abierto' });
+      });
+
+      it('mantiene los campos antiguos (obsoletos) para no romper al cliente actual', async () => {
+        filas = [fila({ total: 100 })];
+        const r = await service.resumen();
+        expect(r.saldoNeto).toBe(50);
+        expect(r.totalVentas).toBe(100);
+      });
+    });
+
     it('sin ventas todo es 0', async () => {
       extraccion.find.mockImplementation(() => chain([]));
       const r = await service.resumen();
@@ -142,6 +233,7 @@ describe('ReportePlusService', () => {
       expect(reporte.deleteMany).not.toHaveBeenCalledWith(
         expect.objectContaining({ turnoCierre: expect.anything() }),
       );
+      expect(archivadas.insertMany).not.toHaveBeenCalled();
     });
 
     it('Kardex primero, historial después y borra al final; no duplica las filas de factura', async () => {
@@ -185,6 +277,74 @@ describe('ReportePlusService', () => {
         movimientos: 2,
       });
       expect(r).toMatchObject({ movimientosKardex: 1, filasEliminadas: 2 });
+    });
+
+    it('archiva las líneas del turno ANTES de borrar las filas abiertas y no pierde detalle', async () => {
+      filas = [
+        fila({ moneda: 'USD', producto: { codigo: 'P1', nombre: 'Café' } }),
+        fila({ metodoPago: MetodoPagoReporte.CREDITO, total: 30 }),
+      ];
+      reporte.updateMany.mockResolvedValue({ modifiedCount: 2 });
+      const orden: string[] = [];
+      archivadas.insertMany.mockImplementation(async () => {
+        orden.push('archivo');
+      });
+      reporte.deleteMany.mockImplementation(async () => {
+        orden.push('borrar');
+        return { deletedCount: 2 };
+      });
+
+      await service.cerrarTurno();
+
+      expect(orden).toEqual(['archivo', 'borrar']);
+      const [lineas] = archivadas.insertMany.mock.calls[0];
+      expect(lineas).toHaveLength(2);
+      const turnoId = turno.create.mock.calls[0][0]._id;
+      for (const l of lineas) expect(l.turnoReportePlusId).toEqual(turnoId);
+      expect(lineas[0]).toMatchObject({
+        moneda: 'USD',
+        producto: { codigo: 'P1', nombre: 'Café' },
+        cantidadVendida: 1,
+        total: 100,
+        referencia: 'v1',
+      });
+    });
+
+    it('si falla el archivo NO borra nada: deshace Kardex, historial y archivo parcial y libera las filas', async () => {
+      filas = [fila()];
+      reporte.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      archivadas.insertMany.mockRejectedValue(new Error('disco lleno'));
+
+      await expect(service.cerrarTurno()).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+
+      expect(
+        reporte.deleteMany.mock.calls.filter(([f]) => f.turnoCierre),
+      ).toHaveLength(0);
+      expect(kardex.deleteMany).toHaveBeenCalled();
+      expect(turno.deleteOne).toHaveBeenCalled();
+      expect(archivadas.deleteMany).toHaveBeenCalledWith({
+        turnoReportePlusId: expect.any(Types.ObjectId),
+      });
+      expect(reporte.updateMany).toHaveBeenLastCalledWith(
+        { turnoCierre: expect.any(Types.ObjectId) },
+        { $unset: { turnoCierre: 1 } },
+      );
+    });
+
+    it('guarda en el historial las cifras separadas del turno', async () => {
+      filas = [
+        fila({ total: 100 }),
+        fila({ metodoPago: MetodoPagoReporte.CREDITO, total: 30 }),
+      ];
+      reporte.updateMany.mockResolvedValue({ modifiedCount: 2 });
+      await service.cerrarTurno();
+      expect(turno.create.mock.calls[0][0]).toMatchObject({
+        efectivoEsperado: { CUP: -50 + 100 },
+        cuentasPorCobrar: { CUP: 30 },
+        cobrosElectronicos: { CUP: 0 },
+      });
     });
 
     it('si falla el Kardex NO borra nada: deshace el Kardex y libera las filas', async () => {
@@ -270,7 +430,29 @@ describe('ReportePlusService', () => {
         producto: { codigo: 'P1', nombre: 'Café' },
         cantidadVendida: 2,
         enKardex: false,
+        moneda: 'CUP',
       });
+    });
+
+    it('guarda la moneda cuando la línea la informa', async () => {
+      await service.registrarLineas([
+        {
+          productoId: new Types.ObjectId().toHexString(),
+          codigo: 'P1',
+          nombre: 'Café',
+          cantidadVendida: 1,
+          stockFinal: 8,
+          metodoPago: MetodoPagoReporte.EFECTIVO,
+          total: 10,
+          descuento: 0,
+          impuesto: 0,
+          origen: OrigenReporte.VENTA,
+          referencia: 'v',
+          enKardex: false,
+          moneda: 'USD',
+        },
+      ]);
+      expect(reporte.insertMany.mock.calls[0][0][0].moneda).toBe('USD');
     });
 
     it('solo quita filas abiertas del documento', async () => {

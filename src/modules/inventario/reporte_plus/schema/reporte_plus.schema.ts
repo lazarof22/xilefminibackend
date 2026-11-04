@@ -51,6 +51,10 @@ export class ReportePlus {
   @Prop({ required: true, enum: MetodoPagoReporte })
   metodoPago!: MetodoPagoReporte;
 
+  /** Código de la moneda de la línea (CUP si el pago no informa ninguna). */
+  @Prop({ required: true, default: 'CUP' })
+  moneda!: string;
+
   /** Total pagado por la línea (descuento e impuesto ya aplicados). */
   @Prop({ required: true, min: 0 })
   total!: number;

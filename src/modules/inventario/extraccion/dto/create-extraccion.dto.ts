@@ -29,4 +29,13 @@ export class CreateExtraccionDto {
   @IsString()
   @IsOptional()
   responsable?: string;
+
+  @ApiPropertyOptional({
+    description: 'Código de la moneda extraída (CUP por defecto)',
+    default: 'CUP',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  moneda?: string;
 }

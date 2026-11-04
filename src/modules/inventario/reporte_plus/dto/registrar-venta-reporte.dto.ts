@@ -18,4 +18,9 @@ export interface LineaReportePlus {
   referencia: string;
   enKardex: boolean;
   fecha?: Date;
+  /**
+   * Moneda del cobro. Opcional: quien no la informa (hoy venta/factura)
+   * queda en CUP. La fase 3 la llenará leyendo la moneda del pago.
+   */
+  moneda?: string;
 }

@@ -1,7 +1,20 @@
-import { Controller, Get, Post, Delete, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Req,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { ExtraccionService } from './extraccion.service';
 import { CreateExtraccionDto } from './dto/create-extraccion.dto';
+
+/** `request.user` solo existe cuando una ruta lleva `JwtAuthGuard`. */
+interface RequestOpcional {
+  user?: { userId: string };
+}
 
 @ApiTags('Extraccion')
 @Controller('extraccion')
@@ -9,11 +22,14 @@ export class ExtraccionController {
   constructor(private readonly extraccionService: ExtraccionService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Registrar una extracción de caja' })
+  @ApiOperation({
+    summary:
+      'Registrar una extracción de caja (se vincula al turno abierto del cajero autenticado, si lo hay)',
+  })
   @ApiResponse({ status: 201, description: 'Extracción registrada' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
-  create(@Body() dto: CreateExtraccionDto) {
-    return this.extraccionService.create(dto);
+  create(@Body() dto: CreateExtraccionDto, @Req() req: RequestOpcional) {
+    return this.extraccionService.create(dto, req.user?.userId);
   }
 
   @Get()

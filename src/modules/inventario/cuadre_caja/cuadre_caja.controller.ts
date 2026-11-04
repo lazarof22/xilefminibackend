@@ -18,7 +18,10 @@ import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 export class CuadreCajaController {
   constructor(private readonly cuadreCajaService: CuadreCajaService) {}
 
-  @ApiOperation({ summary: 'Registrar un nuevo cuadre de caja' })
+  @ApiOperation({
+    summary:
+      'Registrar un nuevo cuadre de caja (vinculado al turno abierto del cajero; compara solo contra el efectivo esperado de su moneda)',
+  })
   @ApiResponse({
     status: 201,
     description: 'Cuadre de caja registrado con exito',
@@ -51,9 +54,24 @@ export class CuadreCajaController {
     required: false,
     description: 'Fecha en formato YYYY-MM-DD (por defecto hoy)',
   })
+  @ApiQuery({
+    name: 'empleado',
+    required: false,
+    description:
+      'ID del cajero: si tiene turno abierto se informan su fondo inicial y depósitos',
+  })
+  @ApiQuery({
+    name: 'moneda',
+    required: false,
+    description: 'Código de moneda de las cifras (CUP por defecto)',
+  })
   @Get('resumen-diario')
-  getResumenDiario(@Query('fecha') fecha?: string) {
-    return this.cuadreCajaService.getResumenDiario(fecha);
+  getResumenDiario(
+    @Query('fecha') fecha?: string,
+    @Query('empleado') empleado?: string,
+    @Query('moneda') moneda?: string,
+  ) {
+    return this.cuadreCajaService.getResumenDiario(fecha, empleado, moneda);
   }
 
   @ApiOperation({

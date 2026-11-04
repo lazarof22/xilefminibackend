@@ -102,6 +102,35 @@ export class CuadreCaja {
   })
   estado!: string;
 
+  /** Moneda de este cuadre (un cuadre por moneda física). CUP si no se informa. */
+  @Prop({ default: 'CUP' })
+  moneda?: string;
+
+  /** Turno de caja abierto del cajero al hacer el cuadre. */
+  @Prop({ type: Types.ObjectId, ref: 'TurnoCaja', index: true })
+  turnoCaja?: Types.ObjectId;
+
+  /** Fondo inicial de la moneda tomado del turno (0 sin turno). */
+  @Prop({ min: 0, default: 0 })
+  fondo_inicial?: number;
+
+  /**
+   * Efectivo recibido (entradas físicas). Solo si el cliente lo informó; si
+   * no, se deriva de ventas + recargos - transferencias - créditos.
+   */
+  @Prop({ min: 0 })
+  efectivo_recibido?: number;
+
+  @Prop({ min: 0, default: 0 })
+  cambio_entregado?: number;
+
+  @Prop({ min: 0, default: 0 })
+  devoluciones_efectivo?: number;
+
+  /** Depósitos bancarios del turno en esta moneda (salida física). */
+  @Prop({ min: 0, default: 0 })
+  depositos_bancarios?: number;
+
   @Prop({ trim: true })
   realizadoPor?: string;
 

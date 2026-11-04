@@ -178,6 +178,54 @@ export class CreateCuadreCajaDto {
   @Min(0, { message: 'El total de efectivo no puede ser negativo' })
   total_efectivo?: number;
 
+  @ApiPropertyOptional({
+    description:
+      'Moneda del cuadre (código; CUP por defecto). El cuadre compara solo contra el efectivo esperado de esa moneda.',
+    default: 'CUP',
+  })
+  @IsOptional()
+  @IsString({ message: 'La moneda debe ser texto' })
+  @IsNotEmpty({ message: 'La moneda no puede estar vacía' })
+  moneda?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Efectivo recibido (entradas físicas). Si no se envía se deriva de ventas + recargos - transferencias - créditos',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'El efectivo recibido debe ser un número' })
+  @Min(0, { message: 'El efectivo recibido no puede ser negativo' })
+  efectivo_recibido?: number;
+
+  @ApiPropertyOptional({
+    description: 'Cambio entregado (salida física)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'El cambio entregado debe ser un número' })
+  @Min(0, { message: 'El cambio entregado no puede ser negativo' })
+  cambio_entregado?: number;
+
+  @ApiPropertyOptional({
+    description: 'Devoluciones en efectivo (salida física)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Las devoluciones en efectivo deben ser un número' })
+  @Min(0, { message: 'Las devoluciones en efectivo no pueden ser negativas' })
+  devoluciones_efectivo?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Depósitos bancarios (salida física). Si no se envía se suman los depósitos del turno en esa moneda',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Los depósitos bancarios deben ser un número' })
+  @Min(0, { message: 'Los depósitos bancarios no pueden ser negativos' })
+  depositos_bancarios?: number;
+
   @ApiPropertyOptional({ description: 'Nombre de quien realiza el cuadre' })
   @IsOptional()
   @IsString({ message: 'realizadoPor debe ser texto' })

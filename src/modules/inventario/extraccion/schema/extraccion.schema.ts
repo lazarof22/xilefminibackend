@@ -19,6 +19,14 @@ export class Extraccion {
 
   @Prop({ type: Types.ObjectId, ref: 'Usuarios' })
   empleadoId?: Types.ObjectId;
+
+  /** Código de la moneda extraída (CUP si no se informa). */
+  @Prop({ default: 'CUP' })
+  moneda?: string;
+
+  /** Turno de caja abierto del cajero al extraer (vacío si no tenía turno). */
+  @Prop({ type: Types.ObjectId, ref: 'TurnoCaja', index: true })
+  turnoCaja?: Types.ObjectId;
 }
 
 export const ExtraccionSchema = SchemaFactory.createForClass(Extraccion);

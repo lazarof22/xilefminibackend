@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import type { DetalleEfectivoMoneda } from '../efectivo-turno.util';
 
 export type TurnoReportePlusDocument = HydratedDocument<TurnoReportePlus>;
 
@@ -21,11 +22,22 @@ export class TurnoReportePlus {
   @Prop({ required: true, index: true }) cierre!: Date;
   @Prop({ required: true }) totalVentas!: number;
   @Prop({ required: true }) totalExtracciones!: number;
+  /** @deprecated mezcla efectivo, crédito y transferencia; usar las cifras por moneda. */
   @Prop({ required: true }) saldoNeto!: number;
   @Prop({ required: true }) cantidadTransferencias!: number;
   @Prop({ required: true }) movimientos!: number;
   @Prop({ type: TotalesPorMetodo, required: true })
   porMetodo!: TotalesPorMetodo;
+
+  /** Cifras separadas por moneda (clave = código de moneda). */
+  @Prop({ type: Object }) efectivoEsperado?: Record<string, number>;
+  @Prop({ type: Object }) cuentasPorCobrar?: Record<string, number>;
+  @Prop({ type: Object }) cobrosElectronicos?: Record<string, number>;
+  @Prop({ type: Object }) facturado?: Record<string, number>;
+  @Prop({ type: Object }) detalleEfectivo?: Record<
+    string,
+    DetalleEfectivoMoneda
+  >;
 }
 
 export const TurnoReportePlusSchema =

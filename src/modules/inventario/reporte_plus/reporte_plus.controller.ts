@@ -16,7 +16,16 @@ export class ReportePlusController {
 
   @ApiOperation({
     summary:
-      'Totales del turno: ventas, extracciones, saldo neto, transferencias y desglose por método de pago',
+      'Resumen del turno: efectivo esperado, cuentas por cobrar y cobros electrónicos POR SEPARADO y por moneda',
+    description:
+      'Efectivo esperado = fondo inicial + efectivo recibido - cambio - devoluciones en efectivo - extracciones - depósitos bancarios. ' +
+      'Una venta a crédito no altera el efectivo esperado; "factura" no es un medio de cobro y se informa aparte (`facturado`). ' +
+      'Campo OBSOLETO: `saldoNeto` (mezclaba efectivo, crédito y transferencia); se conserva solo por compatibilidad.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      '{ efectivoEsperado, cuentasPorCobrar, cobrosElectronicos, facturado, detalleEfectivo (por moneda), totalVentas, totalExtracciones, porMetodo, cantidadTransferencias, movimientos, saldoNeto (obsoleto) }',
   })
   @Get('resumen')
   resumen() {
@@ -25,7 +34,7 @@ export class ReportePlusController {
 
   @ApiOperation({
     summary:
-      'Cerrar turno: registra los movimientos en el Kardex y limpia el reporte',
+      'Cerrar turno: registra los movimientos en el Kardex, archiva las líneas del turno y limpia el reporte',
   })
   @ApiResponse({ status: 200, description: 'Turno cerrado' })
   @ApiResponse({ status: 400, description: 'No hay ventas para cerrar' })

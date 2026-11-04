@@ -8,18 +8,30 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Kardex, KardexTipo } from '../kardex/schema/kardex.schema';
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
-import { MetodoPagoReporte, ReportePlus } from './schema/reporte_plus.schema';
+import {
+  EstadoTurnoCaja,
+  TurnoCaja,
+} from '../turno-caja/schema/turno-caja.schema';
+import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
+import {
+  MetodoPagoReporte,
+  ProductoReporte,
+  ReportePlus,
+} from './schema/reporte_plus.schema';
 import { TurnoReportePlus } from './schema/turno_reporte_plus.schema';
+import { LineaTurnoArchivada } from './schema/linea-turno-archivada.schema';
+import {
+  MONEDA_POR_DEFECTO,
+  MovimientoMoneda,
+  redondear,
+  resumirPorMoneda,
+} from './efectivo-turno.util';
 import { LineaReportePlus } from './dto/registrar-venta-reporte.dto';
 import {
   CierreTurnoResultado,
   ResumenReportePlus,
   TotalesMetodo,
 } from './dto/resumen-reporte-plus.dto';
-
-/** Redondeo a 2 decimales (evita 0.1 + 0.2 = 0.30000000000000004). */
-const redondear = (n: number): number =>
-  Math.round((n + Number.EPSILON) * 100) / 100;
 
 type FilaReporte = Pick<
   ReportePlus,
@@ -31,7 +43,12 @@ type FilaReporte = Pick<
   | 'total'
   | 'referencia'
   | 'enKardex'
->;
+> &
+  Partial<
+    Pick<ReportePlus, 'moneda' | 'descuento' | 'impuesto' | 'origen'> & {
+      producto: ProductoReporte;
+    }
+  >;
 
 /**
  * Reporte Plus: ventas del turno actual.
@@ -40,10 +57,15 @@ type FilaReporte = Pick<
  *  1. Se "reclaman" las filas abiertas con un id de turno (un solo updateMany
  *     atómico). Las ventas que lleguen durante el cierre quedan sin marca y
  *     pertenecen al turno siguiente: nunca se borra una venta sin pasar al Kardex.
- *  2. Se escribe el Kardex y se guarda el resumen del turno.
- *  3. Si algo falla antes de borrar, se compensa (borra lo escrito en Kardex y
- *     libera las filas) y no se pierde nada.
+ *  2. Se escribe el Kardex, se guarda el resumen del turno y se ARCHIVAN las
+ *     líneas (`LineaTurnoArchivada`): el detalle por producto no se pierde.
+ *  3. Si algo falla antes de borrar, se compensa (borra lo escrito en Kardex,
+ *     el resumen y el archivo parcial, y libera las filas) y no se pierde nada.
  *  4. Solo entonces se eliminan las filas reclamadas.
+ *
+ * El resumen NO mezcla dinero en caja con cuentas por cobrar: informa por
+ * separado, por moneda, el efectivo esperado, las cuentas por cobrar y los
+ * cobros electrónicos (doc §6.6).
  */
 @Injectable()
 export class ReportePlusService {
@@ -55,6 +77,11 @@ export class ReportePlusService {
     private turnoModel: Model<TurnoReportePlus>,
     @InjectModel(Kardex.name) private kardexModel: Model<Kardex>,
     @InjectModel(Extraccion.name) private extraccionModel: Model<Extraccion>,
+    @InjectModel(TurnoCaja.name) private turnoCajaModel: Model<TurnoCaja>,
+    @InjectModel(DepositoBancario.name)
+    private depositoModel: Model<DepositoBancario>,
+    @InjectModel(LineaTurnoArchivada.name)
+    private archivadaModel: Model<LineaTurnoArchivada>,
   ) {}
 
   /** Filas abiertas (las que aún no reclamó ningún cierre). */
@@ -76,6 +103,7 @@ export class ReportePlusService {
         origen: l.origen,
         referencia: l.referencia,
         enKardex: l.enKardex,
+        moneda: l.moneda || MONEDA_POR_DEFECTO,
       })),
     );
   }
@@ -167,18 +195,44 @@ export class ReportePlusService {
         cantidadTransferencias: resumen.cantidadTransferencias,
         movimientos: resumen.movimientos,
         porMetodo: resumen.porMetodo,
+        efectivoEsperado: resumen.efectivoEsperado,
+        cuentasPorCobrar: resumen.cuentasPorCobrar,
+        cobrosElectronicos: resumen.cobrosElectronicos,
+        facturado: resumen.facturado,
+        detalleEfectivo: resumen.detalleEfectivo,
       });
+
+      // 3) Archivo del detalle del turno, también antes de vaciar.
+      await this.archivadaModel.insertMany(
+        filas.map((f) => ({
+          turnoReportePlusId: turnoId,
+          fecha: f.fecha,
+          productoId: f.productoId,
+          producto: f.producto,
+          cantidadVendida: f.cantidadVendida,
+          stockFinal: f.stockFinal,
+          metodoPago: f.metodoPago,
+          moneda: f.moneda || MONEDA_POR_DEFECTO,
+          total: f.total,
+          descuento: f.descuento ?? 0,
+          impuesto: f.impuesto ?? 0,
+          origen: f.origen,
+          referencia: f.referencia,
+          enKardex: f.enKardex,
+        })),
+        { ordered: true },
+      );
     } catch (error) {
       await this.compensarCierre(turnoId, referencia);
       this.logger.error(
         `Cierre de turno fallido, no se borró nada: ${String(error)}`,
       );
       throw new InternalServerErrorException(
-        'No se pudo cerrar el turno: no se registró en el Kardex y las ventas siguen en el reporte. Intente de nuevo.',
+        'No se pudo cerrar el turno: no se registró en el Kardex ni en el archivo y las ventas siguen en el reporte. Intente de nuevo.',
       );
     }
 
-    // 3) Limpiar el reporte. El Kardex y el historial ya están guardados.
+    // 4) Limpiar el reporte. El Kardex y el historial ya están guardados.
     let filasEliminadas = 0;
     try {
       const borradas = await this.reportePlusModel.deleteMany({
@@ -243,20 +297,49 @@ export class ReportePlusService {
         porMetodo.factura,
     );
 
+    const ventana = { fecha: { $gte: desde, $lte: hasta } };
     const extracciones = (await this.extraccionModel
-      .find({ fecha: { $gte: desde, $lte: hasta } })
-      .select('monto')
+      .find(ventana)
+      .select('monto moneda')
       .lean()
-      .exec()) as unknown as { monto: number }[];
+      .exec()) as unknown as MovimientoMoneda[];
     const totalExtracciones = redondear(
       extracciones.reduce((s, e) => s + e.monto, 0),
     );
+    const depositos = (await this.depositoModel
+      .find(ventana)
+      .select('monto moneda')
+      .lean()
+      .exec()) as unknown as MovimientoMoneda[];
+    const turnosAbiertos = (await this.turnoCajaModel
+      .find({ estado: EstadoTurnoCaja.ABIERTO })
+      .select('fondoInicial')
+      .lean()
+      .exec()) as unknown as { fondoInicial?: Record<string, number> }[];
+
+    // Fondo inicial = suma por moneda de los turnos de caja abiertos (el
+    // Reporte Plus es la caja registradora compartida del punto de venta).
+    const fondoInicial: Record<string, number> = {};
+    for (const t of turnosAbiertos)
+      for (const [moneda, monto] of Object.entries(t.fondoInicial ?? {}))
+        fondoInicial[moneda] = (fondoInicial[moneda] ?? 0) + monto;
+
+    // Las líneas ya vienen netas del cambio: el efectivo recibido es el cobro
+    // neto en efectivo. Devoluciones en efectivo y cobros aplicados a crédito
+    // se enchufan aquí cuando existan sus módulos (hoy 0).
+    const monedas = resumirPorMoneda({
+      fondoInicial,
+      filas,
+      extracciones,
+      depositos,
+    });
 
     return {
       desde,
       totalVentas,
       totalExtracciones,
       saldoNeto: redondear(totalVentas - totalExtracciones),
+      ...monedas,
       cantidadTransferencias: transferencias.size,
       porMetodo,
       movimientos: filas.length,
@@ -270,6 +353,7 @@ export class ReportePlusService {
   ): Promise<void> {
     try {
       await this.kardexModel.deleteMany({ referencia });
+      await this.archivadaModel.deleteMany({ turnoReportePlusId: turnoId });
       await this.turnoModel.deleteOne({ _id: turnoId });
       await this.reportePlusModel.updateMany(
         { turnoCierre: turnoId },
