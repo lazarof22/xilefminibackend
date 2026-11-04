@@ -24,11 +24,11 @@ Boundaries: phases 2 and 3 are done by someone else: do not edit `venta`, `pago`
 
 ## Tasks
 
-- [ ] T1 Base inventario: S1 + S2 (writer A) — route: delegated (parallel units)
-- [ ] T2 Tributaria + Tasa.fluctuacion + EmpresaDatos.ciudad + Producto.gravado: S10 (writer B) — delegated
-- [ ] T3 Caja: S6, S7, S8, S9 (writer C) — delegated
-- [ ] T4 Recepción SC-2-04 + Ajuste SC-2-16: S3, S5 (writer D, after T1) — delegated
-- [ ] T5 Devolución SC-2-08: S4 (writer E, after T1) — delegated
+- [x] T1 Base inventario: S1 + S2 (writer A) — route: delegated (parallel units) — commits a38383e,f730e68
+- [x] T2 Tributaria + Tasa.fluctuacion + EmpresaDatos.ciudad + Producto.gravado: S10 (writer B) — delegated — commits a99d9e0,7c9ee9a
+- [x] T3 Caja: S6, S7, S8, S9 (writer C) — delegated — commits 906bc4b,0774355
+- [x] T4 Recepción SC-2-04 + Ajuste SC-2-16: S3, S5 (writer D, after T1) — delegated — commits 2473382,659081c
+- [x] T5 Devolución SC-2-08: S4 (writer E, after T1) — delegated — commits d5a981d,d796626
 - [ ] T6 Permisos + frontend token everywhere: S11 (parent/writer, last)
 - [ ] T7 Registro en app.module, build, suite, differential check, close
 
@@ -37,3 +37,6 @@ Boundaries: phases 2 and 3 are done by someone else: do not edit `venta`, `pago`
 - L1 (2026-11-03, user, verbatim): "la 2 y 3 la va a hacer alguien mas a mi me toca 4 y 5 , tengo que implemetar tanto backend como frontend y dejarlo conectado, respeta en el frontend el estilo con que se esta haciendo la paleta de colores, empieza a implementar"
 - L2 (parent): Route declaration — writer trigger (a) parallelism: T1/T2/T3 have disjoint edit surfaces and each needs several minutes; T4/T5 launched together after T1. T6 last because it touches many files and depends on all others.
 - L3 (parent): Risk found — frontend uses raw `fetch` without token in CustomDataGridR, Inventario.tsx, Ventas.tsx, PuntoVenta.tsx, pago dialogs, ReporteInventarioTab, AddClientDialog, Clientes.tsx; guards before the token fix would break the app. Pago dialogs/PuntoVenta/ventaService are being edited by the phase 2/3 developer → coordinate.
+- L4 (parent): T1-T5 done and committed (backend + frontend). Backend full suite: 1123 passed, 61 failed = pre-existing (factura.service.spec 49, almacen dto specs 12). Modules registered in app.module. Boot check with a throwaway mongod was NOT run (user declined the command).
+- L5 (parent): Seams left: (a) cuadre must read GET /devolucion?formaDevolucionDinero=efectivo (devoluciones_efectivo); (b) extraccion.turnoCaja stays empty until guards exist (T6); (c) descuenta_deuda has no customer-debt field; (d) gravado is a text column in CustomDataGridR (no select); (e) raw fetch without token in CustomDataGridR, Inventario, Ventas, PuntoVenta, pago dialogs, ReporteInventarioTab, AddClientDialog, Clientes.
+- L6 (user, verbatim): "cuando terminen esos sub agentes , las implementaciones hazlas con gentle shell con el puente" -> T6 and the cuadre/devolucion seam go through the agent bridge (gentle-shell).

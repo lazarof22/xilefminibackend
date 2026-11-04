@@ -42,6 +42,13 @@ import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
 import { IpvModule } from './modules/inventario/ipv/ipv.module'
 import {ProveedorModule} from './modules/clientes y provedores/proveedor/proveedor.module'
 import { CausaDisminucionModule } from './modules/nomencladores/causa-disminucion/causa-disminucion.module';
+import { ConfiguracionTributariaModule } from './modules/configuracion/configuracion-tributaria/configuracion-tributaria.module';
+import { TurnoCajaModule } from './modules/inventario/turno-caja/turno-caja.module';
+import { ArqueoCajaModule } from './modules/inventario/arqueo-caja/arqueo-caja.module';
+import { DepositoBancarioModule } from './modules/inventario/deposito-bancario/deposito-bancario.module';
+import { RecepcionModule } from './modules/inventario/recepcion/recepcion.module';
+import { AjusteInventarioModule } from './modules/inventario/ajuste-inventario/ajuste-inventario.module';
+import { DevolucionModule } from './modules/inventario/devolucion/devolucion.module';
 
 
 @Module({
@@ -97,7 +104,14 @@ import { CausaDisminucionModule } from './modules/nomencladores/causa-disminucio
     CiudadModule,
     IpvModule,
     ProveedorModule,
-    CausaDisminucionModule
+    CausaDisminucionModule,
+    ConfiguracionTributariaModule,
+    TurnoCajaModule,
+    ArqueoCajaModule,
+    DepositoBancarioModule,
+    RecepcionModule,
+    AjusteInventarioModule,
+    DevolucionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
