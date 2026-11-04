@@ -11,8 +11,13 @@ import { ElementoGastoService } from './elemento-gasto.service';
 import { CreateElementoGastoDto } from './dto/create-elemento-gasto.dto';
 import { UpdateElementoGastoDto } from './dto/update-elemento-gasto.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Elementos de Gasto')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('elemento-gasto')
 export class ElementoGastoController {
   constructor(private readonly elementoGastoService: ElementoGastoService) {}

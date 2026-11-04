@@ -11,8 +11,13 @@ import { CompraService } from './compra.service';
 import { CreateCompraDto } from './dto/create-compra.dto';
 import { UpdateCompraDto } from './dto/update-compra.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Compra')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('compra')
 export class CompraController {
   constructor(private readonly compraService: CompraService) {}

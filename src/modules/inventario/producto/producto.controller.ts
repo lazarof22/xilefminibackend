@@ -3,9 +3,14 @@ import { ProductoService } from './producto.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 
 @ApiTags('Producto')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('producto')
 export class ProductoController {
   constructor(private readonly productoService: ProductoService) { }

@@ -11,8 +11,13 @@ import { CuentaService } from './cuenta.service';
 import { CreateCuentaDto } from './dto/create-cuenta.dto';
 import { UpdateCuentaDto } from './dto/update-cuenta.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Cuentas Contables')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('cuenta')
 export class CuentaController {
   constructor(private readonly cuentaService: CuentaService) {}

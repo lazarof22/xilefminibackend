@@ -15,8 +15,13 @@ import { IpvService } from './ipv.service';
 import { GuardarIpvDto } from './dto/guardar-ipv.dto';
 import { UpdateIpvDto } from './dto/update-ipv.dto';
 import { ResetIpvDto } from './dto/reset-ipv.dto';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('IPV')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('ipv')
 export class IpvController {
   constructor(private readonly ipvService: IpvService) {}

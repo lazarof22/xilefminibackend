@@ -26,6 +26,8 @@ import {
   redondear,
   resumirPorMoneda,
 } from './efectivo-turno.util';
+import { Devolucion } from '../devolucion/schema/devolucion.schema';
+import { devolucionesEfectivoEnVentana } from '../devolucion/devolucion-efectivo.util';
 import { LineaReportePlus } from './dto/registrar-venta-reporte.dto';
 import {
   CierreTurnoResultado,
@@ -82,6 +84,8 @@ export class ReportePlusService {
     private depositoModel: Model<DepositoBancario>,
     @InjectModel(LineaTurnoArchivada.name)
     private archivadaModel: Model<LineaTurnoArchivada>,
+    @InjectModel(Devolucion.name)
+    private devolucionModel: Model<Devolucion>,
   ) {}
 
   /** Filas abiertas (las que aún no reclamó ningún cierre). */
@@ -325,13 +329,19 @@ export class ReportePlusService {
         fondoInicial[moneda] = (fondoInicial[moneda] ?? 0) + monto;
 
     // Las líneas ya vienen netas del cambio: el efectivo recibido es el cobro
-    // neto en efectivo. Devoluciones en efectivo y cobros aplicados a crédito
-    // se enchufan aquí cuando existan sus módulos (hoy 0).
+    // neto en efectivo. Los cobros aplicados a crédito se enchufan aquí cuando
+    // exista su módulo (hoy 0); las devoluciones en efectivo ya se descuentan.
+    const devolucionesEfectivo = await devolucionesEfectivoEnVentana(
+      this.devolucionModel,
+      desde,
+      hasta,
+    );
     const monedas = resumirPorMoneda({
       fondoInicial,
       filas,
       extracciones,
       depositos,
+      devolucionesEfectivo,
     });
 
     return {

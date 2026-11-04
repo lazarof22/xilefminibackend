@@ -12,8 +12,13 @@ import { CuadreCajaService } from './cuadre_caja.service';
 import { CreateCuadreCajaDto } from './dto/create-cuadre_caja.dto';
 import { UpdateCuadreCajaDto } from './dto/update-cuadre_caja.dto';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Cuadre Caja')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('cuadre-caja')
 export class CuadreCajaController {
   constructor(private readonly cuadreCajaService: CuadreCajaService) {}

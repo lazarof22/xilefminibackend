@@ -10,13 +10,18 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { ExtraccionService } from './extraccion.service';
 import { CreateExtraccionDto } from './dto/create-extraccion.dto';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
-/** `request.user` solo existe cuando una ruta lleva `JwtAuthGuard`. */
+/** `request.user` lo rellena `JwtAuthGuard`; se deja opcional para no romper los tests del servicio. */
 interface RequestOpcional {
   user?: { userId: string };
 }
 
 @ApiTags('Extraccion')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('extraccion')
 export class ExtraccionController {
   constructor(private readonly extraccionService: ExtraccionService) {}

@@ -18,6 +18,8 @@ import {
   TurnoCaja,
 } from '../turno-caja/schema/turno-caja.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
+import { Devolucion } from '../devolucion/schema/devolucion.schema';
+import { devolucionesEfectivoEnVentana } from '../devolucion/devolucion-efectivo.util';
 import {
   calcularEfectivoEsperado,
   MONEDA_POR_DEFECTO,
@@ -37,6 +39,8 @@ export class CuadreCajaService {
     @InjectModel(TurnoCaja.name) private turnoModel: Model<TurnoCaja>,
     @InjectModel(DepositoBancario.name)
     private depositoModel: Model<DepositoBancario>,
+    @InjectModel(Devolucion.name)
+    private devolucionModel: Model<Devolucion>,
   ) {}
 
   async create(createCuadreCajaDto: CreateCuadreCajaDto): Promise<CuadreCaja> {
@@ -59,6 +63,14 @@ export class CuadreCajaService {
       ? await this.depositosDelTurno(turno._id, moneda)
       : 0;
 
+    const devolucionesTurno = turno
+      ? await this.devolucionesEfectivo(turno.fechaApertura, new Date(), moneda)
+      : 0;
+    const depositosBancarios =
+      createCuadreCajaDto.depositos_bancarios ?? depositosTurno;
+    const devolucionesEfectivo =
+      createCuadreCajaDto.devoluciones_efectivo ?? devolucionesTurno;
+
     const nuevoCuadre = new this.cuadreCajaModel({
       ...createCuadreCajaDto,
       creditos: createCuadreCajaDto.creditos ?? 0,
@@ -66,14 +78,14 @@ export class CuadreCajaService {
       moneda,
       turnoCaja: turno?._id,
       fondo_inicial: fondoInicial,
-      depositos_bancarios:
-        createCuadreCajaDto.depositos_bancarios ?? depositosTurno,
+      depositos_bancarios: depositosBancarios,
+      devoluciones_efectivo: devolucionesEfectivo,
       ...this.calcular({
         ...createCuadreCajaDto,
         otros_motivos: otros,
         fondo_inicial: fondoInicial,
-        depositos_bancarios:
-          createCuadreCajaDto.depositos_bancarios ?? depositosTurno,
+        depositos_bancarios: depositosBancarios,
+        devoluciones_efectivo: devolucionesEfectivo,
       }),
     });
     const guardado = await nuevoCuadre.save();
@@ -88,6 +100,7 @@ export class CuadreCajaService {
   /** Turno abierto del cajero (el empleado del cuadre), si lo tiene. */
   private async turnoAbierto(cajeroId: string): Promise<{
     _id: Types.ObjectId;
+    fechaApertura: Date;
     fondoInicial?: Record<string, number>;
   } | null> {
     return (await this.turnoModel
@@ -98,8 +111,30 @@ export class CuadreCajaService {
       .lean()
       .exec()) as {
       _id: Types.ObjectId;
+      fechaApertura: Date;
       fondoInicial?: Record<string, number>;
     } | null;
+  }
+
+  /**
+   * Devoluciones pagadas en efectivo en una moneda y ventana de tiempo: salida
+   * física de caja (el vale no guarda el turno, se cruza por fecha).
+   */
+  private async devolucionesEfectivo(
+    desde: Date,
+    hasta: Date,
+    moneda: string,
+  ): Promise<number> {
+    const movimientos = await devolucionesEfectivoEnVentana(
+      this.devolucionModel,
+      desde,
+      hasta,
+    );
+    return this.redondear(
+      movimientos
+        .filter((m) => (m.moneda || MONEDA_POR_DEFECTO) === moneda)
+        .reduce((sum, m) => sum + m.monto, 0),
+    );
   }
 
   /** Depósitos bancarios del turno en una moneda (salida física del cuadre). */
@@ -391,8 +426,11 @@ export class CuadreCajaService {
       turnoCajaId: turno ? turno._id.toHexString() : null,
       fondo_inicial: turno?.fondoInicial?.[moneda] ?? 0,
       depositos_bancarios: depositos,
-      // Sin módulo de devoluciones en efectivo todavía: se informa 0.
-      devoluciones_efectivo: 0,
+      devoluciones_efectivo: await this.devolucionesEfectivo(
+        inicio,
+        fin,
+        moneda,
+      ),
     };
   }
 

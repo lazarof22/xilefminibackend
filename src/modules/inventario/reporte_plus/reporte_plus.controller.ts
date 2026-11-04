@@ -1,9 +1,30 @@
-import { Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import { ReportePlusService } from './reporte_plus.service';
 
+/** Cerrar turno: Cajero y Administrador (doc §6.9). */
+export const ROLES_CERRAR_TURNO = [UsuarioRol.CAJERO, UsuarioRol.ADMIN];
+
 @ApiTags('Reporte Plus')
+@ApiBearerAuth()
 @Controller('reporte-plus')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ReportePlusController {
   constructor(private readonly reportePlusService: ReportePlusService) {}
 
@@ -38,6 +59,8 @@ export class ReportePlusController {
   })
   @ApiResponse({ status: 200, description: 'Turno cerrado' })
   @ApiResponse({ status: 400, description: 'No hay ventas para cerrar' })
+  @ApiResponse({ status: 403, description: 'Rol sin permiso para cerrar turno' })
+  @Roles(...ROLES_CERRAR_TURNO)
   @HttpCode(HttpStatus.OK)
   @Post('cerrar-turno')
   cerrarTurno() {

@@ -10,6 +10,7 @@ import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import { CreateCuadreCajaDto } from './dto/create-cuadre_caja.dto';
 import { TurnoCaja } from '../turno-caja/schema/turno-caja.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
+import { Devolucion } from '../devolucion/schema/devolucion.schema';
 
 const lean = <T>(valor: T) => ({
   lean: () => ({ exec: () => Promise.resolve(valor) }),
@@ -35,6 +36,7 @@ describe('CuadreCajaService', () => {
   const extraccionModel = { find: jest.fn() };
   const turnoModel = { findOne: jest.fn(), updateOne: jest.fn() };
   const depositoModel = { find: jest.fn() };
+  const devolucionModel = { find: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -54,6 +56,7 @@ describe('CuadreCajaService', () => {
           provide: getModelToken(DepositoBancario.name),
           useValue: depositoModel,
         },
+        { provide: getModelToken(Devolucion.name), useValue: devolucionModel },
       ],
     }).compile();
     service = module.get(CuadreCajaService);
@@ -61,6 +64,7 @@ describe('CuadreCajaService', () => {
     turnoModel.findOne.mockReturnValue(lean(null));
     turnoModel.updateOne.mockResolvedValue({});
     depositoModel.find.mockReturnValue(lean([]));
+    devolucionModel.find.mockReturnValue({ select: () => lean([]) });
   });
 
   const dtoBase = (): CreateCuadreCajaDto => ({
@@ -166,6 +170,7 @@ describe('CuadreCajaService', () => {
     const turnoId = new Types.ObjectId();
     const turnoAbierto = {
       _id: turnoId,
+      fechaApertura: new Date('2026-11-03T08:00:00'),
       fondoInicial: { CUP: 1000, USD: 50 },
     };
 
@@ -176,6 +181,31 @@ describe('CuadreCajaService', () => {
       expect(c.moneda).toBe('CUP');
       expect(c.turnoCaja).toBeUndefined();
       expect(c.fondo_inicial).toBe(0);
+    });
+
+    it('resta del esperado las devoluciones en efectivo registradas desde la apertura del turno, solo de la moneda del cuadre', async () => {
+      usuarioModel.findById.mockResolvedValue({ _id: empleadoId });
+      turnoModel.findOne.mockReturnValue(lean(turnoAbierto));
+      devolucionModel.find.mockReturnValue({
+        select: () =>
+          lean([
+            { montoDevuelto: 150, moneda: 'CUP' },
+            { montoDevuelto: 20, moneda: 'USD' },
+          ]),
+      });
+
+      const c = (await service.create(dtoBase())) as unknown as Record<string, unknown>;
+
+      expect(devolucionModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          formaDevolucionDinero: 'efectivo',
+          estado: 'registrada',
+          fecha: expect.objectContaining({ $gte: turnoAbierto.fechaApertura }),
+        }),
+      );
+      expect(c.devoluciones_efectivo).toBe(150);
+      // 700 de siempre + 1000 de fondo - 150 devueltos en efectivo
+      expect(c.efectivo_esperado).toBe(1550);
     });
 
     it('vincula el turno abierto del cajero y suma el fondo inicial de la moneda', async () => {

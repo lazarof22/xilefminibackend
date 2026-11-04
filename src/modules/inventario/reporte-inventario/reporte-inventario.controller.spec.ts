@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { ReporteInventarioController } from './reporte-inventario.controller';
 import { ReporteInventarioService } from './reporte-inventario.service';
 
@@ -14,7 +15,12 @@ describe('GET /inventario/reporte', () => {
       providers: [
         { provide: ReporteInventarioService, useValue: { obtenerReporte } },
       ],
-    }).compile();
+    })
+      // La ruta exige sesión (S11); aquí se prueba la respuesta del controller,
+      // y que el guard esté puesto lo cubre controllers-protegidos.spec.ts.
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     app = moduleRef.createNestApplication();
     await app.init();

@@ -3,8 +3,13 @@ import { PaisService } from './pais.service';
 import { CreatePaiDto } from './dto/create-pai.dto';
 import { UpdatePaiDto } from './dto/update-pai.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Pais')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('pais')
 export class PaisController {
   constructor(private readonly paisService: PaisService) { }

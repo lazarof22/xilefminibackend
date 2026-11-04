@@ -3,9 +3,14 @@ import { MonedaService } from './moneda.service';
 import { CreateMonedaDto } from './dto/create-moneda.dto';
 import { UpdateMonedaDto } from './dto/update-moneda.dto';
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 
 @ApiTags('Moneda')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('moneda')
 export class MonedaController {
   constructor(private readonly monedaService: MonedaService) { }

@@ -17,6 +17,7 @@ import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import { TurnoCaja } from '../turno-caja/schema/turno-caja.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
 import { LineaTurnoArchivada } from './schema/linea-turno-archivada.schema';
+import { Devolucion } from '../devolucion/schema/devolucion.schema';
 
 const chain = <T>(valor: T) => {
   const c: Record<string, jest.Mock> = {};
@@ -45,6 +46,7 @@ describe('ReportePlusService', () => {
   let extraccion: Record<string, jest.Mock>;
   let turnoCaja: Record<string, jest.Mock>;
   let deposito: Record<string, jest.Mock>;
+  let devolucion: Record<string, jest.Mock>;
   let archivadas: Record<string, jest.Mock>;
   let filas: ReturnType<typeof fila>[];
 
@@ -70,6 +72,7 @@ describe('ReportePlusService', () => {
     extraccion = { find: jest.fn(() => chain([{ monto: 30 }, { monto: 20 }])) };
     turnoCaja = { find: jest.fn(() => chain([])) };
     deposito = { find: jest.fn(() => chain([])) };
+    devolucion = { find: jest.fn(() => chain([])) };
     archivadas = {
       insertMany: jest.fn().mockResolvedValue([]),
       deleteMany: jest.fn().mockResolvedValue({}),
@@ -88,6 +91,7 @@ describe('ReportePlusService', () => {
           provide: getModelToken(LineaTurnoArchivada.name),
           useValue: archivadas,
         },
+        { provide: getModelToken(Devolucion.name), useValue: devolucion },
       ],
     }).compile();
     service = mod.get(ReportePlusService);
@@ -166,6 +170,24 @@ describe('ReportePlusService', () => {
           extracciones: 100,
           depositosBancarios: 200,
         });
+      });
+
+      it('descuenta del efectivo esperado las devoluciones en efectivo registradas', async () => {
+        filas = [fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 300 })];
+        devolucion.find.mockImplementation(() =>
+          chain([{ montoDevuelto: 50, moneda: 'CUP' }]),
+        );
+
+        const r = await service.resumen();
+
+        expect(devolucion.find).toHaveBeenCalledWith(
+          expect.objectContaining({
+            formaDevolucionDinero: 'efectivo',
+            estado: 'registrada',
+          }),
+        );
+        // 300 de ventas - 50 de extracciones (mock por defecto) - 50 devueltos
+        expect(r.efectivoEsperado.CUP).toBe(200);
       });
 
       it('una venta a crédito, una transferencia o una factura no alteran el efectivo esperado', async () => {

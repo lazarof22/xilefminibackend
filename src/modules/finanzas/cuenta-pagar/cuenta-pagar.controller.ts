@@ -12,8 +12,13 @@ import { CreateCuentaPagarDto } from './dto/create-cuenta-pagar.dto';
 import { UpdateCuentaPagarDto } from './dto/update-cuenta-pagar.dto';
 import { AbonarCuentaPagarDto } from './dto/abonar-cuenta-pagar.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Cuentas por Pagar')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('cuenta-pagar')
 export class CuentaPagarController {
   constructor(private readonly cxpService: CuentaPagarService) {}

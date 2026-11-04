@@ -2,8 +2,13 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ReporteInventarioService } from './reporte-inventario.service';
 import { ReporteInventarioItemDto } from './dto/reporte-inventario-item.dto';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Reporte de inventario')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('inventario')
 export class ReporteInventarioController {
   constructor(

@@ -3,8 +3,13 @@ import { ContenedorService } from './contenedor.service';
 import { CreateContenedorDto } from './dto/create-contenedor.dto';
 import { UpdateContenedorDto } from './dto/update-contenedor.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Contenedor')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('contenedor')
 export class ContenedorController {
     constructor(private readonly contenedorService: ContenedorService) { }

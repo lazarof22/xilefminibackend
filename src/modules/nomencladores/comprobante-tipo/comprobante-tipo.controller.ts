@@ -11,8 +11,13 @@ import { ComprobanteTipoService } from './comprobante-tipo.service';
 import { CreateComprobanteTipoDto } from './dto/create-comprobante-tipo.dto';
 import { UpdateComprobanteTipoDto } from './dto/update-comprobante-tipo.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Tipos de Comprobante')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('comprobante-tipo')
 export class ComprobanteTipoController {
   constructor(

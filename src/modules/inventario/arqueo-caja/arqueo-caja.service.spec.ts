@@ -13,6 +13,7 @@ import { ReportePlus } from '../reporte_plus/schema/reporte_plus.schema';
 import { LineaTurnoArchivada } from '../reporte_plus/schema/linea-turno-archivada.schema';
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
+import { Devolucion } from '../devolucion/schema/devolucion.schema';
 
 const chain = <T>(valor: T) => {
   const c: Record<string, jest.Mock> = {};
@@ -29,6 +30,7 @@ describe('ArqueoCajaService', () => {
   let archivadas: Record<string, jest.Mock>;
   let extraccion: Record<string, jest.Mock>;
   let deposito: Record<string, jest.Mock>;
+  let devolucion: Record<string, jest.Mock>;
   const turnoId = new Types.ObjectId();
   const usuario = new Types.ObjectId().toHexString();
 
@@ -100,6 +102,7 @@ describe('ArqueoCajaService', () => {
     archivadas = { find: jest.fn(() => chain([])) };
     extraccion = { find: jest.fn(() => chain([{ monto: 100 }])) };
     deposito = { find: jest.fn(() => chain([{ monto: 200 }])) };
+    devolucion = { find: jest.fn(() => chain([])) };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -113,6 +116,7 @@ describe('ArqueoCajaService', () => {
         },
         { provide: getModelToken(Extraccion.name), useValue: extraccion },
         { provide: getModelToken(DepositoBancario.name), useValue: deposito },
+        { provide: getModelToken(Devolucion.name), useValue: devolucion },
       ],
     }).compile();
     service = mod.get(ArqueoCajaService);
@@ -135,6 +139,25 @@ describe('ArqueoCajaService', () => {
       );
       expect(extraccion.find).toHaveBeenCalledWith({ turnoCaja: turnoId });
       expect(deposito.find).toHaveBeenCalledWith({ turnoCajaId: turnoId });
+    });
+
+    it('resta las devoluciones en efectivo registradas dentro de la ventana del turno', async () => {
+      devolucion.find.mockImplementation(() =>
+        chain([{ montoDevuelto: 100, moneda: 'CUP' }]),
+      );
+
+      const r = await service.esperadoDelTurno(turnoId.toHexString());
+
+      expect(devolucion.find).toHaveBeenCalledWith({
+        formaDevolucionDinero: 'efectivo',
+        estado: 'registrada',
+        fecha: {
+          $gte: new Date('2026-11-02T08:00:00'),
+          $lte: new Date('2026-11-02T18:00:00'),
+        },
+      });
+      // 1000 (esperado sin devoluciones) - 100; USD no cambia
+      expect(r.efectivoEsperado).toEqual({ CUP: 900, USD: 70 });
     });
 
     it('incluye las líneas ya archivadas de un cierre de Reporte Plus', async () => {

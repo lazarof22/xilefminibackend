@@ -3,8 +3,13 @@ import { CategoriaService } from './categoria.service';
 import { CreateCategoriaDto } from './dto/create-categoria.dto';
 import { UpdateCategoriaDto } from './dto/update-categoria.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Categoria')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('categoria')
 export class CategoriaController {
   constructor(private readonly categoriaService: CategoriaService) { }

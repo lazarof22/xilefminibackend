@@ -3,8 +3,13 @@ import { CargoEmpleadoService } from './cargo_empleado.service';
 import { CreateCargoEmpleadoDto } from './dto/create-cargo_empleado.dto';
 import { UpdateCargoEmpleadoDto } from './dto/update-cargo_empleado.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Cargo de Empleado')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('cargo-empleado')
 export class CargoEmpleadoController {
   constructor(private readonly cargoEmpleadoService: CargoEmpleadoService) { }

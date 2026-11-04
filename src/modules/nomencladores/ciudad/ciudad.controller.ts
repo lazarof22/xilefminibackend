@@ -12,8 +12,13 @@ import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CiudadService } from './ciudad.service';
 import { CreateCiudadDto } from './dto/create-ciudad.dto';
 import { UpdateCiudadDto } from './dto/update-ciudad.dto';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Ciudad')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('ciudad')
 export class CiudadController {
   constructor(private readonly ciudadService: CiudadService) {}

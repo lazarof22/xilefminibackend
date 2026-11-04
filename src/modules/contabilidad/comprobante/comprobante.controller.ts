@@ -11,8 +11,13 @@ import { ComprobanteService } from './comprobante.service';
 import { CreateComprobanteDto } from './dto/create-comprobante.dto';
 import { UpdateComprobanteDto } from './dto/update-comprobante.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Comprobantes (Diario General)')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('comprobante')
 export class ComprobanteController {
   constructor(private readonly comprobanteService: ComprobanteService) {}

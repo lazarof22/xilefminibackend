@@ -3,8 +3,13 @@ import { KardexService } from './kardex.service';
 import { CreateKardexDto } from './dto/create-kardex.dto';
 import { UpdateKardexDto } from './dto/update-kardex.dto';
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags()
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('kardex')
 export class KardexController {
   constructor(private readonly kardexService: KardexService) { }

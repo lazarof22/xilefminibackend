@@ -3,7 +3,12 @@ import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 @ApiTags('Empresa')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('empresa')
 export class EmpresaController {
   constructor(private readonly empresaService: EmpresaService) { }

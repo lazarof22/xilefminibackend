@@ -2,8 +2,13 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RegistroCompraService } from './registro-compra.service';
 import { CreateRegistroCompraDto } from './dto/create-registro-compra.dto';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Registro de compra')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('registro-compra')
 export class RegistroCompraController {
     constructor(

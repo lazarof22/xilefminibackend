@@ -11,7 +11,12 @@ import { NaturalezaCuentaService } from './naturaleza-cuenta.service';
 import { CreateNaturalezaCuentaDto } from './dto/create-naturaleza-cuenta.dto';
 import { UpdateNaturalezaCuentaDto } from './dto/update-naturaleza-cuenta.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 @ApiTags('NaturalezaCuenta')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('naturaleza-cuenta')
 export class NaturalezaCuentaController {
   constructor(

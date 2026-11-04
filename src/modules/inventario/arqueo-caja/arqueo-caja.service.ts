@@ -18,6 +18,8 @@ import {
   resumirPorMoneda,
   ResumenMonedas,
 } from '../reporte_plus/efectivo-turno.util';
+import { Devolucion } from '../devolucion/schema/devolucion.schema';
+import { devolucionesEfectivoEnVentana } from '../devolucion/devolucion-efectivo.util';
 import { CreateArqueoCajaDto } from './dto/create-arqueo-caja.dto';
 import {
   ArqueoCaja,
@@ -48,6 +50,8 @@ export class ArqueoCajaService {
     @InjectModel(Extraccion.name) private extraccionModel: Model<Extraccion>,
     @InjectModel(DepositoBancario.name)
     private depositoModel: Model<DepositoBancario>,
+    @InjectModel(Devolucion.name)
+    private devolucionModel: Model<Devolucion>,
   ) {}
 
   /** Efectivo esperado por moneda de un turno (para precargar el arqueo). */
@@ -188,11 +192,18 @@ export class ArqueoCajaService {
       .lean()
       .exec()) as unknown as MovimientoMoneda[];
 
+    const devolucionesEfectivo = await devolucionesEfectivoEnVentana(
+      this.devolucionModel,
+      turno.fechaApertura,
+      turno.fechaCierre ?? new Date(),
+    );
+
     return resumirPorMoneda({
       fondoInicial: turno.fondoInicial ?? {},
       filas: [...abiertas, ...archivadas],
       extracciones,
       depositos,
+      devolucionesEfectivo,
     });
   }
 

@@ -3,8 +3,13 @@ import { TransferenciaService } from './transferencia.service';
 import { CreateTransferenciaDto } from './dto/create-transferencia.dto';
 import { UpdateTransferenciaDto } from './dto/update-transferencia.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Transferencia')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('transferencia')
 export class TransferenciaController {
     constructor(private readonly transferenciaService: TransferenciaService) { }

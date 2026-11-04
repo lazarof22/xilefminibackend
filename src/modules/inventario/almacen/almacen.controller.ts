@@ -3,8 +3,13 @@ import { AlmacenService } from './almacen.service';
 import { CreateAlmacenDto } from './dto/create-almacen.dto';
 import { UpdateAlmacenDto } from './dto/update-almacen.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Almacen')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('almacen')
 export class AlmacenController {
     constructor(private readonly almacenService: AlmacenService) { }

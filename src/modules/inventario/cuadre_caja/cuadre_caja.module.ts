@@ -20,6 +20,11 @@ import {
   DepositoBancarioSchema,
 } from '../deposito-bancario/schema/deposito-bancario.schema';
 
+import {
+  Devolucion,
+  DevolucionSchema,
+} from '../devolucion/schema/devolucion.schema';
+
 @Module({
   controllers: [CuadreCajaController],
   providers: [CuadreCajaService],
@@ -32,6 +37,7 @@ import {
       { name: Extraccion.name, schema: ExtraccionSchema },
       { name: TurnoCaja.name, schema: TurnoCajaSchema },
       { name: DepositoBancario.name, schema: DepositoBancarioSchema },
+      { name: Devolucion.name, schema: DevolucionSchema },
     ]),
   ],
   exports: [MongooseModule],

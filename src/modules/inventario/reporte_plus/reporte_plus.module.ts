@@ -25,6 +25,11 @@ import {
   ExtraccionSchema,
 } from '../extraccion/schema/extraccion.schema';
 
+import {
+  Devolucion,
+  DevolucionSchema,
+} from '../devolucion/schema/devolucion.schema';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -35,6 +40,7 @@ import {
       { name: TurnoCaja.name, schema: TurnoCajaSchema },
       { name: DepositoBancario.name, schema: DepositoBancarioSchema },
       { name: LineaTurnoArchivada.name, schema: LineaTurnoArchivadaSchema },
+      { name: Devolucion.name, schema: DevolucionSchema },
     ]),
   ],
   controllers: [ReportePlusController],

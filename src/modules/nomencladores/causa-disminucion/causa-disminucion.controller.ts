@@ -11,8 +11,13 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CausaDisminucionService } from './causa-disminucion.service';
 import { CreateCausaDisminucionDto } from './dto/create-causa-disminucion.dto';
 import { UpdateCausaDisminucionDto } from './dto/update-causa-disminucion.dto';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Causas de disminución')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('causa-disminucion')
 export class CausaDisminucionController {
   constructor(private readonly causaService: CausaDisminucionService) {}

@@ -3,8 +3,13 @@ import { DepartamentoService } from './departamento.service';
 import { CreateDepartamentoDto } from './dto/create-departamento.dto';
 import { UpdateDepartamentoDto } from './dto/update-departamento.dto';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Departamento')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('departamento')
 export class DepartamentoController {
   constructor(private readonly departamentoService: DepartamentoService) { }

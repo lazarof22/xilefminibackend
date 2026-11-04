@@ -10,8 +10,13 @@ import {
 } from '@nestjs/swagger';
 
 import { ExistenciaService } from './existencia.service';
+import { UseGuards } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @ApiTags('Existencias')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('existencias')
 export class ExistenciaController {
     constructor(
