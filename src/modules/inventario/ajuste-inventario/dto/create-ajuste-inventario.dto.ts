@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiHideProperty, ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -34,11 +34,16 @@ export class LineaAjusteDto {
   @IsNumber({}, { message: 'El ajuste debe ser un número' })
   ajuste!: number;
 
+  // `@ApiHideProperty`: el plugin de Swagger del CLI infiere `never` y entra en
+  // un ciclo al generar el documento (el backend no arrancaba).
+
   /** No se acepta: el servidor lo lee de `Existencia`. */
+  @ApiHideProperty()
   @IsEmpty({ message: SALDO_DEL_SERVIDOR })
   saldoAntes?: never;
 
   /** No se acepta: el servidor lo calcula. */
+  @ApiHideProperty()
   @IsEmpty({ message: SALDO_DEL_SERVIDOR })
   saldoDespues?: never;
 }
