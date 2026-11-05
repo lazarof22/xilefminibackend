@@ -56,24 +56,23 @@ export class KardexService {
     }
   }
 
-  /** Referencia y campos contables del Submayor SC-2-13 que el DTO trae; los ausentes no se escriben. */
+  /**
+   * Referencia y campos contables del Submayor SC-2-13 que el DTO trae; los ausentes no se escriben.
+   * El costo promedio y el importe CUP no vienen del cliente: los calcula `valuar`.
+   */
   private camposContables(
     dto: CreateKardexDto,
   ): Partial<
     Pick<
       CreateKardexDto,
-      | 'importeCUP'
       | 'importeDivisa'
-      | 'costoPromedio'
       | 'ubicacionFisica'
       | 'referenciaContable'
       | 'referencia'
     >
   > {
     const campos = [
-      'importeCUP',
       'importeDivisa',
-      'costoPromedio',
       'ubicacionFisica',
       'referenciaContable',
       'referencia',

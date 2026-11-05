@@ -49,12 +49,6 @@ export class CreateKardexDto {
     @IsString()
     referencia?: string;
 
-    /** Submayor SC-2-13: importe del movimiento en pesos (CUP). */
-    @ApiPropertyOptional({ description: 'Importe del movimiento en CUP', minimum: 0 })
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    importeCUP?: number;
 
     /** Submayor SC-2-13: importe del movimiento en divisa. */
     @ApiPropertyOptional({ description: 'Importe del movimiento en divisa', minimum: 0 })
@@ -63,12 +57,6 @@ export class CreateKardexDto {
     @Min(0)
     importeDivisa?: number;
 
-    /** Submayor SC-2-13: costo promedio unitario tras el movimiento. */
-    @ApiPropertyOptional({ description: 'Costo promedio unitario', minimum: 0 })
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    costoPromedio?: number;
 
     /** Submayor SC-2-13: ubicación física (almacén / contenedor / casilla). */
     @ApiPropertyOptional({ description: 'Ubicación física del movimiento' })

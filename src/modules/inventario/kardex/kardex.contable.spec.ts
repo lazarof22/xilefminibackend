@@ -82,13 +82,26 @@ describe('Kardex extendido a Submayor SC-2-13 (doc §6.6)', () => {
       expect(await validate(dto)).toHaveLength(0);
     });
 
-    it('acepta los campos contables', async () => {
-      const dto = plainToInstance(CreateKardexDto, { ...dtoBase, ...contables });
+    it('acepta los campos contables que no calcula el servidor', async () => {
+      const { importeDivisa, ubicacionFisica, referenciaContable } = contables;
+      const enviados = { importeDivisa, ubicacionFisica, referenciaContable };
+      const dto = plainToInstance(CreateKardexDto, { ...dtoBase, ...enviados });
       expect(await validate(dto)).toHaveLength(0);
-      expect(dto).toMatchObject(contables);
+      expect(dto).toMatchObject(enviados);
     });
 
-    it.each(['importeCUP', 'importeDivisa', 'costoPromedio'])(
+    it.each(['importeCUP', 'costoPromedio'])(
+      'no deja que el cliente fije %s (lo calcula el servidor)',
+      async (campo) => {
+        const errores = await validate(
+          plainToInstance(CreateKardexDto, { ...dtoBase, [campo]: 5 }),
+          { whitelist: true, forbidNonWhitelisted: true },
+        );
+        expect(errores.some((e) => e.property === campo)).toBe(true);
+      },
+    );
+
+    it.each(['importeDivisa'])(
       'rechaza %s negativo',
       async (campo) => {
         const dto = plainToInstance(CreateKardexDto, {
@@ -100,7 +113,7 @@ describe('Kardex extendido a Submayor SC-2-13 (doc §6.6)', () => {
       },
     );
 
-    it.each(['importeCUP', 'importeDivisa', 'costoPromedio'])(
+    it.each(['importeDivisa'])(
       'rechaza %s que no sea número',
       async (campo) => {
         const dto = plainToInstance(CreateKardexDto, {

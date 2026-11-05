@@ -133,7 +133,7 @@ describe.each([
     expect(fila.referenciaContable).toBeUndefined();
   });
 
-  it('lo que trae el DTO tiene prioridad sobre el cálculo', async () => {
+  it('el DTO no puede fijar el costo: se valúa al promedio vigente', async () => {
     const e = escenario({ unificado });
     e.kardex.insertar({ productoId: e.P, costoPromedio: 6.5 });
 
@@ -143,12 +143,12 @@ describe.each([
         costoPromedio: 7,
         importeCUP: 21,
         ubicacionFisica: 'Central / Estante 1',
-      }),
+      } as never),
     );
 
     expect(fila).toMatchObject({
-      costoPromedio: 7,
-      importeCUP: 21,
+      costoPromedio: 6.5,
+      importeCUP: 19.5,
       ubicacionFisica: 'Central / Estante 1',
     });
   });

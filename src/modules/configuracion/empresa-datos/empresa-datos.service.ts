@@ -40,7 +40,11 @@ export class EmpresaDatosService {
   }
 
   async guardar(dto: UpdateEmpresaDatosDto): Promise<EmpresaDatosDocument> {
-    const data: Record<string, unknown> = { ...dto };
+    // Con target ES2023 el DTO trae los opcionales no enviados como `undefined`:
+    // copiarlos tal cual borraría lo guardado en un PUT parcial.
+    const data: Record<string, unknown> = Object.fromEntries(
+      Object.entries(dto).filter(([, valor]) => valor !== undefined),
+    );
     if (dto.pais && !this.nomencladorHelper.isObjectId(dto.pais)) {
       data.pais = await this.nomencladorHelper.findOrCreatePais(dto.pais);
     }

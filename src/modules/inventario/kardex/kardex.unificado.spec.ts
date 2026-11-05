@@ -324,9 +324,7 @@ describe('KardexService.create — ajuste de inventario', () => {
 
   describe('campos contables del Submayor SC-2-13', () => {
     const contables = {
-      importeCUP: 1200,
       importeDivisa: 10,
-      costoPromedio: 600,
       ubicacionFisica: 'Central / Estante 1 / A3',
       referenciaContable: 'SC-2-13-0001',
     };
@@ -350,6 +348,22 @@ describe('KardexService.create — ajuste de inventario', () => {
       );
 
       expect(e.kardex.docs[0]).toMatchObject(contables);
+    });
+
+    it('el costo promedio y el importe CUP los calcula el servidor, no el cliente', async () => {
+      const e = escenario();
+
+      await e.servicio.create(
+        e.dto({
+          tipo: KardexTipo.ENTRADA,
+          cantidad: 2,
+          costoPromedio: 9999,
+          importeCUP: 9999,
+        } as never),
+      );
+
+      expect(e.kardex.docs[0]).not.toMatchObject({ costoPromedio: 9999 });
+      expect(e.kardex.docs[0]).not.toMatchObject({ importeCUP: 9999 });
     });
 
     it('sin ellos el kardex no lleva esos campos', async () => {

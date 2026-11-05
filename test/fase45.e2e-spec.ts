@@ -267,13 +267,9 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
       });
     });
 
-    // HALLAZGO (producción, no corregido aquí): con `target` ES2023 los campos
-    // opcionales de UpdateEmpresaDatosDto son propiedades propias `undefined`;
-    // `EmpresaDatosService.guardar` hace `{ ...dto }` + `Object.assign`, así que un
-    // PUT parcial intenta poner `nombre = undefined` (400 "Path `nombre` is
-    // required.") y, si se envía `nombre`, borra los demás campos no enviados.
-    // Cuando se corrija, este test dejará de fallar y habrá que quitar `.failing`.
-    it.failing(
+    // Regresión: con `target` ES2023 los opcionales no enviados llegan como `undefined`
+    // y un PUT parcial borraba (o rechazaba por `nombre` requerido) los datos guardados.
+    it(
       'PUT /empresa parcial ({ codigo_entidad }) conserva el resto de los datos',
       async () => {
         const put = await http.put(
@@ -285,7 +281,15 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
         expect(put.body).toMatchObject({
           nombre: 'Empresa E2E',
           direccion: 'Calle 1',
+          codigo_entidad: '7654321',
         });
+        // Los tests siguientes esperan el código original.
+        const restaurado = await http.put(
+          '/empresa',
+          { codigo_entidad: '1234567' },
+          admin,
+        );
+        expect(restaurado.status).toBe(200);
       },
     );
 
