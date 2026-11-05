@@ -32,12 +32,12 @@ Boundaries: phases 2 and 3 are done by someone else: do not edit `venta`, `pago`
 - [x] T6 Permisos + frontend token everywhere: S11 (parent, inline; user cancelled the gentle-shell delegation and asked to implement it directly) — commits backend 48ddc4a, frontend 915f822; independent verifier: no blockers
 - [ ] T7 Registro en app.module, build, suite, differential check, close
 
-- [ ] T8 Base verde backend: stale specs (almacen `codigo`, factura fixtures, licencia spec) so jest and tsc are clean — delegated (writer A)
-- [ ] T9 Base verde frontend: declare @mui/x-charts + axios in package.json, fix tsc errors outside the phase 2/3 files — delegated (writer B)
-- [ ] T10 `/empresa` route clash + extracción de caja authorized by Administrador/Gerente (doc §6.9) — delegated (writer D)
-- [ ] T11 Submayor SC-2-13 completo (costoPromedio, ubicacionFisica), reporte de inventario con reservada/disponible, Reporte Plus sin efectivo esperado negativo — delegated (writer E)
-- [ ] T12 e2e suite against real MongoDB (smoke flows + app boot) — after T8-T11
-- [ ] T13 `gravado` select in the product grid (CustomDataGridR options) — after T9
+- [x] T8 Base verde backend: stale specs (almacen `codigo`, factura fixtures, licencia spec) so jest and tsc are clean — delegated (writer A)
+- [x] T9 Base verde frontend: declare @mui/x-charts + axios in package.json, fix tsc errors outside the phase 2/3 files — delegated (writer B)
+- [x] T10 `/empresa` route clash + extracción de caja authorized by Administrador/Gerente (doc §6.9) — delegated (writer D)
+- [x] T11 Submayor SC-2-13 completo (costoPromedio, ubicacionFisica), reporte de inventario con reservada/disponible, Reporte Plus sin efectivo esperado negativo — delegated (writer E)
+- [x] T12 e2e suite against real MongoDB (smoke flows + app boot) — after T8-T11
+- [x] T13 `gravado` select in the product grid (CustomDataGridR options) — after T9
 
 ## Log
 
@@ -55,3 +55,6 @@ Boundaries: phases 2 and 3 are done by someone else: do not edit `venta`, `pago`
 - L12 (parent): Open decisions for the user: (a) GET /empresa is served by EmpresaController (clients/proveedores, returns []) instead of EmpresaDatosController, so the Empresa form loads blank (pre-existing route clash; compraApi relies on the array); (b) Reporte Plus efectivo esperado can go negative when a TurnoCaja is closed before the Reporte Plus cierre (deposits counted by time window, fondo only from open turnos); (c) extraccion keeps auth-only (S11 says Administrador/Gerente); (d) Pago*Dialog/ventaService/Carrito still call venta/pago/cliente without token, so those controllers stay unguarded until phase 2/3 merges; (e) `gravado` is a text column (CustomDataGridR has no select editor); (f) descuenta_deuda has no customer-debt field; (g) `@mui/x-charts` is imported by Tasa.tsx but not declared in package.json (vite build fails on the base).
 - L13 (user, verbatim): "si perfecto, arregla y deja funcional todo , recuerda basarte en el documento como base de guia" and "el paso 5, no han hecho esas fases todavia, asi que no tokes eso" -> T8-T13 added; NOTHING of phases 2/3 is touched (venta, pago, cliente, tasa, Carrito, ventaService, Pago*Dialog, CatalogoProductosTab; no new guards on them; the 4 tsc errors of PagoEfectivoDialog stay).
 - L14 (parent): Deferred on purpose: a module-based RBAC guard (`@RequiereModulo`) across controllers: screens share endpoints (e.g. SelectConAgregar creates almacen/contenedor/categoria from several modules) so a wrong endpoint-to-module matrix would return 403 in working screens; needs a decision from the user. Also deferred: debt of the client for `descuenta_deuda` (belongs with phase 2/3 credit checkout).
+- L15 (parent): T8-T13 done (backend commits 72c1d69, 44a0073, f1b3ce2, 26760e6; T9/T13 in the frontend repo). Verified: jest 1309 passed, tsc 0, nest build 0, e2e 41 passed against a throwaway MongoDB (`MONGO_TEST_URI=mongodb://127.0.0.1:27017/xilef_e2e_$RANDOM npm run test:e2e`).
+- L16 (parent): Independent read-only reviews (risk: 0 blockers; reliability: 2 blockers). Fixed: factura `cancelar` now 409 while a devolución vale exists (feafd51); CuadreCaja saves `devoluciones_efectivo` and `depositos_bancarios` shown in the preview (frontend eeaac32); manual `POST /kardex` no longer accepts `costoPromedio`/`importeCUP` (638334a); partial `PUT /empresa` keeps stored data (638334a). Native RDD review ended `corrupted_or_unverifiable_authority` twice (known defect #4571).
+- L17 (parent): Open decisions for the user: (a) supervisor authorization token is the full session JWT (use a scoped ~60s single-use token); (b) `JWT_SECRET` default 'Chimuelo' and tracked `.env`; (c) cash devoluciones/ventas matched to a turno by time window, not by cashier/turno (needs phase 2/3 data); (d) an extracción with no open turno and no sales makes `efectivoEsperado` negative (e2e `it.failing`); (e) module-based RBAC; (f) devolución de venta uses current `precio_venta` (needs the sale price stored by phase 2/3); (g) stale `aplicando` vales have no sweeper.
