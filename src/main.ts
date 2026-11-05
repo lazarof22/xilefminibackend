@@ -21,9 +21,11 @@ async function bootstrap() {
   app.enableCors({
     origin: ['http://localhost:5173'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    allowedHeaders: 'Content-Type, Authorization',
-    // Lets the browser read the .req filename of GET /licencia/solicitud?descargar=true.
-    exposedHeaders: ['Content-Disposition'],
+    // Idempotency-Key: la envía el punto de venta en POST /venta/checkout.
+    allowedHeaders: 'Content-Type, Authorization, Idempotency-Key',
+    // Lets the browser read the .req filename of GET /licencia/solicitud?descargar=true
+    // and whether a checkout response is a replay (Idempotency-Replayed).
+    exposedHeaders: ['Content-Disposition', 'Idempotency-Replayed'],
     credentials: true,
   });
 

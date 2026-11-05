@@ -681,6 +681,102 @@ export class ExistenciaService {
     }
 
     /**
+     * Descuento de stock para una venta del punto de venta, en cualquiera de
+     * los dos modos (Fase 2):
+     *  - unificado: por ubicación (`descontarProducto`);
+     *  - antiguo: UNA actualización condicional sobre `Producto.stock_inicial`
+     *    (`stock_inicial >= n`). Así, aunque la conciliación aún no se haya
+     *    hecho, dos cajeros no pueden vender la misma última unidad (el
+     *    leer-restar-guardar anterior sí lo permitía).
+     *
+     * `ubicaciones` dice de dónde salió (solo en modo unificado) para poder
+     * devolverlo exacto con `reponerVenta`.
+     */
+    async descontarVenta(opts: {
+        productoId: string | Types.ObjectId;
+        cantidad: number;
+        unificado: boolean;
+        almacenId?: string | Types.ObjectId;
+        contenedorId?: string | Types.ObjectId;
+    }): Promise<ResultadoMovimiento> {
+        if (opts.unificado) {
+            return this.descontarProducto(opts);
+        }
+
+        const productoId = this.comoObjectId(
+            opts.productoId,
+            'El ID del producto no es válido',
+        );
+        const cantidad = this.cantidadValida(opts.cantidad);
+
+        const actualizado = await this.productoModel
+            .findOneAndUpdate(
+                {
+                    _id: productoId,
+                    stock_inicial: {
+                        $gte: Math.max(0, cantidad - TOLERANCIA_SALDO),
+                    },
+                },
+                { $inc: { stock_inicial: -cantidad } },
+                { returnDocument: 'after' },
+            )
+            .lean()
+            .exec();
+
+        if (!actualizado) {
+            const producto = await this.productoModel
+                .findById(productoId)
+                .lean()
+                .exec();
+
+            if (!producto) {
+                throw new NotFoundException('El producto no existe');
+            }
+
+            throw new StockInsuficienteException(
+                `"${producto.nombre_producto}"`,
+                Number(producto.stock_inicial) || 0,
+                cantidad,
+            );
+        }
+
+        return {
+            ubicaciones: [],
+            stockTotal: Math.max(
+                0,
+                redondear(Number(actualizado.stock_inicial) || 0),
+            ),
+        };
+    }
+
+    /**
+     * Deshace un `descontarVenta`: con `ubicaciones` (modo unificado) devuelve
+     * a cada ubicación lo que salió de ella; sin ellas, suma al stock del
+     * producto. Sigue lo que quedó anotado al descontar, no el modo actual.
+     */
+    async reponerVenta(opts: {
+        productoId: string | Types.ObjectId;
+        cantidad: number;
+        ubicaciones?: UbicacionCantidad[];
+    }): Promise<ResultadoMovimiento> {
+        if (opts.ubicaciones?.length) {
+            return this.reponerProducto({
+                productoId: opts.productoId,
+                ubicaciones: opts.ubicaciones,
+            });
+        }
+
+        const productoId = this.comoObjectId(
+            opts.productoId,
+            'El ID del producto no es válido',
+        );
+        const cantidad = this.cantidadValida(opts.cantidad);
+        const stockTotal = await this.moverCacheProducto(productoId, cantidad);
+
+        return { ubicaciones: [], stockTotal };
+    }
+
+    /**
      * Deja una existencia en una cantidad exacta (la crea si no existe) y
      * devuelve la cantidad anterior. Solo para la conciliación: no mueve el
      * total del producto, quien llama lo sincroniza con `fijarStockProducto`.

@@ -10,13 +10,31 @@ import {
   DesgloseBilletesDto,
 } from './dto/create-pago.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Pago } from './schema/pago.schema';
 import { PagoCredito } from './schema/pago_credito.schema';
 import { PagoTransferencia } from './schema/pago_transferencia.schema';
-import { Cliente } from 'src/modules/clientes y provedores/cliente/schemas/cliente.schema';
+import { Cliente } from '../../clientes y provedores/cliente/schemas/cliente.schema';
 import { PagoEfectivo, TipoCliente } from './schema/pago_efectivo.schema';
 import { Venta } from '../venta/schema/venta.schema';
+import {
+  DENOMINACIONES_CUP,
+  PagoCheckoutDto,
+  TipoPagoCheckout,
+} from './dto/pago-checkout.dto';
+import { redondear } from '../../factura/factura-totales';
+import { esClaveDuplicada } from '../../../common/utils/insertar-idempotente';
+
+/** Pago ya validado contra el total del servidor, listo para guardarse. */
+export interface PagoCheckoutPreparado {
+  tipo: TipoPagoCheckout;
+  /** Campos del documento de pago (sin `_id` ni fechas). */
+  documento: Record<string, unknown>;
+  /** Efectivo recibido (suma del desglose); 0 si no es efectivo. */
+  montoRecibido: number;
+  cambio: number;
+  esCuentaCasa: boolean;
+}
 
 @Injectable()
 export class PagoService {
@@ -314,6 +332,203 @@ export class PagoService {
       cantidad: pagos.length,
       monto: pagos.reduce((sum, p) => sum + (p.monto_pagar || 0), 0),
     };
+  }
+
+  // ───────────────────────── Checkout (Fase 2) ─────────────────────────
+
+  /**
+   * Valida el pago de un checkout contra el TOTAL CALCULADO POR EL SERVIDOR y
+   * arma el documento. El cliente no manda montos: el efectivo recibido sale
+   * de sumar el desglose y el cambio se calcula aquí. No escribe nada, así
+   * que un pago inválido se rechaza antes de tocar el stock.
+   */
+  prepararPagoCheckout(
+    pago: PagoCheckoutDto,
+    total: number,
+    clienteId?: Types.ObjectId,
+  ): PagoCheckoutPreparado {
+    switch (pago.tipo) {
+      case 'efectivo':
+        return this.prepararEfectivoCheckout(pago, total);
+      case 'credito':
+        return this.prepararCreditoCheckout(total, clienteId);
+      case 'transferencia':
+        return this.prepararTransferenciaCheckout(pago, total, clienteId);
+      default:
+        throw new BadRequestException('Tipo de pago no válido');
+    }
+  }
+
+  private prepararEfectivoCheckout(
+    pago: PagoCheckoutDto,
+    total: number,
+  ): PagoCheckoutPreparado {
+    const tipoCliente = pago.tipoCliente ?? TipoCliente.CLIENTEESTANDAR;
+
+    const desglose = Object.fromEntries(
+      DENOMINACIONES_CUP.map(([clave]) => [clave, pago.desglose?.[clave] ?? 0]),
+    ) as Record<string, number>;
+    const montoRecibido = redondear(
+      DENOMINACIONES_CUP.reduce(
+        (suma, [clave, valor]) => suma + desglose[clave] * valor,
+        0,
+      ),
+    );
+
+    // Cuenta casa: se entrega la mercancía sin cobrar (el total queda registrado).
+    if (tipoCliente === TipoCliente.CLIENTECUENTACASA) {
+      if (montoRecibido > 0) {
+        throw new BadRequestException(
+          'Para cliente cuenta casa no se recibe efectivo: el desglose debe estar vacío',
+        );
+      }
+
+      return {
+        tipo: 'efectivo',
+        montoRecibido: 0,
+        cambio: 0,
+        esCuentaCasa: true,
+        documento: {
+          monto_pagado: 0,
+          monto_pagar_CUP: total,
+          monto_pagar_alCambio: 0,
+          cambio: 0,
+          cliente: TipoCliente.CLIENTECUENTACASA,
+          esCuentaCasa: true,
+          metodoPago: 'efectivo',
+        },
+      };
+    }
+
+    if (tipoCliente === TipoCliente.CLIENTEPORDESCUENTO) {
+      const datos = pago.datosClienteDescuento;
+      if (!datos?.nombre || !datos.ci || !datos.telefono) {
+        throw new BadRequestException(
+          'Nombre, CI y Teléfono son obligatorios para clientes por descuento',
+        );
+      }
+    }
+
+    if (montoRecibido <= 0) {
+      throw new BadRequestException(
+        'El desglose de billetes es obligatorio para pagos en efectivo',
+      );
+    }
+
+    if (montoRecibido < total) {
+      throw new BadRequestException(
+        `El efectivo recibido (${montoRecibido.toFixed(2)}) es menor que el total de la venta (${total.toFixed(2)})`,
+      );
+    }
+
+    const cambio = redondear(montoRecibido - total);
+
+    return {
+      tipo: 'efectivo',
+      montoRecibido,
+      cambio,
+      esCuentaCasa: false,
+      documento: {
+        monto_pagado: montoRecibido,
+        desglose,
+        monto_pagar_CUP: total,
+        monto_pagar_alCambio: 0,
+        cambio,
+        cliente: tipoCliente,
+        esCuentaCasa: false,
+        datosClienteDescuento:
+          tipoCliente === TipoCliente.CLIENTEPORDESCUENTO
+            ? pago.datosClienteDescuento
+            : undefined,
+        metodoPago: 'efectivo',
+      },
+    };
+  }
+
+  private prepararCreditoCheckout(
+    total: number,
+    clienteId?: Types.ObjectId,
+  ): PagoCheckoutPreparado {
+    if (!clienteId) {
+      throw new BadRequestException(
+        'El cliente es obligatorio para ventas a crédito',
+      );
+    }
+
+    return {
+      tipo: 'credito',
+      montoRecibido: 0,
+      cambio: 0,
+      esCuentaCasa: false,
+      documento: { clienteId, monto_pagar: total, metodoPago: 'credito' },
+    };
+  }
+
+  private prepararTransferenciaCheckout(
+    pago: PagoCheckoutDto,
+    total: number,
+    clienteId?: Types.ObjectId,
+  ): PagoCheckoutPreparado {
+    const referencia = pago.numeroCuenta || pago.referenciaPago;
+
+    if (!referencia) {
+      throw new BadRequestException(
+        'El número de referencia de la transferencia es obligatorio',
+      );
+    }
+
+    if (!pago.banco) {
+      throw new BadRequestException(
+        'El banco de la transferencia es obligatorio',
+      );
+    }
+
+    return {
+      tipo: 'transferencia',
+      montoRecibido: 0,
+      cambio: 0,
+      esCuentaCasa: false,
+      documento: {
+        montoPagar: total,
+        numeroCuenta: referencia,
+        referenciaPago: pago.referenciaPago ?? referencia,
+        banco: pago.banco,
+        notas: pago.notas,
+        ciCliente: pago.ciCliente,
+        nombreCliente: pago.nombreCliente,
+        clienteId,
+        metodoPago: 'transferencia',
+      },
+    };
+  }
+
+  /**
+   * Guarda el pago del checkout con el `_id` y la fecha de la operación. Es
+   * repetible: si ya existe (la recuperación repite el paso tras una caída),
+   * no hace nada.
+   */
+  async guardarPagoCheckout(
+    id: Types.ObjectId,
+    pago: PagoCheckoutPreparado,
+    fecha: Date,
+  ): Promise<void> {
+    const modelo: Model<any> =
+      pago.tipo === 'efectivo'
+        ? this.pagoEfectivoModel
+        : pago.tipo === 'credito'
+          ? this.pagoCreditoModel
+          : this.pagoTransferenciaModel;
+
+    try {
+      await modelo.create({
+        _id: id,
+        ...pago.documento,
+        createdAt: fecha,
+        updatedAt: fecha,
+      });
+    } catch (error) {
+      if (!esClaveDuplicada(error)) throw error;
+    }
   }
 
   async findAll(): Promise<Pago[]> {

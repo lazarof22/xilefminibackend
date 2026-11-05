@@ -15,6 +15,15 @@ import {
 import { Pago, PagoSchema } from '../pago/schema/pago.schema';
 import { ReportePlusModule } from '../reporte_plus/reporte_plus.module';
 import { ExistenciaModule } from '../exitencia/existencia.module';
+import { PagoModule } from '../pago/pago.module';
+import { ConfiguracionTributariaModule } from '../../configuracion-tributaria/configuracion-tributaria.module';
+import { OperacionIdempotenteModule } from '../../operacion-idempotente/operacion-idempotente.module';
+import {
+  VentaContador,
+  VentaContadorSchema,
+} from './schema/venta-contador.schema';
+import { CheckoutService } from './checkout/checkout.service';
+import { CheckoutRecuperacionService } from './checkout/checkout-recuperacion.service';
 
 @Module({
   imports: [
@@ -24,11 +33,15 @@ import { ExistenciaModule } from '../exitencia/existencia.module';
       { name: Producto.name, schema: ProductoSchema },
       { name: Kardex.name, schema: KardexSchema },
       { name: Pago.name, schema: PagoSchema },
+      { name: VentaContador.name, schema: VentaContadorSchema },
     ]),
     ReportePlusModule,
     ExistenciaModule,
+    PagoModule,
+    ConfiguracionTributariaModule,
+    OperacionIdempotenteModule,
   ],
   controllers: [VentaController],
-  providers: [VentaService],
+  providers: [VentaService, CheckoutService, CheckoutRecuperacionService],
 })
 export class VentaModule {}

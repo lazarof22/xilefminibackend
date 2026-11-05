@@ -37,6 +37,6 @@ import { Venta, VentaSchema } from '../venta/schema/venta.schema';
       { name: Venta.name, schema: VentaSchema },
     ]),
   ],
-  exports: [MongooseModule],
+  exports: [MongooseModule, PagoService],
 })
 export class PagoModule {}

@@ -16,6 +16,14 @@
  * forzar un entrelazado concreto, `hooks.antesDeEscribir` se ejecuta justo
  * antes de cada escritura y puede tocar los datos como lo haría otro cajero.
  *
+ * Fase 2 (checkout) lo amplía sin cambiar lo anterior: operadores `$push` y
+ * `$unset`, `insertMany` (con `ordered: false`), `_id` único en toda inserción
+ * (E11000), los ganchos `hooks.antes` / `hooks.despues` sobre CUALQUIER
+ * escritura y el `interruptor` que simula la caída del proceso: con
+ * `interruptor.caido = true`, toda operación posterior lanza, como si el
+ * servidor ya no existiera (la escritura que justo se acaba de aplicar sí
+ * queda hecha, igual que en una caída real).
+ *
  * Termina en `-spec.ts` para que `tsconfig.build.json` (que excluye los
  * archivos `*spec.ts`) no lo compile en `dist`, y no en `.spec.ts` para que
  * jest no lo ejecute como si fuera una prueba.
@@ -92,6 +100,11 @@ function aplicar(doc: Doc, update: Doc): void {
         doc[campo] = (doc[campo] ?? 0) + (v as number);
       } else if (operador === '$set') {
         doc[campo] = v;
+      } else if (operador === '$push') {
+        // Siempre un arreglo nuevo: las copias leídas antes no cambian.
+        doc[campo] = [...((doc[campo] as unknown[] | undefined) ?? []), v];
+      } else if (operador === '$unset') {
+        delete doc[campo];
       } else if (operador !== '$setOnInsert') {
         throw new Error(`Operador de update no soportado: ${operador}`);
       }
@@ -176,6 +189,23 @@ export interface OpcionesHooks {
    * escritura de ese modelo, desde 1). Sirve para simular a otro cajero.
    */
   antesDeEscribir?: (n: number, filtro: Doc, update: Doc) => void;
+  /**
+   * Fase 2. Se llama justo ANTES de cualquier escritura (`updateOne`,
+   * `findOneAndUpdate`, `findOneAndDelete`, `create`, `insertMany`). `datos`
+   * trae `{ filtro, update }` o `{ docs }`. Puede dejar caído el interruptor.
+   */
+  antes?: (op: string, datos: Doc) => void;
+  /**
+   * Fase 2. Se llama justo DESPUÉS de aplicar la escritura y antes de que el
+   * llamador reciba la respuesta: si aquí se deja caído el interruptor, la
+   * escritura queda hecha pero el llamador ve un error (caída a mitad).
+   */
+  despues?: (op: string, datos: Doc) => void;
+}
+
+/** Simula que el proceso del servidor murió: con `caido = true` todo lanza. */
+export interface Interruptor {
+  caido: boolean;
 }
 
 export interface OpcionesFake {
@@ -186,7 +216,13 @@ export interface OpcionesFake {
    * Insertar o actualizar hasta repetir la clave lanza E11000.
    */
   unico?: string[];
+  /** Compartido entre los modelos de un mismo "proceso" para simular su caída. */
+  interruptor?: Interruptor;
 }
+
+/** Clave de comparación de un `_id` que distingue ObjectId de texto, como MongoDB. */
+const claveId = (valor: unknown): string =>
+  `${valor instanceof Types.ObjectId ? 'id' : typeof valor}:${String(valor)}`;
 
 export class FakeModel {
   docs: Doc[];
@@ -195,9 +231,11 @@ export class FakeModel {
   /** Si devuelve un error, la escritura lanza ese error (red caída, timeout). */
   fallarSi?: (filtro: Doc, update: Doc) => Error | undefined;
   private readonly unico?: string[];
+  private readonly interruptor?: Interruptor;
 
   constructor(inicial: Doc[] = [], opciones: OpcionesFake = {}) {
     this.unico = opciones.unico;
+    this.interruptor = opciones.interruptor;
     this.docs = [];
     inicial.forEach((doc) => this.insertar(doc));
   }
@@ -205,9 +243,34 @@ export class FakeModel {
   /** Inserta directamente (preparación de la prueba); devuelve el documento guardado. */
   insertar(doc: Doc): Doc {
     const nuevo = { _id: new Types.ObjectId(), ...doc };
+
+    if (this.docs.some((d) => claveId(d._id) === claveId(nuevo._id))) {
+      throw Object.assign(new Error('E11000 duplicate key error (_id)'), {
+        code: 11000,
+      });
+    }
+
     this.verificarUnico(nuevo);
     this.docs.push(nuevo);
     return nuevo;
+  }
+
+  /** Lanza si el "proceso" está caído (ver `Interruptor`). */
+  private vivo(): void {
+    if (this.interruptor?.caido) {
+      throw new Error('Proceso caído (simulado): no hay conexión con la base');
+    }
+  }
+
+  private antes(op: string, datos: Doc): void {
+    this.vivo();
+    this.hooks.antes?.(op, datos);
+    this.vivo();
+  }
+
+  private despues(op: string, datos: Doc): void {
+    this.hooks.despues?.(op, datos);
+    this.vivo();
   }
 
   private claveUnica(doc: Doc): string | undefined {
@@ -249,13 +312,15 @@ export class FakeModel {
   }
 
   find(filtro: Doc = {}): Consulta<Doc[]> {
-    return new Consulta<Doc[]>(() =>
-      this.docs.filter((doc) => coincide(doc, filtro)),
-    );
+    return new Consulta<Doc[]>(() => {
+      this.vivo();
+      return this.docs.filter((doc) => coincide(doc, filtro));
+    });
   }
 
   findOne(filtro: Doc = {}): Consulta<Doc | null> {
     return new Consulta<Doc | null>((consulta) => {
+      this.vivo();
       let lista = this.docs.filter((doc) => coincide(doc, filtro));
 
       if (consulta.orden) {
@@ -277,6 +342,7 @@ export class FakeModel {
 
   exists(filtro: Doc): Consulta<{ _id: unknown } | null> {
     return new Consulta<{ _id: unknown } | null>(() => {
+      this.vivo();
       const doc = this.docs.find((d) => coincide(d, filtro));
       return doc ? { _id: doc._id } : null;
     });
@@ -288,15 +354,17 @@ export class FakeModel {
     opciones: { upsert?: boolean } = {},
   ): Consulta<{ matchedCount: number; modifiedCount: number }> {
     return new Consulta(() => {
-      this.antesDeEscribir(filtro, update);
+      this.antesDeEscribir('updateOne', filtro, update);
       const doc = this.docs.find((d) => coincide(d, filtro));
 
       if (!doc) {
         if (opciones.upsert) this.insertarPorUpsert(filtro, update);
+        this.despues('updateOne', { filtro, update });
         return { matchedCount: 0, modifiedCount: 0 };
       }
 
       this.actualizar(doc, update);
+      this.despues('updateOne', { filtro, update });
       return { matchedCount: 1, modifiedCount: 1 };
     });
   }
@@ -310,17 +378,19 @@ export class FakeModel {
       opciones.new === true || opciones.returnDocument === 'after';
 
     return new Consulta<Doc | null>(() => {
-      this.antesDeEscribir(filtro, update);
+      this.antesDeEscribir('findOneAndUpdate', filtro, update);
       const doc = this.docs.find((d) => coincide(d, filtro));
 
       if (!doc) {
         if (!opciones.upsert) return null;
         const nuevo = this.insertarPorUpsert(filtro, update);
+        this.despues('findOneAndUpdate', { filtro, update });
         return devolverNuevo ? { ...nuevo } : null;
       }
 
       const antes = { ...doc };
       this.actualizar(doc, update);
+      this.despues('findOneAndUpdate', { filtro, update });
       return devolverNuevo ? { ...doc } : antes;
     });
   }
@@ -328,11 +398,13 @@ export class FakeModel {
   /** Borra el primer documento que cumpla el filtro y lo devuelve (null si no hay). */
   findOneAndDelete(filtro: Doc = {}): Consulta<Doc | null> {
     return new Consulta<Doc | null>(() => {
+      this.antes('findOneAndDelete', { filtro });
       const indice = this.docs.findIndex((d) => coincide(d, filtro));
 
       if (indice === -1) return null;
 
       const [borrado] = this.docs.splice(indice, 1);
+      this.despues('findOneAndDelete', { filtro });
       return borrado;
     });
   }
@@ -354,6 +426,7 @@ export class FakeModel {
   /** Solo `[{ $match }, { $group: { _id: null, total: { $sum: '$campo' } } }]`. */
   aggregate<R = Doc>(pipeline: Doc[]): Consulta<R[]> {
     return new Consulta<R[]>(() => {
+      this.vivo();
       let filas = [...this.docs];
       let resultado: Doc[] = filas;
 
@@ -400,7 +473,9 @@ export class FakeModel {
   create(datos: Doc | Doc[]): Promise<any> {
     try {
       const lista = Array.isArray(datos) ? datos : [datos];
+      this.antes('create', { docs: lista });
       const creados = lista.map((d) => this.insertar(d));
+      this.despues('create', { docs: creados });
       return Promise.resolve(Array.isArray(datos) ? creados : creados[0]);
     } catch (error) {
       return Promise.reject(
@@ -409,9 +484,58 @@ export class FakeModel {
     }
   }
 
-  private antesDeEscribir(filtro: Doc, update: Doc): void {
+  /**
+   * Como `Model.insertMany`. Con `{ ordered: false }` inserta todo lo que
+   * puede y al final lanza un error con `writeErrors` (uno por documento
+   * rechazado, cada uno con su `code`), igual que `MongoBulkWriteError`.
+   */
+  insertMany(
+    datos: Doc[],
+    opciones: { ordered?: boolean } = {},
+  ): Promise<Doc[]> {
+    try {
+      this.antes('insertMany', { docs: datos });
+
+      const insertados: Doc[] = [];
+      const writeErrors: { index: number; code: number }[] = [];
+
+      datos.forEach((doc, index) => {
+        try {
+          insertados.push(this.insertar(doc));
+        } catch (error) {
+          writeErrors.push({
+            index,
+            code: Number((error as { code?: unknown }).code ?? 0),
+          });
+          if (opciones.ordered !== false) throw error;
+        }
+      });
+
+      if (writeErrors.length > 0) {
+        throw Object.assign(
+          new Error('E11000 duplicate key error (insertMany)'),
+          {
+            code: writeErrors[0].code,
+            writeErrors,
+          },
+        );
+      }
+
+      this.despues('insertMany', { docs: insertados });
+      return Promise.resolve(insertados);
+    } catch (error) {
+      return Promise.reject(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
+  private antesDeEscribir(op: string, filtro: Doc, update: Doc): void {
+    this.vivo();
     this.escrituras += 1;
     this.hooks.antesDeEscribir?.(this.escrituras, filtro, update);
+    this.hooks.antes?.(op, { filtro, update });
+    this.vivo();
     const error = this.fallarSi?.(filtro, update);
     if (error) throw error;
   }
