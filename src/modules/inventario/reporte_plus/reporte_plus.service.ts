@@ -25,6 +25,7 @@ import {
   MovimientoMoneda,
   redondear,
   resumirPorMoneda,
+  soloDeTurnosAbiertos,
 } from './efectivo-turno.util';
 import { Devolucion } from '../devolucion/schema/devolucion.schema';
 import { devolucionesEfectivoEnVentana } from '../devolucion/devolucion-efectivo.util';
@@ -304,22 +305,26 @@ export class ReportePlusService {
     const ventana = { fecha: { $gte: desde, $lte: hasta } };
     const extracciones = (await this.extraccionModel
       .find(ventana)
-      .select('monto moneda')
+      .select('monto moneda turnoCaja')
       .lean()
-      .exec()) as unknown as MovimientoMoneda[];
+      .exec()) as unknown as (MovimientoMoneda & { turnoCaja?: unknown })[];
     const totalExtracciones = redondear(
       extracciones.reduce((s, e) => s + e.monto, 0),
     );
     const depositos = (await this.depositoModel
       .find(ventana)
-      .select('monto moneda')
+      .select('monto moneda turnoCajaId')
       .lean()
-      .exec()) as unknown as MovimientoMoneda[];
+      .exec()) as unknown as (MovimientoMoneda & { turnoCajaId?: unknown })[];
     const turnosAbiertos = (await this.turnoCajaModel
       .find({ estado: EstadoTurnoCaja.ABIERTO })
       .select('fondoInicial')
       .lean()
-      .exec()) as unknown as { fondoInicial?: Record<string, number> }[];
+      .exec()) as unknown as {
+      _id?: unknown;
+      fondoInicial?: Record<string, number>;
+    }[];
+    const idsAbiertos = new Set(turnosAbiertos.map((t) => String(t._id)));
 
     // Fondo inicial = suma por moneda de los turnos de caja abiertos (el
     // Reporte Plus es la caja registradora compartida del punto de venta).
@@ -339,8 +344,17 @@ export class ReportePlusService {
     const monedas = resumirPorMoneda({
       fondoInicial,
       filas,
-      extracciones,
-      depositos,
+      // Efectivo esperado por turno ABIERTO: lo de un turno cerrado no cuenta.
+      extracciones: soloDeTurnosAbiertos(
+        extracciones,
+        (e) => e.turnoCaja,
+        idsAbiertos,
+      ),
+      depositos: soloDeTurnosAbiertos(
+        depositos,
+        (d) => d.turnoCajaId,
+        idsAbiertos,
+      ),
       devolucionesEfectivo,
     });
 

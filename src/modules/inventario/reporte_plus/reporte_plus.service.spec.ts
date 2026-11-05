@@ -190,6 +190,95 @@ describe('ReportePlusService', () => {
         expect(r.efectivoEsperado.CUP).toBe(200);
       });
 
+      describe('movimientos de turnos de caja ya cerrados', () => {
+        const ABIERTO = new Types.ObjectId();
+        const CERRADO = new Types.ObjectId();
+
+        it('sin ventas y con el turno cerrado, el efectivo esperado NO es negativo (regresión: -600 CUP)', async () => {
+          filas = [];
+          // El único turno ya se cerró: no hay fondo abierto, pero sus
+          // extracciones y su depósito siguen dentro de la ventana de tiempo.
+          turnoCaja.find.mockImplementation(() => chain([]));
+          extraccion.find.mockImplementation(() =>
+            chain([{ monto: 100, turnoCaja: CERRADO }]),
+          );
+          deposito.find.mockImplementation(() =>
+            chain([{ monto: 500, turnoCajaId: CERRADO }]),
+          );
+
+          const r = await service.resumen();
+
+          expect(r.efectivoEsperado.CUP).toBe(0);
+          expect(r.detalleEfectivo.CUP).toMatchObject({
+            fondoInicial: 0,
+            extracciones: 0,
+            depositosBancarios: 0,
+          });
+        });
+
+        it('solo cuentan extracciones y depósitos de turnos ABIERTOS (el fondo es el de esos turnos)', async () => {
+          filas = [fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 300 })];
+          turnoCaja.find.mockImplementation(() =>
+            chain([{ _id: ABIERTO, fondoInicial: { CUP: 1000 } }]),
+          );
+          extraccion.find.mockImplementation(() =>
+            chain([
+              { monto: 100, turnoCaja: ABIERTO },
+              { monto: 400, turnoCaja: CERRADO },
+            ]),
+          );
+          deposito.find.mockImplementation(() =>
+            chain([
+              { monto: 200, turnoCajaId: ABIERTO },
+              { monto: 700, turnoCajaId: CERRADO },
+            ]),
+          );
+
+          const r = await service.resumen();
+
+          // 1000 + 300 - 100 - 200
+          expect(r.efectivoEsperado.CUP).toBe(1000);
+          expect(r.detalleEfectivo.CUP).toMatchObject({
+            fondoInicial: 1000,
+            extracciones: 100,
+            depositosBancarios: 200,
+          });
+        });
+
+        it('una extracción sin turno (anterior a los turnos) sigue contando por la ventana de tiempo', async () => {
+          filas = [fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 300 })];
+          extraccion.find.mockImplementation(() =>
+            chain([{ monto: 100 }, { monto: 40, turnoCaja: CERRADO }]),
+          );
+
+          const r = await service.resumen();
+
+          expect(r.efectivoEsperado.CUP).toBe(200); // 300 - 100
+        });
+
+        it('lee el turno de cada extracción y de cada depósito', async () => {
+          const ext = chain([]);
+          const dep = chain([]);
+          extraccion.find.mockImplementation(() => ext);
+          deposito.find.mockImplementation(() => dep);
+
+          await service.resumen();
+
+          expect(ext.select).toHaveBeenCalledWith('monto moneda turnoCaja');
+          expect(dep.select).toHaveBeenCalledWith('monto moneda turnoCajaId');
+        });
+
+        it('no cambia los campos antiguos: totalExtracciones sigue sumando la ventana completa', async () => {
+          extraccion.find.mockImplementation(() =>
+            chain([{ monto: 100, turnoCaja: CERRADO }]),
+          );
+
+          const r = await service.resumen();
+
+          expect(r.totalExtracciones).toBe(100);
+        });
+      });
+
       it('una venta a crédito, una transferencia o una factura no alteran el efectivo esperado', async () => {
         filas = [fila({ metodoPago: MetodoPagoReporte.EFECTIVO, total: 50 })];
         const sin = await service.resumen();

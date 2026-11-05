@@ -45,7 +45,11 @@ describe('RegistroCompraService', () => {
   let productoModel: { findById: jest.Mock };
   let almacenModel: { findById: jest.Mock };
   let contenedorModel: { findById: jest.Mock };
-  let kardexModel: { create: jest.Mock; deleteOne?: jest.Mock };
+  let kardexModel: {
+    create: jest.Mock;
+    findOne: jest.Mock;
+    deleteOne?: jest.Mock;
+  };
 
   beforeEach(async () => {
     registroModel = {
@@ -67,7 +71,11 @@ describe('RegistroCompraService', () => {
         .fn()
         .mockReturnValue(consulta({ _id: contenedorId, almacen: almacenId })),
     };
-    kardexModel = { create: jest.fn().mockResolvedValue({}) };
+    kardexModel = {
+      create: jest.fn().mockResolvedValue({}),
+      // Sin movimientos previos con costo promedio.
+      findOne: jest.fn().mockReturnValue(consulta(null)),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -118,6 +126,9 @@ describe('RegistroCompraService', () => {
         stock: 12,
         motivo: 'Compra',
         referencia: registroId.toString(),
+        // Submayor SC-2-13: primera compra, el promedio es su propio costo.
+        costoPromedio: 3.5,
+        importeCUP: 42,
       });
     });
 
@@ -238,7 +249,7 @@ describe('RegistroCompraService', () => {
       expect(res.kardexId).toBe(kardexId.toString());
     });
 
-    it('sin contexto escribe exactamente el mismo kardex que create (compatibilidad)', async () => {
+    it('sin contexto escribe exactamente el mismo kardex que create (compatibilidad, con el Submayor)', async () => {
       await service.registrarLinea(dto);
 
       expect(kardexModel.create).toHaveBeenCalledWith({
@@ -249,6 +260,8 @@ describe('RegistroCompraService', () => {
         stock: 12,
         motivo: 'Compra',
         referencia: registroId.toString(),
+        costoPromedio: 3.5,
+        importeCUP: 42,
       });
     });
 
@@ -270,6 +283,128 @@ describe('RegistroCompraService', () => {
       expect(registroModel.deleteOne).toHaveBeenCalledWith({
         _id: registroId.toString(),
       });
+    });
+  });
+
+  describe('Submayor SC-2-13: costo promedio y ubicación física', () => {
+    /** El kardex que se escribió en la última compra. */
+    const escrito = (): Record<string, unknown> =>
+      kardexModel.create.mock.calls[0][0] as Record<string, unknown>;
+
+    it('promedio ponderado: 10 u a 5,00 en stock + 10 u a 8,00 que entran → 6,50; importe = 10 × 8,00', async () => {
+      // La entrada ya está en el stock del producto (20 = 10 previas + 10).
+      productoModel.findById.mockReturnValue(
+        consulta({ _id: productoId, stock_inicial: 20 }),
+      );
+      kardexModel.findOne.mockReturnValue(consulta({ costoPromedio: 5 }));
+
+      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+
+      expect(escrito()).toMatchObject({
+        costoPromedio: 6.5,
+        importeCUP: 80,
+        stock: 20,
+      });
+    });
+
+    it('busca el último promedio por producto, del movimiento más reciente', async () => {
+      const q = consulta({ costoPromedio: 5 });
+      kardexModel.findOne.mockReturnValue(q);
+
+      await service.create(dto);
+
+      const [filtro] = kardexModel.findOne.mock.calls[0] as [
+        { productoId: { $in: unknown[] }; costoPromedio: unknown },
+      ];
+      expect(filtro.productoId.$in).toEqual([productoId, productoId.toHexString()]);
+      expect(filtro.costoPromedio).toMatchObject({ $exists: true });
+      expect(q.sort).toHaveBeenCalledWith({ _id: -1 });
+    });
+
+    it('sin promedio en el kardex usa Producto.precio_compra como promedio anterior', async () => {
+      productoModel.findById.mockReturnValue(
+        consulta({ _id: productoId, stock_inicial: 20, precio_compra: 4 }),
+      );
+
+      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+
+      // (10 × 4 + 10 × 8) / 20
+      expect(escrito().costoPromedio).toBe(6);
+    });
+
+    it('sin kardex ni precio_compra el promedio anterior es el costo de la entrada', async () => {
+      productoModel.findById.mockReturnValue(
+        consulta({ _id: productoId, stock_inicial: 20 }),
+      );
+
+      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+
+      expect(escrito().costoPromedio).toBe(8);
+    });
+
+    it('el stock previo que informa quien llama (suma de Existencia) tiene prioridad', async () => {
+      kardexModel.findOne.mockReturnValue(consulta({ costoPromedio: 5 }));
+
+      await service.registrarLinea(
+        { ...dto, cantidad: 10, costo_unitario: 8 },
+        { stockAnterior: 10 },
+      );
+
+      expect(escrito().costoPromedio).toBe(6.5);
+    });
+
+    it('el stock previo nunca es negativo si el producto aún no refleja la entrada', async () => {
+      productoModel.findById.mockReturnValue(
+        consulta({ _id: productoId, stock_inicial: 3 }),
+      );
+      kardexModel.findOne.mockReturnValue(consulta({ costoPromedio: 5 }));
+
+      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+
+      expect(escrito().costoPromedio).toBe(8);
+    });
+
+    it('arma la ubicación física con almacén, contenedor, sección, estante y casilla', async () => {
+      almacenModel.findById.mockReturnValue(
+        consulta({ _id: almacenId, nombreAlmacen: 'Central' }),
+      );
+      contenedorModel.findById.mockReturnValue(
+        consulta({
+          _id: contenedorId,
+          almacen: almacenId,
+          nombreContenedor: 'Estante Norte',
+          seccion: 'B',
+          estante: '3',
+          casilla: '12',
+        }),
+      );
+
+      await service.create(dto);
+
+      expect(escrito().ubicacionFisica).toBe(
+        'Central / Estante Norte / sección B · estante 3 · casilla 12',
+      );
+    });
+
+    it('lo que informa el contexto (importe, promedio, ubicación) tiene prioridad', async () => {
+      await service.registrarLinea(dto, {
+        importeCUP: 40,
+        costoPromedio: 9,
+        ubicacionFisica: 'Otra',
+      });
+
+      expect(escrito()).toMatchObject({
+        importeCUP: 40,
+        costoPromedio: 9,
+        ubicacionFisica: 'Otra',
+      });
+    });
+
+    it('no inventa importeDivisa ni referenciaContable', async () => {
+      await service.create(dto);
+
+      expect(escrito()).not.toHaveProperty('importeDivisa');
+      expect(escrito()).not.toHaveProperty('referenciaContable');
     });
   });
 

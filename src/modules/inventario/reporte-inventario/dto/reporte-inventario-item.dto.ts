@@ -15,20 +15,22 @@ export class ReporteInventarioItemDto {
   nombre_producto!: string;
 
   @ApiProperty({
-    description: 'Unidades existentes en el inventario (stock del producto)',
+    description:
+      'Unidades disponibles. Con existencias unificadas: Σ disponible (cantidad − reservada) de sus ubicaciones; antes de unificar: stock del producto',
     example: 50,
   })
   productos_disponibles!: number;
 
   @ApiProperty({
     description:
-      'Unidades reservadas por facturación (0 mientras ese módulo no las informe)',
+      'Unidades reservadas. Con existencias unificadas: Σ reservada de sus ubicaciones; antes de unificar: 0 mientras el módulo de reservas no las informe',
     example: 0,
   })
   productos_reservados!: number;
 
   @ApiProperty({
-    description: 'Productos disponibles − productos reservados',
+    description:
+      'Con existencias unificadas: existencia FÍSICA (Σ cantidad), no el disponible; antes de unificar: productos disponibles − productos reservados',
     example: 50,
   })
   inventario_total!: number;

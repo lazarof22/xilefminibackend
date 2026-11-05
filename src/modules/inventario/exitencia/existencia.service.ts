@@ -23,6 +23,7 @@ import {
     ResultadoMovimiento,
     ResultadoNormalizacion,
     TOLERANCIA_SALDO,
+    TotalesExistencia,
     UbicacionCantidad,
     aObjectId,
     ambosTipos,
@@ -997,6 +998,49 @@ export class ExistenciaService implements OnModuleInit {
                 { $set: { stock_inicial: redondear(stock) } },
             )
             .exec();
+    }
+
+    /**
+     * Totales por producto (`productoId` en hexadecimal) de TODAS las
+     * existencias: cantidad física, reservada y disponible. Es la base del
+     * reporte de inventario. Una fila anterior a las reservas (sin
+     * `reservada` o `disponible`) cuenta con `reservada = 0` y
+     * `disponible = cantidad − reservada`. Solo lee.
+     */
+    async totalesPorProducto(): Promise<Map<string, TotalesExistencia>> {
+        const filas = await this.existenciaModel
+            .find()
+            .select('producto cantidad reservada disponible')
+            .lean()
+            .exec();
+        const numero = (valor: unknown): number => {
+            const n = Number(valor);
+            return Number.isFinite(n) ? n : 0;
+        };
+        const totales = new Map<string, TotalesExistencia>();
+
+        for (const fila of filas) {
+            const clave = String(fila.producto);
+            const cantidad = numero(fila.cantidad);
+            const reservada = numero(fila.reservada);
+            const disponible =
+                fila.disponible === undefined || fila.disponible === null
+                    ? cantidad - reservada
+                    : numero(fila.disponible);
+            const actual = totales.get(clave) ?? {
+                cantidad: 0,
+                reservada: 0,
+                disponible: 0,
+            };
+
+            totales.set(clave, {
+                cantidad: redondear(actual.cantidad + cantidad),
+                reservada: redondear(actual.reservada + reservada),
+                disponible: redondear(actual.disponible + disponible),
+            });
+        }
+
+        return totales;
     }
 
     /** Suma de las existencias de un producto en todas sus ubicaciones. */

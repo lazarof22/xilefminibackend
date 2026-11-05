@@ -13,6 +13,9 @@ import { Producto } from '../producto/schemas/producto.schema';
 import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { Kardex, KardexTipo } from '../kardex/schema/kardex.schema';
+import { costoParaEntrada } from '../kardex/costo-promedio.util';
+import { ultimoCostoPromedio } from '../kardex/costo-promedio.consulta';
+import { formatearUbicacionFisica } from '../kardex/ubicacion-fisica.util';
 
 /**
  * Datos con los que un documento (p. ej. la Recepción SC-2-04) deja su
@@ -26,6 +29,12 @@ export interface ContextoMovimientoCompra {
     importeCUP?: number;
     costoPromedio?: number;
     ubicacionFisica?: string;
+    /**
+     * Saldo total del producto ANTES de esta entrada. Quien ya movió el
+     * stock (la Recepción) lo informa desde la suma de `Existencia`; si no,
+     * se deduce de `Producto.stock_inicial`, que ya incluye la entrada.
+     */
+    stockAnterior?: number;
 }
 
 /** Lo que dejó escrito una compra: el registro y su movimiento de kardex. */
@@ -87,17 +96,17 @@ export class RegistroCompraService {
         const [producto, almacen, contenedor] = await Promise.all([
             this.productoModel
                 .findById(dto.producto)
-                .select('stock_inicial')
+                .select('stock_inicial precio_compra')
                 .lean()
                 .exec(),
             this.almacenModel
                 .findById(dto.almacen)
-                .select('_id')
+                .select('nombreAlmacen')
                 .lean()
                 .exec(),
             this.contenedorModel
                 .findById(dto.contenedor)
-                .select('almacen')
+                .select('almacen nombreContenedor seccion estante casilla')
                 .lean()
                 .exec(),
         ]);
@@ -122,6 +131,30 @@ export class RegistroCompraService {
 
         const total = this.redondear(dto.cantidad * dto.costo_unitario);
         const fecha = this.parseFecha(dto.fecha);
+        const stockActual = Math.max(0, Number(producto.stock_inicial) || 0);
+        const costoPromedio =
+            contexto.costoPromedio ??
+            costoParaEntrada({
+                ultimoPromedio: await ultimoCostoPromedio(
+                    this.kardexModel,
+                    producto._id,
+                ),
+                precioCompra: producto.precio_compra,
+                stockAnterior:
+                    contexto.stockAnterior ??
+                    Math.max(0, this.redondear(stockActual - dto.cantidad)),
+                cantidad: dto.cantidad,
+                costoUnitario: dto.costo_unitario,
+            });
+        const ubicacionFisica =
+            contexto.ubicacionFisica ??
+            formatearUbicacionFisica({
+                almacen: almacen.nombreAlmacen,
+                contenedor: contenedor.nombreContenedor,
+                seccion: contenedor.seccion,
+                estante: contenedor.estante,
+                casilla: contenedor.casilla,
+            });
 
         const registro = await this.registroCompraModel.create({
             producto: producto._id,
@@ -141,9 +174,14 @@ export class RegistroCompraService {
                 productoId: producto._id,
                 tipo: KardexTipo.COMPRA,
                 cantidad: dto.cantidad,
-                stock: Math.max(0, Number(producto.stock_inicial) || 0),
+                stock: stockActual,
                 motivo: contexto.motivo ?? 'Compra',
                 referencia: contexto.referencia ?? registro._id.toString(),
+                // Submayor SC-2-13. `referenciaContable` e `importeDivisa`
+                // quedan sin definir: aún no hay asiento ni compra en divisa.
+                importeCUP: total,
+                costoPromedio,
+                ...(ubicacionFisica ? { ubicacionFisica } : {}),
                 ...this.camposContables(contexto),
             });
             kardexId = kardex._id?.toString();

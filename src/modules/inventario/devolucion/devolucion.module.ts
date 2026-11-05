@@ -2,6 +2,11 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConsecutivoModule } from '../consecutivo/consecutivo.module';
 import { ExistenciaModule } from '../exitencia/existencia.module';
+import { Almacen, AlmacenSchema } from '../almacen/schema/almacen.schema';
+import {
+  Contenedor,
+  ContenedorSchema,
+} from '../contenedor/schema/contenedor.schema';
 import { Kardex, KardexSchema } from '../kardex/schema/kardex.schema';
 import { Producto, ProductoSchema } from '../producto/schemas/producto.schema';
 import { Venta, VentaSchema } from '../venta/schema/venta.schema';
@@ -31,6 +36,8 @@ import {
       { name: DevolucionAcumulado.name, schema: DevolucionAcumuladoSchema },
       { name: Kardex.name, schema: KardexSchema },
       { name: Producto.name, schema: ProductoSchema },
+      { name: Almacen.name, schema: AlmacenSchema },
+      { name: Contenedor.name, schema: ContenedorSchema },
       { name: Venta.name, schema: VentaSchema },
       { name: Pago.name, schema: PagoSchema },
       { name: Factura.name, schema: FacturaSchema },

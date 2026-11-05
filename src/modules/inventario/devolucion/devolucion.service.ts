@@ -8,6 +8,11 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Kardex, KardexTipo } from '../kardex/schema/kardex.schema';
+import { costoVigente, valuarMovimiento } from '../kardex/costo-promedio.util';
+import { ultimoCostoPromedio } from '../kardex/costo-promedio.consulta';
+import { ubicacionFisicaDe } from '../kardex/ubicacion-fisica.util';
+import { Almacen } from '../almacen/schema/almacen.schema';
+import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { Producto } from '../producto/schemas/producto.schema';
 import { ConsecutivoService } from '../consecutivo/consecutivo.service';
 import { ExistenciaService } from '../exitencia/existencia.service';
@@ -59,6 +64,14 @@ interface Reserva {
   previo: number;
 }
 
+/** Lo que dejó el movimiento de stock de una línea. */
+interface StockMovido {
+  /** Total del producto después del movimiento. */
+  stock: number;
+  /** Ubicaciones tocadas (vacío antes de unificar las existencias). */
+  ubicaciones: UbicacionCantidad[];
+}
+
 /** Movimiento de stock ya aplicado, con lo necesario para deshacerlo. */
 interface MovimientoAplicado {
   productoId: string;
@@ -83,6 +96,9 @@ export class DevolucionService {
     private readonly consecutivo: ConsecutivoService,
     private readonly existenciaService: ExistenciaService,
     private readonly origenService: DevolucionOrigenService,
+    @InjectModel(Almacen.name) private readonly almacenModel: Model<Almacen>,
+    @InjectModel(Contenedor.name)
+    private readonly contenedorModel: Model<Contenedor>,
   ) {}
 
   // ─── Registrar ───────────────────────────────────────────────────
@@ -197,13 +213,13 @@ export class DevolucionService {
       for (const linea of vale.lineas) {
         if (linea.cantidadEntregada <= EPSILON) continue;
 
-        const stockTotal = await this.moverStock(
+        const movido = await this.moverStock(
           linea,
           esProveedor ? 'sale' : 'entra',
           unificado,
           aplicados,
         );
-        await this.escribirKardex(vale, linea, stockTotal);
+        await this.escribirKardex(vale, linea, movido);
       }
     } catch (error) {
       await this.deshacer(aplicados);
@@ -538,7 +554,7 @@ export class DevolucionService {
     sentido: 'entra' | 'sale',
     unificado: boolean,
     aplicados: MovimientoAplicado[],
-  ): Promise<number> {
+  ): Promise<StockMovido> {
     const productoId = new Types.ObjectId(String(linea.producto)).toHexString();
 
     if (!unificado) {
@@ -553,12 +569,14 @@ export class DevolucionService {
         ubicaciones: [],
         cantidadLegacy: linea.cantidadEntregada,
       });
-      return stock;
+      return { stock, ubicaciones: [] };
     }
 
     let total = 0;
+    const tocadas: UbicacionCantidad[] = [];
     const registrar = (mov: ResultadoMovimiento): void => {
       aplicados.push({ productoId, sentido, ubicaciones: mov.ubicaciones });
+      tocadas.push(...mov.ubicaciones);
       total = mov.stockTotal;
     };
 
@@ -604,7 +622,7 @@ export class DevolucionService {
       }
     }
 
-    return total;
+    return { stock: total, ubicaciones: tocadas };
   }
 
   /** Antes de unificar existencias el saldo vive en `Producto.stock_inicial`. */
@@ -636,12 +654,60 @@ export class DevolucionService {
     return Math.max(0, redondear(Number(producto.stock_inicial) || 0));
   }
 
+  /**
+   * Submayor SC-2-13: la ubicación de cada destino (separadas por `; `). Antes
+   * de unificar no hay ubicaciones por movimiento: se usa la ubicación por
+   * defecto del producto.
+   */
+  private async ubicacionFisica(
+    ubicaciones: UbicacionCantidad[],
+    porDefecto: { almacen?: unknown; contenedor?: unknown },
+  ): Promise<string | undefined> {
+    const destinos = new Map<
+      string,
+      { almacen?: unknown; contenedor?: unknown }
+    >();
+    for (const u of ubicaciones) {
+      destinos.set(`${String(u.almacen)}:${String(u.contenedor)}`, u);
+    }
+    if (destinos.size === 0) destinos.set('defecto', porDefecto);
+
+    const textos: string[] = [];
+    for (const d of destinos.values()) {
+      const texto = await ubicacionFisicaDe(
+        this.almacenModel,
+        this.contenedorModel,
+        d.almacen as Types.ObjectId | string | undefined,
+        d.contenedor as Types.ObjectId | string | undefined,
+      );
+      if (texto && !textos.includes(texto)) textos.push(texto);
+    }
+    return textos.length > 0 ? textos.join('; ') : undefined;
+  }
+
   private async escribirKardex(
     vale: DevolucionPersistida,
     linea: LineaDevolucion,
-    stock: number,
+    movido: StockMovido,
   ): Promise<void> {
     const proveedor = vale.tipo === DevolucionTipo.PROVEEDOR;
+    const productoId = new Types.ObjectId(String(linea.producto));
+    const producto = await this.productoModel
+      .findById(productoId)
+      .select('precio_compra almacen contenedor')
+      .lean()
+      .exec();
+    // La devolución no cambia el promedio: se valúa al vigente.
+    const costo = costoVigente(
+      await ultimoCostoPromedio(this.kardexModel, productoId),
+      producto?.precio_compra,
+    );
+    const valuacion = valuarMovimiento(linea.cantidadEntregada, costo);
+    const ubicacionFisica = await this.ubicacionFisica(movido.ubicaciones, {
+      almacen: producto?.almacen,
+      contenedor: producto?.contenedor,
+    });
+    const stock = movido.stock;
 
     await this.kardexModel.create({
       productoId: new Types.ObjectId(String(linea.producto)),
@@ -654,9 +720,16 @@ export class DevolucionService {
         ? `Devolución a proveedor: ${vale.motivo}`
         : `Devolución de ${vale.origenTipo}: ${vale.motivo}`,
       referencia: vale.numeroConsecutivo,
+      // Sin costo conocido se conserva el importe devuelto (CUP); si la
+      // devolución es en divisa, ese importe va a `importeDivisa`.
       ...(vale.moneda === 'CUP' && linea.importe > 0
         ? { importeCUP: linea.importe }
         : {}),
+      ...(vale.moneda !== 'CUP' && linea.importe > 0
+        ? { importeDivisa: linea.importe }
+        : {}),
+      ...valuacion,
+      ...(ubicacionFisica ? { ubicacionFisica } : {}),
     });
   }
 

@@ -23,7 +23,13 @@ function escenario() {
   ]);
   const [A1, A2] = almacenes.docs.map((d) => d._id as Types.ObjectId);
   const contenedores = new FakeModel([
-    { nombreContenedor: 'Estante 1', almacen: A1 },
+    {
+      nombreContenedor: 'Estante 1',
+      almacen: A1,
+      seccion: 'B',
+      estante: '3',
+      casilla: '12',
+    },
     { nombreContenedor: 'Estante 2', almacen: A1 },
     { nombreContenedor: 'Vitrina', almacen: A2 },
   ]);
@@ -87,6 +93,7 @@ function escenario() {
     causas as never,
     existenciaService,
     kardexService,
+    almacenes as never,
   );
 
   const linea = (
@@ -396,6 +403,73 @@ describe('AjusteInventarioService (SC-2-16)', () => {
         );
       }
       expect(e.kardex.docs).toHaveLength(0);
+    });
+  });
+
+  describe('Submayor SC-2-13 en el kardex del ajuste', () => {
+    it('registra la ubicación física del movimiento y el costo promedio vigente × cantidad', async () => {
+      const e = escenario();
+      await e.existenciaService.activarModoUnificado('admin');
+      e.kardex.insertar({ productoId: e.P, costoPromedio: 6.5 });
+
+      await e.servicio.crear(e.dto(), e.usuario());
+
+      const fila = e.kardex.docs[1];
+      expect(fila).toMatchObject({
+        tipo: 'salida',
+        cantidad: 2,
+        costoPromedio: 6.5,
+        importeCUP: 13,
+        ubicacionFisica: 'Central / Estante 1 / sección B · estante 3 · casilla 12',
+      });
+      expect(fila).not.toHaveProperty('referenciaContable');
+      expect(fila).not.toHaveProperty('importeDivisa');
+    });
+
+    it('un ajuste positivo se valúa igual al promedio vigente (no lo cambia) y en el modo anterior también', async () => {
+      const e = escenario();
+      e.productos.docs[0].precio_compra = 5;
+
+      await e.servicio.crear(
+        e.dto({ lineas: [e.linea(e.P, e.A1, e.C1, 3)] }),
+        e.usuario(),
+      );
+
+      expect(e.kardex.docs[0]).toMatchObject({
+        tipo: 'entrada',
+        costoPromedio: 5,
+        importeCUP: 15,
+        ubicacionFisica: 'Central / Estante 1 / sección B · estante 3 · casilla 12',
+      });
+    });
+
+    it('la reversión de un ajuste que no se completó también lleva su ubicación', async () => {
+      const e = escenario();
+      await e.existenciaService.activarModoUnificado('admin');
+      const original = e.kardex.create.bind(e.kardex) as (
+        d: Record<string, unknown>,
+      ) => Promise<unknown>;
+      let n = 0;
+      e.kardex.create = ((d: Record<string, unknown>) =>
+        ++n === 2
+          ? Promise.reject(new Error('kardex caído'))
+          : original(d)) as never;
+
+      await expect(
+        e.servicio.crear(
+          e.dto({
+            lineas: [e.linea(e.P, e.A1, e.C1, -1), e.linea(e.P, e.A1, e.C2, -1)],
+          }),
+          e.usuario(),
+        ),
+      ).rejects.toThrow('kardex caído');
+
+      const reversion = e.kardex.docs.find((d) =>
+        String(d.motivo).startsWith('Reversión'),
+      );
+      expect(reversion?.ubicacionFisica).toBe(
+        'Central / Estante 1 / sección B · estante 3 · casilla 12',
+      );
     });
   });
 

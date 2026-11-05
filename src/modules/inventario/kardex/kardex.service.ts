@@ -8,6 +8,8 @@ import { Producto } from '../producto/schemas/producto.schema';
 import { NomencladorHelper } from '../../configuracion/nomenclador-helper/nomenclador-helper.service';
 import { ExistenciaService } from '../exitencia/existencia.service';
 import { ResultadoMovimiento } from '../exitencia/existencia.types';
+import { costoVigente, valuarMovimiento } from './costo-promedio.util';
+import { ultimoCostoPromedio } from './costo-promedio.consulta';
 
 export interface KardexResultadoMensaje {
   message: string;
@@ -84,6 +86,21 @@ export class KardexService {
     );
   }
 
+  /**
+   * Submayor SC-2-13: el movimiento manual se valúa al costo promedio VIGENTE
+   * (último `costoPromedio` del kardex; si no hay, `precio_compra`). No lo
+   * cambia: solo una entrada con costo conocido (compra/recepción) lo hace.
+   * Sin costo conocido no se escribe nada.
+   */
+  private async valuar(
+    productoId: string,
+    precioCompra: number | undefined,
+    cantidad: number,
+  ): Promise<{ costoPromedio?: number; importeCUP?: number }> {
+    const ultimo = await ultimoCostoPromedio(this.kardexModel, productoId);
+    return valuarMovimiento(cantidad, costoVigente(ultimo, precioCompra));
+  }
+
   //Crear un kardex y actualizar el stock del producto
   async create(
     createKardexDto: CreateKardexDto,
@@ -103,9 +120,15 @@ export class KardexService {
       throw new BadRequestException('La cantidad debe ser mayor a 0');
     }
 
+    const valuacion = await this.valuar(
+      productoId,
+      producto.precio_compra,
+      cantidad,
+    );
+
     // Modo unificado (Fase 1): el ajuste mueve `Existencia`, no solo el total.
     if (await this.existenciaService.estaUnificado()) {
-      return this.crearUnificado(createKardexDto);
+      return this.crearUnificado(createKardexDto, valuacion);
     }
 
     if (tipo === KardexTipo.SALIDA && producto.stock_inicial < cantidad) {
@@ -122,6 +145,7 @@ export class KardexService {
         cantidad,
         stock: nuevoStock,
         motivo,
+        ...valuacion,
         ...this.camposContables(createKardexDto),
       })
     ]);
@@ -145,6 +169,7 @@ export class KardexService {
    */
   private async crearUnificado(
     createKardexDto: CreateKardexDto,
+    valuacion: { costoPromedio?: number; importeCUP?: number },
   ): Promise<Kardex> {
     const { productoId, tipo, cantidad, motivo, almacenId, contenedorId } =
       createKardexDto;
@@ -179,6 +204,7 @@ export class KardexService {
         cantidad,
         stock: movimiento.stockTotal,
         motivo,
+        ...valuacion,
         ...this.camposContables(createKardexDto),
       });
     } catch (error) {

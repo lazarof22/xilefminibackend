@@ -267,6 +267,11 @@ export class RecepcionService {
             referencia: recepcion.numeroConsecutivo,
             motivo: `Recepción ${recepcion.numeroConsecutivo}`,
             importeCUP: linea.total,
+            // El stock ya subió: el saldo previo es el total menos la entrada.
+            stockAnterior: Math.max(
+              0,
+              redondear(movimiento.stockTotal - linea.cantidad),
+            ),
           },
         );
       aplicada.registroId = String(

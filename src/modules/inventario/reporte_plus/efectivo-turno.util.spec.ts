@@ -3,6 +3,7 @@ import {
   MONEDA_POR_DEFECTO,
   monedaDelPago,
   resumirPorMoneda,
+  soloDeTurnosAbiertos,
 } from './efectivo-turno.util';
 import { Types } from 'mongoose';
 import { MetodoPagoReporte } from './schema/reporte_plus.schema';
@@ -122,5 +123,47 @@ describe('resumirPorMoneda', () => {
       depositos: [],
     });
     expect(r.efectivoEsperado).toEqual({ CUP: 0 });
+  });
+});
+
+describe('soloDeTurnosAbiertos', () => {
+  const abierto = new Types.ObjectId();
+  const cerrado = new Types.ObjectId();
+  const abiertos = new Set([String(abierto)]);
+  const turnoDe = (m: { id: number; turno?: unknown }): unknown => m.turno;
+
+  it('conserva lo de un turno abierto (ObjectId o texto) y lo que no tiene turno', () => {
+    const movimientos = [
+      { id: 1, turno: abierto },
+      { id: 2, turno: String(abierto) },
+      { id: 3 },
+      { id: 4, turno: null },
+    ];
+
+    expect(
+      soloDeTurnosAbiertos(movimientos, turnoDe, abiertos).map((m) => m.id),
+    ).toEqual([1, 2, 3, 4]);
+  });
+
+  it('descarta lo de un turno cerrado o desconocido', () => {
+    const movimientos = [
+      { id: 1, turno: cerrado },
+      { id: 2, turno: new Types.ObjectId() },
+      { id: 3, turno: abierto },
+    ];
+
+    expect(
+      soloDeTurnosAbiertos(movimientos, turnoDe, abiertos).map((m) => m.id),
+    ).toEqual([3]);
+  });
+
+  it('sin turnos abiertos solo quedan los movimientos sin turno', () => {
+    expect(
+      soloDeTurnosAbiertos(
+        [{ id: 1, turno: abierto }, { id: 2 }],
+        turnoDe,
+        new Set<string>(),
+      ).map((m) => m.id),
+    ).toEqual([2]);
   });
 });

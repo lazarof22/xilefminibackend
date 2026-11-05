@@ -7,6 +7,16 @@ export interface UbicacionCantidad {
   cantidad: number;
 }
 
+/** Saldo de un producto sumado en todas sus ubicaciones (doc §6.1). */
+export interface TotalesExistencia {
+  /** Existencia física. */
+  cantidad: number;
+  /** Comprometida en reservas. */
+  reservada: number;
+  /** `cantidad − reservada`. */
+  disponible: number;
+}
+
 /** Fila de existencia con lo mínimo que necesita la política de asignación. */
 export interface FilaExistencia {
   _id: Types.ObjectId;

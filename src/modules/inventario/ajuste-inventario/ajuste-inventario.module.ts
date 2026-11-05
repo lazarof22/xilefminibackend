@@ -7,6 +7,7 @@ import {
   AjusteInventarioSchema,
 } from './schema/ajuste-inventario.schema';
 import { Producto, ProductoSchema } from '../producto/schemas/producto.schema';
+import { Almacen, AlmacenSchema } from '../almacen/schema/almacen.schema';
 import {
   Contenedor,
   ContenedorSchema,
@@ -25,6 +26,7 @@ import { CausaDisminucionModule } from '../../nomencladores/causa-disminucion/ca
     MongooseModule.forFeature([
       { name: AjusteInventario.name, schema: AjusteInventarioSchema },
       { name: Producto.name, schema: ProductoSchema },
+      { name: Almacen.name, schema: AlmacenSchema },
       { name: Contenedor.name, schema: ContenedorSchema },
       { name: Existencia.name, schema: ExistenciaSchema },
     ]),

@@ -26,6 +26,9 @@ const C2 = id();
 const P1 = id();
 const P2 = id();
 const CLIENTE = id();
+const UBICACION_C1 =
+  'Central / Estante 1 / sección B · estante 3 · casilla 12';
+const UBICACION_C2 = 'Central / Estante 2';
 
 /** Resultado de mover stock en `ExistenciaService`: ubicaciones tocadas y total. */
 const movimiento = (
@@ -79,8 +82,36 @@ function montar(opciones: Opciones = {}) {
     unico: ['origenTipo', 'origenId', 'productoId'],
   });
 
+  const almacenes = new FakeModel([{ _id: A, nombreAlmacen: 'Central' }]);
+  const contenedores = new FakeModel([
+    {
+      _id: C1,
+      nombreContenedor: 'Estante 1',
+      almacen: A,
+      seccion: 'B',
+      estante: '3',
+      casilla: '12',
+    },
+    { _id: C2, nombreContenedor: 'Estante 2', almacen: A },
+  ]);
+
   const kardexFilas: Doc[] = [];
   const kardex = {
+    // Último costoPromedio escrito (Submayor SC-2-13): lo que lee `ultimoCostoPromedio`.
+    findOne: jest.fn(() => {
+      const cadena = {
+        sort: () => cadena,
+        select: () => cadena,
+        lean: () => cadena,
+        exec: () =>
+          Promise.resolve(
+            [...kardexFilas]
+              .reverse()
+              .find((f) => f.costoPromedio !== undefined) ?? null,
+          ),
+      };
+      return cadena;
+    }),
     create: jest.fn((fila: Doc) => {
       kardexFilas.push(fila);
       return Promise.resolve(fila);
@@ -157,6 +188,8 @@ function montar(opciones: Opciones = {}) {
     consecutivo as never,
     existencia as never,
     origen,
+    almacenes as never,
+    contenedores as never,
   );
 
   return {
@@ -582,6 +615,105 @@ describe('DevolucionService', () => {
     });
   });
 
+  describe('Submayor SC-2-13 en el kardex de la devolución', () => {
+    it('devolución de venta: valúa al promedio vigente (cantidad × promedio), lo deja igual y arma la ubicación de cada destino', async () => {
+      const m = montar();
+      m.kardexFilas.push({ productoId: P1, costoPromedio: 6.5 });
+
+      await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 4, entregada: 4 }]),
+        USUARIO,
+      );
+
+      // 3 u a C1 y 1 u a C2 (ubicaciones originales de la venta).
+      expect(m.kardexFilas[1]).toMatchObject({
+        tipo: 'devolucion',
+        cantidad: 4,
+        costoPromedio: 6.5,
+        importeCUP: 26,
+        ubicacionFisica: `${UBICACION_C1}; ${UBICACION_C2}`,
+      });
+      expect(m.kardexFilas[1]).not.toHaveProperty('referenciaContable');
+      expect(m.kardexFilas[1]).not.toHaveProperty('importeDivisa');
+    });
+
+    it('sin promedio en el kardex usa Producto.precio_compra', async () => {
+      const m = montar();
+      m.productos.docs[0].precio_compra = 4;
+
+      await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 2, entregada: 2 }]),
+        USUARIO,
+      );
+
+      expect(m.kardexFilas[0]).toMatchObject({
+        costoPromedio: 4,
+        importeCUP: 8,
+      });
+    });
+
+    it('sin ningún costo conocido no inventa promedio y conserva el importe devuelto', async () => {
+      const m = montar();
+
+      await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 4, entregada: 4 }]),
+        USUARIO,
+      );
+
+      expect(m.kardexFilas[0]).not.toHaveProperty('costoPromedio');
+      expect(m.kardexFilas[0].importeCUP).toBe(44);
+      expect(m.kardexFilas[0].ubicacionFisica).toBe(
+        `${UBICACION_C1}; ${UBICACION_C2}`,
+      );
+    });
+
+    it('devolución a proveedor (salida): valuada al promedio y con la ubicación de donde sale', async () => {
+      const m = montar();
+      m.kardexFilas.push({ productoId: P1, costoPromedio: 3.5 });
+      const compra = m.compras.insertar({
+        producto: P1,
+        almacen: A,
+        contenedor: C1,
+        cantidad: 10,
+        costo_unitario: 3,
+        total: 30,
+      });
+
+      await m.servicio.registrar(
+        {
+          ...dtoVenta(
+            compra._id,
+            [{ producto: P1, solicitada: 4, entregada: 4 }],
+            { motivo: 'Lote vencido' },
+          ),
+          tipo: DevolucionTipo.PROVEEDOR,
+          origenTipo: DevolucionOrigenTipo.REGISTRO_COMPRA,
+        },
+        USUARIO,
+      );
+
+      expect(m.kardexFilas[1]).toMatchObject({
+        tipo: 'salida',
+        costoPromedio: 3.5,
+        importeCUP: 14,
+        ubicacionFisica: UBICACION_C1,
+      });
+    });
+
+    it('antes de unificar la ubicación es la ubicación por defecto del producto', async () => {
+      const m = montar({ unificado: false });
+      m.productos.docs[0].almacen = A;
+      m.productos.docs[0].contenedor = C2;
+
+      await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 2, entregada: 2 }]),
+        USUARIO,
+      );
+
+      expect(m.kardexFilas[0].ubicacionFisica).toBe(UBICACION_C2);
+    });
+  });
+
   describe('devolución de factura', () => {
     const facturaBase = (extra: Partial<Doc> = {}): Doc => ({
       id: 'FAC-000001',
@@ -605,6 +737,16 @@ describe('DevolucionService', () => {
         { producto: P1, solicitada: entregada, entregada },
       ]),
       origenTipo: DevolucionOrigenTipo.FACTURA,
+    });
+
+    it('si la factura es en divisa, el kardex guarda el importe en importeDivisa (no en CUP)', async () => {
+      const m = montar();
+      const f = m.facturas.insertar(facturaBase({ moneda: 'USD' }));
+
+      await m.servicio.registrar(dtoFactura(f._id, 4), USUARIO);
+
+      expect(m.kardexFilas[0].importeDivisa).toBe(44);
+      expect(m.kardexFilas[0]).not.toHaveProperty('importeCUP');
     });
 
     it('repone a la ubicación de la que salió y calcula el importe con el total de la factura', async () => {
@@ -793,6 +935,8 @@ describe('DevolucionService', () => {
       };
       const servicio = new DevolucionService(
         modelo as never,
+        {} as never,
+        {} as never,
         {} as never,
         {} as never,
         {} as never,

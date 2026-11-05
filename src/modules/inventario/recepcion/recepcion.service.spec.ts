@@ -444,6 +444,43 @@ describe('RecepcionService (SC-2-04)', () => {
       expect(r.fechaRegistro).toBeInstanceOf(Date);
     });
 
+    it('informa a la compra el saldo previo (suma de Existencia antes de la entrada) para el costo promedio', async () => {
+      const e = escenario();
+      const id = await crearBorrador(e);
+      // Tras reponer 10 u de Arroz el producto suma 30: antes había 20.
+      e.existencia.reponerProducto.mockImplementationOnce(
+        (o: {
+          cantidad: number;
+          almacenId: Types.ObjectId;
+          contenedorId: Types.ObjectId;
+        }) =>
+          Promise.resolve({
+            ubicaciones: [
+              {
+                almacen: o.almacenId,
+                contenedor: o.contenedorId,
+                cantidad: o.cantidad,
+              },
+            ],
+            stockTotal: 30,
+          }),
+      );
+
+      await e.servicio.registrar(id, e.usuario);
+
+      expect(e.registroCompra.registrarLinea).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({ stockAnterior: 20 }),
+      );
+      // La segunda línea (Frijol) devuelve stockTotal = cantidad: no había saldo.
+      expect(e.registroCompra.registrarLinea).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.objectContaining({ stockAnterior: 0 }),
+      );
+    });
+
     it('es idempotente: registrar otra vez da 409 y no aplica el stock dos veces', async () => {
       const e = escenario();
       const id = await crearBorrador(e);

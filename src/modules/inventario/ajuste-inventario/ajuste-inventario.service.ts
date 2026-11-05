@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { Producto } from '../producto/schemas/producto.schema';
 import { Existencia } from '../exitencia/schema/existencia.schema';
@@ -14,6 +15,7 @@ import { ExistenciaService } from '../exitencia/existencia.service';
 import { ambosTipos, redondear } from '../exitencia/existencia.types';
 import { KardexService } from '../kardex/kardex.service';
 import { KardexTipo } from '../kardex/schema/kardex.schema';
+import { ubicacionFisicaDe } from '../kardex/ubicacion-fisica.util';
 import { ConsecutivoService } from '../consecutivo/consecutivo.service';
 import { CausaDisminucionService } from '../../nomencladores/causa-disminucion/causa-disminucion.service';
 import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
@@ -50,6 +52,8 @@ export class AjusteInventarioService {
     private readonly causaService: CausaDisminucionService,
     private readonly existenciaService: ExistenciaService,
     private readonly kardexService: KardexService,
+    @InjectModel(Almacen.name)
+    private readonly almacenModel: Model<Almacen>,
   ) {}
 
   /**
@@ -251,6 +255,7 @@ export class AjusteInventarioService {
     causa: string,
     autorizadoPor: string,
   ): Promise<void> {
+    const ubicacionFisica = await this.ubicacionFisica(linea);
     await this.kardexService.create({
       productoId: String(linea.producto),
       tipo: linea.ajuste > 0 ? KardexTipo.ENTRADA : KardexTipo.SALIDA,
@@ -259,7 +264,18 @@ export class AjusteInventarioService {
       almacenId: String(linea.almacen),
       contenedorId: String(linea.contenedor),
       referencia,
+      ...(ubicacionFisica ? { ubicacionFisica } : {}),
     });
+  }
+
+  /** Ubicación física (Submayor SC-2-13) de la línea, o `undefined` si no se puede armar. */
+  private ubicacionFisica(linea: LineaAjuste): Promise<string | undefined> {
+    return ubicacionFisicaDe(
+      this.almacenModel,
+      this.contenedorModel,
+      linea.almacen,
+      linea.contenedor,
+    );
   }
 
   /** Revierte las líneas ya aplicadas con el movimiento inverso (queda en el kardex). */
@@ -269,6 +285,7 @@ export class AjusteInventarioService {
   ): Promise<void> {
     for (const linea of [...aplicadas].reverse()) {
       try {
+        const ubicacionFisica = await this.ubicacionFisica(linea);
         await this.kardexService.create({
           productoId: String(linea.producto),
           tipo: linea.ajuste > 0 ? KardexTipo.SALIDA : KardexTipo.ENTRADA,
@@ -277,6 +294,7 @@ export class AjusteInventarioService {
           almacenId: String(linea.almacen),
           contenedorId: String(linea.contenedor),
           referencia,
+          ...(ubicacionFisica ? { ubicacionFisica } : {}),
         });
       } catch (error) {
         this.logger.error(

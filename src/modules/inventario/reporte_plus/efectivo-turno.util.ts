@@ -25,6 +25,25 @@ export const monedaDelPago = (pago?: { moneda?: unknown } | null): string => {
   return ID_MONGO.test(moneda) ? MONEDA_POR_DEFECTO : moneda;
 };
 
+/**
+ * Conserva los movimientos que cuentan para el efectivo esperado: los de un
+ * turno de caja ABIERTO y los que no pertenecen a ningún turno (anteriores a
+ * los turnos: siguen contando por la ventana de tiempo). Lo de un turno ya
+ * cerrado se descarta: su fondo ya no está en la caja y su efectivo se
+ * cuadró al cerrarlo (doc §6.6), así que restarlo daría un esperado negativo.
+ */
+export function soloDeTurnosAbiertos<T>(
+  movimientos: T[],
+  turnoDe: (movimiento: T) => unknown,
+  turnosAbiertos: ReadonlySet<string>,
+): T[] {
+  return movimientos.filter((m) => {
+    const turno = turnoDe(m);
+    if (turno === undefined || turno === null || turno === '') return true;
+    return turnosAbiertos.has(String(turno));
+  });
+}
+
 /** Movimiento de dinero físico en una moneda (extracción, depósito, cobro...). */
 export interface MovimientoMoneda {
   monto: number;
