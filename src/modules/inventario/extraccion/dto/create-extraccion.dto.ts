@@ -41,11 +41,23 @@ export class CreateExtraccionDto {
 
   @ApiPropertyOptional({
     description:
-      'Token de acceso (JWT) de un administrador o gerente que autoriza la extracción. ' +
-      'Obligatorio si quien extrae no es administrador ni gerente. No se guarda.',
+      'Autorización de un administrador o gerente (se obtiene en POST /extraccion/autorizacion). ' +
+      'Obligatoria si quien extrae no es administrador ni gerente; vence a los pocos minutos y se usa una sola vez. No se guarda.',
   })
   @IsString()
   @IsNotEmpty()
   @IsOptional()
   tokenAutorizador?: string;
+}
+
+export class SolicitarAutorizacionExtraccionDto {
+  @ApiProperty({ description: 'Usuario del administrador o gerente' })
+  @IsString()
+  @IsNotEmpty()
+  nombre!: string;
+
+  @ApiProperty({ description: 'Contraseña del administrador o gerente' })
+  @IsString()
+  @IsNotEmpty()
+  contraseña!: string;
 }

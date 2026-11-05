@@ -9,7 +9,10 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { ExtraccionService } from './extraccion.service';
-import { CreateExtraccionDto } from './dto/create-extraccion.dto';
+import {
+  CreateExtraccionDto,
+  SolicitarAutorizacionExtraccionDto,
+} from './dto/create-extraccion.dto';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -24,6 +27,23 @@ import type { RequestWithUser } from '../../auth/types/jwt-user.type';
 @Controller('extraccion')
 export class ExtraccionController {
   constructor(private readonly extraccionService: ExtraccionService) {}
+
+  @Post('autorizacion')
+  @ApiOperation({
+    summary:
+      'Un administrador o gerente entrega sus credenciales y recibe una autorización de un solo uso para que el usuario de esta sesión registre una extracción',
+  })
+  @ApiResponse({ status: 201, description: 'Autorización emitida' })
+  @ApiResponse({
+    status: 403,
+    description: 'Credenciales inválidas o sin rol de administrador/gerente',
+  })
+  solicitarAutorizacion(
+    @Body() dto: SolicitarAutorizacionExtraccionDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.extraccionService.emitirAutorizacion(dto, req.user);
+  }
 
   @Post()
   @ApiOperation({

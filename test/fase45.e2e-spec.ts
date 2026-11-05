@@ -269,29 +269,26 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
 
     // Regresión: con `target` ES2023 los opcionales no enviados llegan como `undefined`
     // y un PUT parcial borraba (o rechazaba por `nombre` requerido) los datos guardados.
-    it(
-      'PUT /empresa parcial ({ codigo_entidad }) conserva el resto de los datos',
-      async () => {
-        const put = await http.put(
-          '/empresa',
-          { codigo_entidad: '7654321' },
-          admin,
-        );
-        expect(put.status).toBe(200);
-        expect(put.body).toMatchObject({
-          nombre: 'Empresa E2E',
-          direccion: 'Calle 1',
-          codigo_entidad: '7654321',
-        });
-        // Los tests siguientes esperan el código original.
-        const restaurado = await http.put(
-          '/empresa',
-          { codigo_entidad: '1234567' },
-          admin,
-        );
-        expect(restaurado.status).toBe(200);
-      },
-    );
+    it('PUT /empresa parcial ({ codigo_entidad }) conserva el resto de los datos', async () => {
+      const put = await http.put(
+        '/empresa',
+        { codigo_entidad: '7654321' },
+        admin,
+      );
+      expect(put.status).toBe(200);
+      expect(put.body).toMatchObject({
+        nombre: 'Empresa E2E',
+        direccion: 'Calle 1',
+        codigo_entidad: '7654321',
+      });
+      // Los tests siguientes esperan el código original.
+      const restaurado = await http.put(
+        '/empresa',
+        { codigo_entidad: '1234567' },
+        admin,
+      );
+      expect(restaurado.status).toBe(200);
+    });
 
     it('crea el borrador REC-… con el total calculado por el servidor', async () => {
       const res = await http.post(
@@ -576,19 +573,46 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
         expect(JSON.stringify(res.body)).toContain('administrador o gerente');
       });
 
-      it('el cajero con el token de otro cajero no autoriza (403)', async () => {
+      const pedirAutorizacion = (
+        sesion: string,
+        nombre: string,
+        contraseña: string,
+      ) =>
+        http.post('/extraccion/autorizacion', { nombre, contraseña }, sesion);
+
+      it('un cajero o una contraseña errónea no emiten autorización (403)', async () => {
+        for (const [nombre, clave] of [
+          ['cajero-e2e', 'Cajero12345'],
+          ['gerente-e2e', 'mala'],
+        ]) {
+          const res = await pedirAutorizacion(cajero, nombre, clave);
+          expect(res.status).toBe(403);
+        }
+      });
+
+      it('el token de SESIÓN del gerente no sirve como autorización (403)', async () => {
         const res = await http.post(
           '/extraccion',
-          extraccion({ tokenAutorizador: cajero }),
+          extraccion({ tokenAutorizador: gerente }),
           cajero,
         );
         expect(res.status).toBe(403);
       });
 
-      it('el cajero con el token de un gerente: 201 con autorizadoPor y turno del cajero', async () => {
+      it('el gerente autoriza con sus credenciales: 201, turno del cajero, y el token se usa una sola vez', async () => {
+        const emitida = await pedirAutorizacion(
+          cajero,
+          'gerente-e2e',
+          'Gerente12345',
+        );
+        expect(emitida.status).toBe(201);
+        const { tokenAutorizador } = emitida.body as {
+          tokenAutorizador: string;
+        };
+
         const res = await http.post(
           '/extraccion',
-          extraccion({ tokenAutorizador: gerente }),
+          extraccion({ tokenAutorizador }),
           cajero,
         );
         expect(res.status).toBe(201);
@@ -601,6 +625,13 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
         });
         expect(doc.tokenAutorizador).toBeUndefined();
         expect(String(doc.turnoCaja)).toBe(ids.turno);
+
+        const reuso = await http.post(
+          '/extraccion',
+          extraccion({ tokenAutorizador }),
+          cajero,
+        );
+        expect(reuso.status).toBe(403);
       });
     });
 
@@ -626,7 +657,7 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
     });
   });
 
-  describe('extracción del administrador sin turno abierto', () => {
+  describe('extracción sin turno abierto', () => {
     const importes = async (): Promise<number[]> => {
       const res = await http.get('/reporte-plus/resumen', admin);
       expect(res.status).toBe(200);
@@ -638,34 +669,42 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
         : Object.values(efectivoEsperado);
     };
 
-    it('el administrador solo: 201 y se autoriza a sí mismo', async () => {
+    it('sin turno abierto se rechaza con 409 y el efectivo esperado nunca queda en negativo', async () => {
+      const antes = (await http.get('/extraccion', admin)).body as Doc[];
+
       const res = await http.post(
         '/extraccion',
         { monto: 20, causa: 'Gasto menor', moneda: 'CUP' },
         admin,
       );
-      expect(res.status).toBe(201);
-      expect(res.body).toMatchObject({
-        monto: 20,
-        autorizadoPor: { nombre: 'admin-e2e' },
-      });
-      const lista = await http.get('/extraccion', admin);
-      expect(lista.status).toBe(200);
-      expect(lista.body as Doc[]).toHaveLength(2);
+      expect(res.status).toBe(409);
+      expect(JSON.stringify(res.body)).toContain('turno de caja abierto');
+
+      const despues = (await http.get('/extraccion', admin)).body as Doc[];
+      expect(despues).toHaveLength(antes.length);
+      for (const importe of await importes()) {
+        expect(importe).toBeGreaterThanOrEqual(0);
+      }
     });
 
-    // HALLAZGO (producción, no corregido aquí): una extracción sin turno
-    // (`turnoCaja` vacío) siempre se resta en `soloDeTurnosAbiertos`, aunque no
-    // haya ningún turno abierto: con la caja en 0 el efectivo esperado del
-    // Reporte Plus queda en -20. Cuando se corrija, quitar `.failing`.
-    it.failing(
-      'el efectivo esperado nunca es negativo aunque se extraiga sin turno abierto',
-      async () => {
-        for (const importe of await importes()) {
-          expect(importe).toBeGreaterThanOrEqual(0);
-        }
-      },
-    );
+    it('con un turno abierto, el administrador solo extrae: 201 y se autoriza a sí mismo', async () => {
+      const turno = await http.post(
+        '/turno-caja',
+        { fondoInicial: { CUP: 0 } },
+        admin,
+      );
+      expect(turno.status).toBe(201);
+
+      const res = await http.post(
+        '/extraccion',
+        { monto: 0.01, causa: 'Gasto menor', moneda: 'CUP' },
+        admin,
+      );
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        autorizadoPor: { nombre: 'admin-e2e' },
+      });
+    });
   });
 
   describe('configuración tributaria', () => {

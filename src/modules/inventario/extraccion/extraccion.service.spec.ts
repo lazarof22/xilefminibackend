@@ -1,6 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ExtraccionService, type ActorExtraccion } from './extraccion.service';
 import { AutorizadorSupervisorService } from '../../auth/autorizador-supervisor.service';
@@ -30,6 +34,7 @@ describe('ExtraccionService', () => {
     rol,
   });
   let verificar: jest.Mock;
+  let emitir: jest.Mock;
 
   beforeEach(async () => {
     guardado = undefined;
@@ -47,12 +52,16 @@ describe('ExtraccionService', () => {
     verificar = jest
       .fn()
       .mockResolvedValue({ userId: gerenteId.toHexString(), nombre: 'jefe' });
+    emitir = jest.fn().mockResolvedValue({ tokenAutorizador: 'tok' });
     const mod = await Test.createTestingModule({
       providers: [
         ExtraccionService,
         { provide: getModelToken(Extraccion.name), useValue: extraccionModel },
         { provide: getModelToken(TurnoCaja.name), useValue: turno },
-        { provide: AutorizadorSupervisorService, useValue: { verificar } },
+        {
+          provide: AutorizadorSupervisorService,
+          useValue: { verificar, emitir },
+        },
       ],
     }).compile();
     service = mod.get(ExtraccionService);
@@ -76,33 +85,50 @@ describe('ExtraccionService', () => {
     });
   });
 
-  it('sin turno abierto sigue funcionando: turnoCaja queda sin definir y la moneda es CUP', async () => {
+  it('sin turno abierto se rechaza con 409, no se guarda y no se consume la autorización', async () => {
     turno.findOne.mockImplementation(() => chain(null));
+    await expect(
+      service.create(
+        { monto: 10, causa: 'x', tokenAutorizador: 'jwt' },
+        actor('cajero'),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(verificar).not.toHaveBeenCalled();
+    expect(guardado).toBeUndefined();
+  });
+
+  it('la moneda por defecto es CUP', async () => {
     await service.create({ monto: 10, causa: 'x' }, actor('gerente'));
-    expect(guardado?.turnoCaja).toBeUndefined();
     expect(guardado?.moneda).toBe('CUP');
   });
 
-  it('un cajero sin token de supervisor no extrae y no consulta nada', async () => {
+  it('un cajero sin autorización de supervisor no extrae', async () => {
     await expect(
       service.create({ monto: 10, causa: 'x' }, actor('cajero')),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(verificar).not.toHaveBeenCalled();
-    expect(turno.findOne).not.toHaveBeenCalled();
     expect(guardado).toBeUndefined();
   });
 
-  it('un cajero con token de supervisor: guarda quién autorizó y no persiste el token', async () => {
+  it('un cajero con autorización: guarda quién autorizó, la verifica para ese cajero y no persiste el token', async () => {
     await service.create(
       { monto: 10, causa: 'x', tokenAutorizador: 'jwt-secreto' },
       actor('cajero'),
     );
-    expect(verificar).toHaveBeenCalledWith('jwt-secreto');
+    expect(verificar).toHaveBeenCalledWith('jwt-secreto', cajero.toHexString());
     expect(guardado?.autorizadoPor).toEqual({
       usuarioId: gerenteId,
       nombre: 'jefe',
     });
     expect(JSON.stringify(guardado)).not.toContain('jwt-secreto');
+  });
+
+  it('emite la autorización para el usuario de la sesión', async () => {
+    await service.emitirAutorizacion(
+      { nombre: 'jefe', contraseña: 'clave' },
+      actor('cajero'),
+    );
+    expect(emitir).toHaveBeenCalledWith('jefe', 'clave', cajero.toHexString());
   });
 
   it('si el cajero es administrador ignora el token y se autoriza a sí mismo', async () => {

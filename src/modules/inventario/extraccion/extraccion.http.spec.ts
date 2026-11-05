@@ -11,8 +11,13 @@ import { Extraccion } from './schema/extraccion.schema';
 import { TurnoCaja } from '../turno-caja/schema/turno-caja.schema';
 import { JwtStrategy } from '../../auth/strategies/jwt.strategies';
 import { RolesGuard } from '../../auth/guards/roles.guard';
-import { AutorizadorSupervisorService } from '../../auth/autorizador-supervisor.service';
-import { JWT_SECRET } from '../../auth/constants/constants';
+import {
+  AUDIENCIA_EXTRACCION,
+  AutorizadorSupervisorService,
+  MENSAJE_AUTORIZACION_RECHAZADA,
+} from '../../auth/autorizador-supervisor.service';
+import { AuthService } from '../../auth/auth.service';
+import { obtenerJwtSecret } from '../../auth/constants/constants';
 import { UsuarioRol, Usuarios } from '../../auth/schemas/usuarios.schema';
 
 const MENSAJE_403 =
@@ -38,6 +43,7 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
   let guardados: Record<string, unknown>[];
   let eliminados: string[];
   let usuarios: UsuarioFalso[];
+  let hayTurnoAbierto: boolean;
 
   const cajero = usuario('maria', UsuarioRol.CAJERO);
   const otroCajero = usuario('pedro', UsuarioRol.CAJERO);
@@ -46,7 +52,11 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
   const economico = usuario('eco', UsuarioRol.ECONOMICO);
 
   const tokenDe = (u: { _id: Types.ObjectId }, opciones = {}) =>
-    jwt.sign({ sub: u._id.toHexString() }, { secret: JWT_SECRET, ...opciones });
+    jwt.sign(
+      { sub: u._id.toHexString() },
+      { secret: obtenerJwtSecret(), ...opciones },
+    );
+  const CLAVE = 'clave-ok';
   const cuerpo = { monto: 100, causa: 'Compra de insumos', moneda: 'CUP' };
 
   beforeAll(async () => {
@@ -77,18 +87,35 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
       },
     );
     const moduleRef = await Test.createTestingModule({
-      imports: [PassportModule, JwtModule.register({ secret: JWT_SECRET })],
+      imports: [
+        PassportModule,
+        JwtModule.register({ secret: obtenerJwtSecret() }),
+      ],
       controllers: [ExtraccionController],
       providers: [
         ExtraccionService,
         AutorizadorSupervisorService,
+        {
+          provide: AuthService,
+          useValue: {
+            validateUser: (nombre: string, contraseña: string) =>
+              Promise.resolve(
+                contraseña === CLAVE
+                  ? (usuarios.find((u) => u.nombre === nombre) ?? null)
+                  : null,
+              ),
+          },
+        },
         JwtStrategy,
         RolesGuard,
         { provide: getModelToken(Usuarios.name), useValue: modeloUsuarios },
         { provide: getModelToken(Extraccion.name), useValue: modeloExtraccion },
         {
           provide: getModelToken(TurnoCaja.name),
-          useValue: { findOne: () => consulta(null) },
+          useValue: {
+            findOne: () =>
+              consulta(hayTurnoAbierto ? { _id: new Types.ObjectId() } : null),
+          },
         },
       ],
     }).compile();
@@ -107,6 +134,7 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
   beforeEach(() => {
     guardados = [];
     eliminados = [];
+    hayTurnoAbierto = true;
   });
 
   afterAll(() => app.close());
@@ -115,6 +143,44 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
     const r = request(app.getHttpServer()).post('/extraccion');
     return (sesion ? r.set('Authorization', `Bearer ${sesion}`) : r).send(body);
   };
+
+  /** El supervisor entrega sus credenciales en la sesión de `para` y recibe su autorización. */
+  const autorizacion = async (
+    para: UsuarioFalso,
+    supervisor: UsuarioFalso,
+    clave = CLAVE,
+  ) => {
+    const res = await request(app.getHttpServer())
+      .post('/extraccion/autorizacion')
+      .set('Authorization', `Bearer ${tokenDe(para)}`)
+      .send({ nombre: supervisor.nombre, contraseña: clave });
+    return res;
+  };
+  const tokenAutorizador = async (
+    para: UsuarioFalso,
+    supervisor: UsuarioFalso,
+  ) =>
+    (
+      (await autorizacion(para, supervisor)).body as {
+        tokenAutorizador: string;
+      }
+    ).tokenAutorizador;
+  /** Token firmado a mano con la audiencia de extracción (para casos límite). */
+  const autorizacionManual = (
+    sub: Types.ObjectId,
+    act: Types.ObjectId,
+    opciones: Record<string, unknown> = {},
+  ) =>
+    jwt.sign(
+      { sub: sub.toHexString(), act: act.toHexString() },
+      {
+        secret: obtenerJwtSecret(),
+        audience: AUDIENCIA_EXTRACCION,
+        jwtid: new Types.ObjectId().toHexString(),
+        expiresIn: 60,
+        ...opciones,
+      },
+    );
 
   it('sin sesión responde 401', async () => {
     await post(null, cuerpo).expect(401);
@@ -127,10 +193,18 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
     expect(guardados).toHaveLength(0);
   });
 
-  it('un cajero con el token válido de un gerente extrae: 201 y queda autorizadoPor', async () => {
+  it('el gerente entrega sus credenciales y el cajero extrae con esa autorización: 201 y queda autorizadoPor', async () => {
+    const emitida = await autorizacion(cajero, gerente);
+    expect(emitida.status).toBe(201);
+    expect(emitida.body).toMatchObject({
+      autorizadoPor: 'gerente1',
+      venceEnSegundos: expect.any(Number),
+    });
+
     const res = await post(tokenDe(cajero), {
       ...cuerpo,
-      tokenAutorizador: tokenDe(gerente),
+      tokenAutorizador: (emitida.body as { tokenAutorizador: string })
+        .tokenAutorizador,
     }).expect(201);
     expect(res.body).toMatchObject({
       autorizadoPor: {
@@ -138,7 +212,6 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
         nombre: 'gerente1',
       },
     });
-    expect(guardados).toHaveLength(1);
     expect(guardados[0]).toMatchObject({
       empleadoId: cajero._id,
       autorizadoPor: { usuarioId: gerente._id, nombre: 'gerente1' },
@@ -146,7 +219,7 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
   });
 
   it('nunca guarda ni devuelve el token del autorizador', async () => {
-    const supervisor = tokenDe(admin);
+    const supervisor = await tokenAutorizador(cajero, admin);
     const res = await post(tokenDe(cajero), {
       ...cuerpo,
       tokenAutorizador: supervisor,
@@ -155,34 +228,66 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
     expect(JSON.stringify(res.body)).not.toContain(supervisor);
   });
 
-  it('un cajero con el token de otro cajero: 403', async () => {
+  it('la autorización se usa una sola vez: la segunda extracción con el mismo token es 403', async () => {
+    const token = await tokenAutorizador(cajero, gerente);
+    await post(tokenDe(cajero), { ...cuerpo, tokenAutorizador: token }).expect(
+      201,
+    );
     const res = await post(tokenDe(cajero), {
       ...cuerpo,
-      tokenAutorizador: tokenDe(otroCajero),
+      tokenAutorizador: token,
     }).expect(403);
     expect((res.body as { message: string }).message).toBe(MENSAJE_403);
-    expect(guardados).toHaveLength(0);
+    expect(guardados).toHaveLength(1);
   });
 
-  it('el token de un rol que no es administrador ni gerente (económico): 403', async () => {
-    await post(tokenDe(cajero), {
+  it('la autorización emitida para un cajero no sirve a otro cajero', async () => {
+    const token = await tokenAutorizador(cajero, gerente);
+    await post(tokenDe(otroCajero), {
       ...cuerpo,
-      tokenAutorizador: tokenDe(economico),
-    }).expect(403);
-  });
-
-  it('un token autorizador vencido: 403', async () => {
-    await post(tokenDe(cajero), {
-      ...cuerpo,
-      tokenAutorizador: tokenDe(gerente, { expiresIn: -10 }),
+      tokenAutorizador: token,
     }).expect(403);
     expect(guardados).toHaveLength(0);
   });
 
-  it('un token autorizador falsificado (otra clave) o basura: 403', async () => {
+  it('el token de SESIÓN de un gerente no vale como autorización de extracción', async () => {
     await post(tokenDe(cajero), {
       ...cuerpo,
-      tokenAutorizador: tokenDe(gerente, { secret: 'otra-clave' }),
+      tokenAutorizador: tokenDe(gerente),
+    }).expect(403);
+    expect(guardados).toHaveLength(0);
+  });
+
+  it('credenciales de un cajero, de un económico o contraseña errónea: no se emite autorización (403)', async () => {
+    for (const [supervisor, clave] of [
+      [otroCajero, CLAVE],
+      [economico, CLAVE],
+      [gerente, 'mala'],
+    ] as const) {
+      const res = await autorizacion(cajero, supervisor, clave);
+      expect(res.status).toBe(403);
+      expect((res.body as { message: string }).message).toBe(
+        MENSAJE_AUTORIZACION_RECHAZADA,
+      );
+    }
+  });
+
+  it('una autorización vencida: 403', async () => {
+    await post(tokenDe(cajero), {
+      ...cuerpo,
+      tokenAutorizador: autorizacionManual(gerente._id, cajero._id, {
+        expiresIn: -10,
+      }),
+    }).expect(403);
+    expect(guardados).toHaveLength(0);
+  });
+
+  it('una autorización falsificada (otra clave) o basura: 403', async () => {
+    await post(tokenDe(cajero), {
+      ...cuerpo,
+      tokenAutorizador: autorizacionManual(gerente._id, cajero._id, {
+        secret: 'otra-clave',
+      }),
     }).expect(403);
     await post(tokenDe(cajero), {
       ...cuerpo,
@@ -191,11 +296,29 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
     expect(guardados).toHaveLength(0);
   });
 
-  it('un token válido de un usuario que ya no existe: 403', async () => {
+  it('una autorización válida de un usuario que ya no existe: 403', async () => {
     await post(tokenDe(cajero), {
       ...cuerpo,
-      tokenAutorizador: tokenDe({ _id: new Types.ObjectId() }),
+      tokenAutorizador: autorizacionManual(new Types.ObjectId(), cajero._id),
     }).expect(403);
+  });
+
+  it('sin turno abierto: 409, no se guarda y la autorización no se gasta', async () => {
+    const token = await tokenAutorizador(cajero, gerente);
+    hayTurnoAbierto = false;
+    const res = await post(tokenDe(cajero), {
+      ...cuerpo,
+      tokenAutorizador: token,
+    }).expect(409);
+    expect((res.body as { message: string }).message).toContain(
+      'turno de caja abierto',
+    );
+    expect(guardados).toHaveLength(0);
+
+    hayTurnoAbierto = true;
+    await post(tokenDe(cajero), { ...cuerpo, tokenAutorizador: token }).expect(
+      201,
+    );
   });
 
   it('el administrador solo extrae: 201 y se autoriza a sí mismo', async () => {

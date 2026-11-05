@@ -3,10 +3,14 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
-import { CreateExtraccionDto } from './dto/create-extraccion.dto';
+import {
+  CreateExtraccionDto,
+  SolicitarAutorizacionExtraccionDto,
+} from './dto/create-extraccion.dto';
 import { Extraccion, ExtraccionDocument } from './schema/extraccion.schema';
 import {
   EstadoTurnoCaja,
@@ -16,6 +20,7 @@ import {
   AutorizadorSupervisorService,
   MENSAJE_EXTRACCION_NO_AUTORIZADA,
   esRolSupervisor,
+  type AutorizacionEmitida,
   type Supervisor,
 } from '../../auth/autorizador-supervisor.service';
 import type { JwtUser } from '../../auth/types/jwt-user.type';
@@ -47,13 +52,23 @@ export class ExtraccionService {
     if (!dto.tokenAutorizador) {
       throw new ForbiddenException(MENSAJE_EXTRACCION_NO_AUTORIZADA);
     }
-    return this.autorizador.verificar(dto.tokenAutorizador);
+    return this.autorizador.verificar(dto.tokenAutorizador, actor.userId);
+  }
+
+  /** Un supervisor entrega credenciales y recibe la autorización de un solo uso para `actor`. */
+  emitirAutorizacion(
+    dto: SolicitarAutorizacionExtraccionDto,
+    actor: ActorExtraccion,
+  ): Promise<AutorizacionEmitida> {
+    return this.autorizador.emitir(dto.nombre, dto.contraseña, actor.userId);
   }
 
   /**
-   * El usuario autenticado (`actor`) vincula la extracción a su turno abierto;
-   * sin turno abierto la extracción se guarda igual, con `turnoCaja` sin
-   * definir.
+   * El usuario autenticado (`actor`) vincula la extracción a su turno
+   * abierto (doc §6.10: la extracción se vincula al TurnoCaja para que el
+   * efectivo esperado del turno sea exacto). Sin turno abierto no hay caja de
+   * la que sacar el efectivo: se rechaza con 409. El turno se comprueba antes
+   * de consumir la autorización del supervisor, para no gastarla en balde.
    */
   async create(
     dto: CreateExtraccionDto,
@@ -62,7 +77,6 @@ export class ExtraccionService {
     if (dto.monto <= 0) {
       throw new BadRequestException('El monto debe ser mayor que cero');
     }
-    const supervisor = await this.autorizar(dto, actor);
 
     const cajeroId = actor.userId;
     const cajero =
@@ -76,6 +90,13 @@ export class ExtraccionService {
           .lean()
           .exec()) as unknown as { _id: Types.ObjectId } | null)
       : null;
+    if (!turno) {
+      throw new ConflictException(
+        'No hay un turno de caja abierto: abra el turno antes de registrar una extracción',
+      );
+    }
+
+    const supervisor = await this.autorizar(dto, actor);
 
     const extraccion = new this.extraccionModel({
       monto: dto.monto,
@@ -84,7 +105,7 @@ export class ExtraccionService {
       responsable: dto.responsable,
       moneda: dto.moneda?.trim() || 'CUP',
       empleadoId: cajero,
-      turnoCaja: turno?._id,
+      turnoCaja: turno._id,
       autorizadoPor: {
         usuarioId: new Types.ObjectId(supervisor.userId),
         nombre: supervisor.nombre,
