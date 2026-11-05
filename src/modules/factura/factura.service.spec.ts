@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
+import { Devolucion } from '../inventario/devolucion/schema/devolucion.schema';
 import {
   ConflictException,
   Logger,
@@ -136,6 +137,7 @@ describe('FacturaService', () => {
   let productoModelMock: ProductoModelMock;
   let paisModelMock: PaisModelMock;
   let usuarioModelMock: UsuarioModelMock;
+  let devolucionModelMock: { exists: jest.Mock };
   let inventarioMock: InventarioMock;
   let savedFactura: Partial<Factura> & {
     save: jest.Mock;
@@ -259,6 +261,13 @@ describe('FacturaService', () => {
       } as unknown as UsuariosDocument),
     );
 
+    facturaModelMock.findOne.mockReturnValue(
+      crearQueryMock<Factura | null>(null),
+    );
+    devolucionModelMock = {
+      exists: jest.fn().mockReturnValue(crearQueryMock<unknown>(null)),
+    };
+
     inventarioMock = {
       rebajarStock: jest
         .fn<Promise<void>, unknown[]>()
@@ -282,6 +291,10 @@ describe('FacturaService', () => {
         { provide: getModelToken(Producto.name), useValue: productoModelMock },
         { provide: getModelToken(Pais.name), useValue: paisModelMock },
         { provide: getModelToken(Usuarios.name), useValue: usuarioModelMock },
+        {
+          provide: getModelToken(Devolucion.name),
+          useValue: devolucionModelMock,
+        },
         { provide: EmpresaDatosService, useValue: empresaDatosServiceMock },
       ],
     }).compile();
@@ -1657,6 +1670,33 @@ describe('FacturaService', () => {
           inventarioEnProceso: true,
           ...campos,
         });
+
+      beforeEach(() => {
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>({
+            _id: 'oid-factura',
+          } as unknown as Factura),
+        );
+      });
+
+      it('answers 409 and neither claims nor restores stock while a vale de devolución exists for the invoice', async () => {
+        devolucionModelMock.exists.mockReturnValue(
+          crearQueryMock<unknown>({ _id: 'vale-1' }),
+        );
+
+        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
+          ConflictException,
+        );
+
+        expect(devolucionModelMock.exists).toHaveBeenCalledWith(
+          expect.objectContaining({
+            origenTipo: 'factura',
+            origenRef: 'oid-factura',
+          }),
+        );
+        expect(facturaModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+        expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
+      });
 
       it('claims cancelada with the marker, restores stock, then sets inventarioRevertido and clears the marker in one write', async () => {
         const reclamada = cancelando({ inventarioAplicado: true });

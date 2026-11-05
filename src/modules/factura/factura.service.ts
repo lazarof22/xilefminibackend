@@ -32,6 +32,11 @@ import { Usuarios } from '../auth/schemas/usuarios.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { FacturaInventarioService } from './factura-inventario.service';
 import {
+  Devolucion,
+  DevolucionOrigenTipo,
+  EstadoDevolucion,
+} from '../inventario/devolucion/schema/devolucion.schema';
+import {
   ESTADO_LEGADO_AJUSTADA,
   EstadoFactura,
   FACTURA_CAMPO_VACIO_SENTINEL,
@@ -70,6 +75,7 @@ export class FacturaService implements OnModuleInit {
     @InjectModel(Producto.name) private productoModel: Model<Producto>,
     @InjectModel(Pais.name) private paisModel: Model<Pais>,
     @InjectModel(Usuarios.name) private usuarioModel: Model<Usuarios>,
+    @InjectModel(Devolucion.name) private devolucionModel: Model<Devolucion>,
     private readonly empresaDatosService: EmpresaDatosService,
     private readonly inventario: FacturaInventarioService,
   ) {}
@@ -876,7 +882,9 @@ export class FacturaService implements OnModuleInit {
     const reclamada = await this.transicionar(id, EstadoFactura.CONFIRMADA, {
       camposExtra: { inventarioAplicado: true, inventarioEnProceso: true },
     });
-    let ubicaciones: Awaited<ReturnType<FacturaInventarioService['rebajarStock']>>;
+    let ubicaciones: Awaited<
+      ReturnType<FacturaInventarioService['rebajarStock']>
+    >;
     try {
       ubicaciones = await this.inventario.rebajarStock(reclamada);
     } catch (error) {
@@ -952,6 +960,7 @@ export class FacturaService implements OnModuleInit {
    * `inventarioRevertido` when stock was restored).
    */
   async cancelar(id: string): Promise<Factura> {
+    await this.rechazarSiTieneDevoluciones(id);
     const reclamada = await this.transicionar(id, EstadoFactura.CANCELADA, {
       camposExtra: { inventarioEnProceso: true },
       filtroExtra: { inventarioEnProceso: { $ne: true } },
@@ -973,6 +982,35 @@ export class FacturaService implements OnModuleInit {
       restaurar ? 'stock ya restaurado' : 'sin movimiento de stock',
     );
     return marcada ?? reclamada;
+  }
+
+  /**
+   * Cancelling restores the whole invoice, so it would restore twice the
+   * units already given back by a vale de devolución (stock must be
+   * restored exactly once). While a vale exists for the invoice (pending,
+   * applying or registered) the cancel is refused with 409.
+   */
+  private async rechazarSiTieneDevoluciones(id: string): Promise<void> {
+    const factura = await this.facturaModel.findOne({ id }).exec();
+    if (!factura) return;
+    const hayVale = await this.devolucionModel
+      .exists({
+        origenTipo: DevolucionOrigenTipo.FACTURA,
+        origenRef: factura._id,
+        estado: {
+          $in: [
+            EstadoDevolucion.PENDIENTE,
+            EstadoDevolucion.APLICANDO,
+            EstadoDevolucion.REGISTRADA,
+          ],
+        },
+      })
+      .exec();
+    if (hayVale) {
+      throw new ConflictException(
+        `La factura ${id} tiene devoluciones registradas; no se puede cancelar porque repondría dos veces el stock devuelto`,
+      );
+    }
   }
 
   /**

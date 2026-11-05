@@ -30,6 +30,10 @@ import {
   Estado,
   EstadoSchema,
 } from '../nomencladores/estado/schema/estado.schema';
+import {
+  Devolucion,
+  DevolucionSchema,
+} from '../inventario/devolucion/schema/devolucion.schema';
 import { ReportePlusModule } from '../inventario/reporte_plus/reporte_plus.module';
 import { EmpresaDatosModule } from '../configuracion/empresa-datos/empresa-datos.module';
 import { ExistenciaModule } from '../inventario/exitencia/existencia.module';
@@ -46,6 +50,7 @@ import { ExistenciaModule } from '../inventario/exitencia/existencia.module';
       { name: Usuarios.name, schema: UsuariosSchema },
       { name: Kardex.name, schema: KardexSchema },
       { name: Estado.name, schema: EstadoSchema },
+      { name: Devolucion.name, schema: DevolucionSchema },
     ]),
     EmpresaDatosModule,
     ReportePlusModule,
