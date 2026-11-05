@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { PassportStrategy } from '@nestjs/passport';
 import { Model } from 'mongoose';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { JWT_SECRET } from '../constants/constants';
+import { obtenerJwtSecret } from '../constants/constants';
 import {
   Usuarios,
   UsuariosDocument,
@@ -24,7 +24,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: JWT_SECRET,
+      secretOrKey: obtenerJwtSecret(),
     });
   }
 

@@ -13,7 +13,7 @@ import { UsuariosService } from './usuarios.service';
 import { LocalStrategy } from './strategies/local.strategies';
 import { JwtStrategy } from './strategies/jwt.strategies';
 import { RolesGuard } from './guards/roles.guard';
-import { JWT_SECRET } from './constants/constants';
+import { obtenerJwtSecret } from './constants/constants';
 import { LicenciaService } from '../licencia/licencia.service';
 import { ModuloApp, UsuarioRol, Usuarios } from './schemas/usuarios.schema';
 
@@ -113,7 +113,7 @@ describe('Auth + Usuarios (HTTP)', () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
         PassportModule,
-        JwtModule.register({ secret: JWT_SECRET }),
+        JwtModule.register({ secret: obtenerJwtSecret() }),
         ThrottlerModule.forRoot([{ ttl: 60_000, limit: 1000 }]),
       ],
       controllers: [AuthController, UsuariosController],

@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { JWT_EXPIRES_IN, JWT_SECRET } from './constants/constants';
+import { JWT_EXPIRES_IN, obtenerJwtSecret } from './constants/constants';
 import {
   COLLATION_NOMBRE,
   Usuarios,
@@ -84,7 +84,7 @@ export class AuthService {
     };
     return {
       access_token: this.jwtService.sign(payload, {
-        secret: JWT_SECRET,
+        secret: obtenerJwtSecret(),
         expiresIn: JWT_EXPIRES_IN,
       }),
       usuario: sesion,

@@ -7,7 +7,7 @@ import { AuthController } from './auth.controller';
 import { UsuariosController } from './usuarios.controller';
 import { UsuariosService } from './usuarios.service';
 import { Usuarios, UsuariosSchema } from './schemas/usuarios.schema';
-import { JWT_SECRET } from './constants/constants';
+import { obtenerJwtSecret } from './constants/constants';
 import { LocalStrategy } from './strategies/local.strategies';
 import { JwtStrategy } from './strategies/jwt.strategies';
 import { RolesGuard } from './guards/roles.guard';
@@ -22,7 +22,7 @@ import { LicenciaModule } from '../licencia/licencia.module';
     PassportModule,
     LicenciaModule,
     JwtModule.register({
-      secret: JWT_SECRET,
+      secret: obtenerJwtSecret(),
       signOptions: { expiresIn: '1h' },
     }),
   ],
