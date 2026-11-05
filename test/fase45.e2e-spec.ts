@@ -610,6 +610,11 @@ describeE2E('Fase 4/5 e2e (AppModule real + MongoDB)', () => {
           tokenAutorizador: string;
         };
 
+        // La autorización no es una sesión: no abre el resto de la API.
+        expect((await http.get('/extraccion', tokenAutorizador)).status).toBe(
+          401,
+        );
+
         const res = await http.post(
           '/extraccion',
           extraccion({ tokenAutorizador }),

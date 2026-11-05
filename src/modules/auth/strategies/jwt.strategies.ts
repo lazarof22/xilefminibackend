@@ -13,6 +13,8 @@ import type { JwtUser } from '../types/jwt-user.type';
 
 interface PayloadJwt {
   sub: string;
+  /** Los tokens de sesión no llevan audiencia; los de una acción concreta (p. ej. extracción) sí. */
+  aud?: unknown;
 }
 
 @Injectable()
@@ -33,6 +35,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * token): si se borra o se cambia a un usuario, el efecto es inmediato.
    */
   async validate(payload: PayloadJwt): Promise<JwtUser> {
+    // Un token emitido para una acción acotada no es una sesión: si lo fuera, quien lo recibe
+    // (el cajero) actuaría con el rol del supervisor que lo autorizó.
+    if (payload.aud !== undefined) {
+      throw new UnauthorizedException('Token no válido como sesión');
+    }
     const user = await this.userModel.findById(payload.sub).lean().exec();
     if (!user) throw new UnauthorizedException('El usuario ya no existe');
     return {

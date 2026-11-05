@@ -258,6 +258,19 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
     expect(guardados).toHaveLength(0);
   });
 
+  it('la autorización de extracción NO sirve como token de sesión (401)', async () => {
+    const token = await tokenAutorizador(cajero, gerente);
+    await request(app.getHttpServer())
+      .get('/extraccion')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(401);
+    await request(app.getHttpServer())
+      .delete(`/extraccion/${new Types.ObjectId().toHexString()}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(401);
+    expect(eliminados).toHaveLength(0);
+  });
+
   it('credenciales de un cajero, de un económico o contraseña errónea: no se emite autorización (403)', async () => {
     for (const [supervisor, clave] of [
       [otroCajero, CLAVE],
