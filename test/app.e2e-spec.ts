@@ -1,29 +1,22 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
+import { arrancarApp, describeE2E, type EntornoE2E } from './helpers/e2e-app';
 
-describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+// Se ejecuta solo con MONGO_TEST_URI (ver test/README.md).
+describeE2E('AppController (e2e)', () => {
+  let entorno: EntornoE2E;
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
+  beforeAll(async () => {
+    entorno = await arrancarApp();
+  });
 
-    app = moduleFixture.createNestApplication();
-    await app.init();
+  afterAll(async () => {
+    await entorno?.cerrar();
   });
 
   it('/ (GET)', () => {
-    return request(app.getHttpServer())
+    return request(entorno.app.getHttpServer())
       .get('/')
       .expect(200)
       .expect('Hello World!');
-  });
-
-  afterEach(async () => {
-    await app.close();
   });
 });
