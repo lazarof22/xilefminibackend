@@ -54,6 +54,26 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
 
   // ─────────────────────────── Camino feliz ───────────────────────────
   describe('venta en efectivo (inventario por producto)', () => {
+    it('si falla la lectura del costo la venta se cobra igual y el asiento queda sin valuar', async () => {
+      const e = crearEntorno({ impuesto: 10 });
+      jest.spyOn(e.modelos.productos, 'findById').mockImplementation(() => {
+        throw new Error('lectura caída');
+      });
+
+      const { respuesta } = await e.checkout.ejecutar(
+        dtoCheckout(e, [{ i: 0, cantidad: 1 }], efectivo({ billete1000: 1 })),
+        claveNueva(),
+        e.usuario(),
+      );
+
+      expect(respuesta.comprobante).toBe('V-000001');
+      const venta = e.modelos.kardex.docs.find(
+        (d) => d.tipo === KardexTipo.VENTA,
+      );
+      expect(venta).toBeDefined();
+      expect(venta).not.toHaveProperty('costoPromedio');
+    });
+
     it('valúa el asiento de Kardex de la venta al costo promedio vigente (Submayor SC-2-13) sin cambiar el promedio', async () => {
       const e = crearEntorno({ impuesto: 10 });
       e.modelos.productos.porId(e.P[0])!.precio_compra = 40;

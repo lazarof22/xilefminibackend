@@ -333,6 +333,34 @@ describe('DevolucionService', () => {
       expect(res.lineas[0]).toMatchObject({ precioUnitario: 16 });
     });
 
+    it('con descuento en la línea del checkout el neto es subtotal − descuento, sin descontar dos veces', async () => {
+      // 5 × 16 = 80 antes del descuento; 10 de descuento -> 70 neto; impuesto 7 (10 %).
+      const m = montar({
+        venta: {
+          subtotal_venta: 80,
+          descuento_total: 10,
+          impuesto: 7,
+          productos: [
+            {
+              productoId: P1,
+              cantidad: 5,
+              descuentoMonto: 10,
+              subtotal: 80,
+              precioUnitario: 16,
+            },
+          ],
+        },
+      });
+
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 2, entregada: 2 }]),
+        USUARIO,
+      );
+
+      // Dos de cinco: 2/5 de 70 = 28 neto, por 1,1 de impuesto = 30,8.
+      expect(res.montoDevuelto).toBe(30.8);
+    });
+
     it('devuelve en efectivo si el pago original fue en efectivo cobrado', async () => {
       const m = montar();
       const res = await m.servicio.registrar(
