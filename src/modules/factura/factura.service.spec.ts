@@ -1698,6 +1698,39 @@ describe('FacturaService', () => {
         expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
       });
 
+      it('releases the claim and answers 409 when a vale appears between the first check and the claim, without restoring stock', async () => {
+        devolucionModelMock.exists
+          .mockReturnValueOnce(crearQueryMock<unknown>(null))
+          .mockReturnValueOnce(crearQueryMock<unknown>({ _id: 'vale-2' }));
+        facturaModelMock.findOneAndUpdate
+          .mockReturnValueOnce(
+            crearQueryMock<Factura | null>(
+              cancelando({ inventarioAplicado: true }),
+            ),
+          )
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(null));
+
+        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
+          ConflictException,
+        );
+
+        expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
+          2,
+          {
+            id: 'FAC-000012',
+            estado: EstadoFactura.CANCELADA,
+            inventarioEnProceso: true,
+          },
+          {
+            $set: { estado: EstadoFactura.CONFIRMADA },
+            $unset: { inventarioEnProceso: 1 },
+            $inc: { revision: 1 },
+          },
+          { new: true },
+        );
+      });
+
       it('claims cancelada with the marker, restores stock, then sets inventarioRevertido and clears the marker in one write', async () => {
         const reclamada = cancelando({ inventarioAplicado: true });
         const marcada = facturaReclamada({

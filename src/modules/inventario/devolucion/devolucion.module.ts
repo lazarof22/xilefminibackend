@@ -19,6 +19,7 @@ import { Factura, FacturaSchema } from '../../factura/schema/factura.schema';
 import { DevolucionController } from './devolucion.controller';
 import { DevolucionService } from './devolucion.service';
 import { DevolucionOrigenService } from './devolucion-origen.service';
+import { DevolucionRecuperacionCron } from './devolucion-recuperacion.cron';
 import { Devolucion, DevolucionSchema } from './schema/devolucion.schema';
 import {
   DevolucionAcumulado,
@@ -47,7 +48,11 @@ import {
     ExistenciaModule,
   ],
   controllers: [DevolucionController],
-  providers: [DevolucionService, DevolucionOrigenService],
+  providers: [
+    DevolucionService,
+    DevolucionOrigenService,
+    DevolucionRecuperacionCron,
+  ],
   exports: [DevolucionService],
 })
 export class DevolucionModule {}

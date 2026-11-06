@@ -26,8 +26,7 @@ const C2 = id();
 const P1 = id();
 const P2 = id();
 const CLIENTE = id();
-const UBICACION_C1 =
-  'Central / Estante 1 / sección B · estante 3 · casilla 12';
+const UBICACION_C1 = 'Central / Estante 1 / sección B · estante 3 · casilla 12';
 const UBICACION_C2 = 'Central / Estante 2';
 
 /** Resultado de mover stock en `ExistenciaService`: ubicaciones tocadas y total. */
@@ -116,6 +115,12 @@ function montar(opciones: Opciones = {}) {
       kardexFilas.push(fila);
       return Promise.resolve(fila);
     }),
+    countDocuments: jest.fn((filtro: Doc) => ({
+      exec: () =>
+        Promise.resolve(
+          kardexFilas.filter((f) => f.referencia === filtro.referencia).length,
+        ),
+    })),
     deleteMany: jest.fn((filtro: Doc) => ({
       exec: () => {
         for (let i = kardexFilas.length - 1; i >= 0; i--) {
@@ -194,6 +199,7 @@ function montar(opciones: Opciones = {}) {
 
   return {
     servicio,
+    origen,
     ventas,
     facturas,
     compras,
@@ -793,6 +799,28 @@ describe('DevolucionService', () => {
       expect(m.existencia.reponerProducto).toHaveBeenCalledTimes(1);
     });
 
+    it('si la factura se está cancelando justo después de validar, deja el vale fallido, libera el cupo y no mueve stock', async () => {
+      const m = montar();
+      const f = m.facturas.insertar(facturaBase());
+      const original = m.origen.sigueVigente.bind(m.origen);
+      jest.spyOn(m.origen, 'sigueVigente').mockImplementationOnce(async (o) => {
+        f.estado = 'cancelada';
+        f.inventarioEnProceso = true;
+        return original(o);
+      });
+
+      await expect(
+        m.servicio.registrar(dtoFactura(f._id, 1), USUARIO),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(m.existencia.reponerProducto).not.toHaveBeenCalled();
+      expect(m.devoluciones.docs[0].estado).toBe(EstadoDevolucion.FALLIDA);
+      f.estado = 'confirmada';
+      f.inventarioEnProceso = false;
+      const otra = await m.servicio.registrar(dtoFactura(f._id, 8), USUARIO);
+      expect(otra.estado).toBe(EstadoDevolucion.REGISTRADA);
+    });
+
     it('el tope acumulado también rige para facturas', async () => {
       const m = montar();
       const f = m.facturas.insertar(facturaBase());
@@ -915,6 +943,60 @@ describe('DevolucionService', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(m.existencia.descontarProducto).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('vales interrumpidos en aplicando', () => {
+    const vale = (m: ReturnType<typeof montar>, extra: Doc = {}): Doc =>
+      m.devoluciones.insertar({
+        numeroConsecutivo: 'DEV-000099',
+        estado: EstadoDevolucion.APLICANDO,
+        updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+        lineas: [
+          { producto: P1, cantidadEntregada: 2 },
+          { producto: P2, cantidadEntregada: 1 },
+          { producto: P2, cantidadEntregada: 0 },
+        ],
+        ...extra,
+      });
+
+    it('si el Kardex de todas las líneas ya está escrito, solo falta cerrar el vale: lo marca registrada', async () => {
+      const m = montar();
+      const v = vale(m);
+      m.kardexFilas.push(
+        { referencia: 'DEV-000099' },
+        { referencia: 'DEV-000099' },
+      );
+
+      const res = await m.servicio.recuperarInterrumpidas();
+
+      expect(res).toEqual({ registradas: 1, enRevision: 0 });
+      expect(v.estado).toBe(EstadoDevolucion.REGISTRADA);
+    });
+
+    it('si falta Kardex no adivina qué se movió: deja el vale como está (conserva el cupo) y lo cuenta para revisión manual', async () => {
+      const m = montar();
+      const v = vale(m);
+      m.kardexFilas.push({ referencia: 'DEV-000099' });
+
+      const res = await m.servicio.recuperarInterrumpidas();
+
+      expect(res).toEqual({ registradas: 0, enRevision: 1 });
+      expect(v.estado).toBe(EstadoDevolucion.APLICANDO);
+    });
+
+    it('no toca un vale que se está aplicando ahora mismo', async () => {
+      const m = montar();
+      const v = vale(m, { updatedAt: new Date() });
+      m.kardexFilas.push(
+        { referencia: 'DEV-000099' },
+        { referencia: 'DEV-000099' },
+      );
+
+      const res = await m.servicio.recuperarInterrumpidas();
+
+      expect(res).toEqual({ registradas: 0, enRevision: 0 });
+      expect(v.estado).toBe(EstadoDevolucion.APLICANDO);
     });
   });
 

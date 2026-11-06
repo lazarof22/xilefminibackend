@@ -47,6 +47,9 @@ import { DevolucionAcumulado } from './schema/devolucion-acumulado.schema';
 const CLAVE_CONSECUTIVO = 'devolucion';
 const PREFIJO_CONSECUTIVO = 'DEV';
 
+/** Un vale en `aplicando` más tiempo que esto se considera interrumpido. */
+const ANTIGUEDAD_APLICANDO_MS = 10 * 60 * 1000;
+
 /** Error E11000 de MongoDB (violación del índice único). */
 const esClaveDuplicada = (err: unknown): boolean =>
   typeof err === 'object' &&
@@ -171,6 +174,22 @@ export class DevolucionService {
         fecha: new Date(),
         registradoPor: { userId: usuario.userId, nombre: usuario.nombre },
       });
+      if (!(await this.origenService.sigueVigente(origen))) {
+        await this.devolucionModel
+          .updateOne(
+            { _id: creada._id, estado: EstadoDevolucion.PENDIENTE },
+            {
+              $set: {
+                estado: EstadoDevolucion.FALLIDA,
+                errorAplicacion: 'El origen dejó de estar vigente',
+              },
+            },
+          )
+          .exec();
+        throw new ConflictException(
+          'La factura de origen se está cancelando o ya no está confirmada; no se registró la devolución',
+        );
+      }
     } catch (error) {
       await this.liberar(origen, reservas);
       throw error;
@@ -271,6 +290,55 @@ export class DevolucionService {
     }
 
     return registrada;
+  }
+
+  /**
+   * Un proceso que muere a mitad de `aplicar` deja el vale en `aplicando`
+   * para siempre (bloquea la cancelación de la factura y retiene el cupo).
+   * Sin transacciones no se puede saber qué movió, así que solo se resuelve
+   * el caso inequívoco: si el Kardex de TODAS las líneas ya está escrito, el
+   * stock se movió entero y solo falta cerrar el vale. El resto se deja como
+   * está (conservar el cupo es lo seguro) y se avisa para revisión manual.
+   */
+  async recuperarInterrumpidas(
+    antiguedadMs = ANTIGUEDAD_APLICANDO_MS,
+  ): Promise<{ registradas: number; enRevision: number }> {
+    const limite = new Date(Date.now() - antiguedadMs);
+    const atascados = await this.devolucionModel
+      .find({ estado: EstadoDevolucion.APLICANDO, updatedAt: { $lt: limite } })
+      .lean()
+      .exec();
+
+    let registradas = 0;
+    let enRevision = 0;
+    for (const vale of atascados as DevolucionPersistida[]) {
+      const esperadas = vale.lineas.filter(
+        (l) => l.cantidadEntregada > EPSILON,
+      ).length;
+      const escritas = await this.kardexModel
+        .countDocuments({ referencia: vale.numeroConsecutivo })
+        .exec();
+      if (esperadas > 0 && escritas >= esperadas) {
+        const cerrada = await this.devolucionModel
+          .findOneAndUpdate(
+            { _id: vale._id, estado: EstadoDevolucion.APLICANDO },
+            { $set: { estado: EstadoDevolucion.REGISTRADA } },
+          )
+          .exec();
+        if (cerrada) {
+          registradas++;
+          this.logger.warn(
+            `Devolución ${vale.numeroConsecutivo}: aplicación interrumpida con el Kardex completo; marcada registrada`,
+          );
+          continue;
+        }
+      }
+      enRevision++;
+      this.logger.error(
+        `Devolución ${vale.numeroConsecutivo} lleva en "aplicando" desde ${String((vale as { updatedAt?: Date }).updatedAt)} con ${escritas}/${esperadas} líneas en el Kardex: revisar el stock a mano`,
+      );
+    }
+    return { registradas, enRevision };
   }
 
   // ─── Consultas ───────────────────────────────────────────────────

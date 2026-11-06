@@ -185,6 +185,26 @@ export class DevolucionOrigenService {
     };
   }
 
+  /**
+   * Second look at the origin AFTER the vale is persisted. A factura can be
+   * claimed by `cancelar` between `resolver` and the vale insert; the cancel
+   * side re-checks for vales after its own claim, so whichever write comes
+   * second sees the other and backs off.
+   */
+  async sigueVigente(origen: OrigenResuelto): Promise<boolean> {
+    if (origen.origenTipo !== DevolucionOrigenTipo.FACTURA) return true;
+    const factura = await this.facturaModel
+      .findById(origen.origenId)
+      .lean()
+      .exec();
+    return (
+      !!factura &&
+      factura.estado === EstadoFactura.CONFIRMADA &&
+      factura.inventarioAplicado === true &&
+      factura.inventarioEnProceso !== true
+    );
+  }
+
   private async deFactura(origenId: Types.ObjectId): Promise<OrigenResuelto> {
     const factura = await this.facturaModel.findById(origenId).lean().exec();
     if (!factura) {

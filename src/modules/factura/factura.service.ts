@@ -965,6 +965,10 @@ export class FacturaService implements OnModuleInit {
       camposExtra: { inventarioEnProceso: true },
       filtroExtra: { inventarioEnProceso: { $ne: true } },
     });
+    // A vale can be registered between the first check and the claim. The
+    // vale side re-checks the invoice after persisting, so whichever write
+    // comes second sees the other one: here, give the claim back.
+    await this.rechazarSiTieneDevoluciones(id, true);
     const restaurar = reclamada.inventarioAplicado === true;
     if (restaurar) {
       await this.inventario.restaurarStock(reclamada);
@@ -990,7 +994,10 @@ export class FacturaService implements OnModuleInit {
    * restored exactly once). While a vale exists for the invoice (pending,
    * applying or registered) the cancel is refused with 409.
    */
-  private async rechazarSiTieneDevoluciones(id: string): Promise<void> {
+  private async rechazarSiTieneDevoluciones(
+    id: string,
+    reclamo = false,
+  ): Promise<void> {
     const factura = await this.facturaModel.findOne({ id }).exec();
     if (!factura) return;
     const hayVale = await this.devolucionModel
@@ -1007,8 +1014,40 @@ export class FacturaService implements OnModuleInit {
       })
       .exec();
     if (hayVale) {
+      if (reclamo) {
+        await this.devolverReclamoDeCancelacion(id);
+      }
       throw new ConflictException(
         `La factura ${id} tiene devoluciones registradas; no se puede cancelar porque repondría dos veces el stock devuelto`,
+      );
+    }
+  }
+
+  /**
+   * Gives the cancel claim back (no stock was touched yet): the invoice goes
+   * back to `confirmada` without the in-progress marker. A failure here is
+   * logged because the marker would block further transitions.
+   */
+  private async devolverReclamoDeCancelacion(id: string): Promise<void> {
+    try {
+      await this.facturaModel
+        .findOneAndUpdate(
+          {
+            id,
+            estado: EstadoFactura.CANCELADA,
+            inventarioEnProceso: true,
+          },
+          {
+            $set: { estado: EstadoFactura.CONFIRMADA },
+            $unset: { inventarioEnProceso: 1 },
+            $inc: { revision: 1 },
+          },
+          { new: true },
+        )
+        .exec();
+    } catch (error) {
+      this.logger.error(
+        `La factura ${id} quedó cancelada con inventarioEnProceso tras detectar una devolución; devolverla a confirmada a mano: ${String(error)}`,
       );
     }
   }
