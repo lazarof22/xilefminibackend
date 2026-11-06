@@ -304,6 +304,35 @@ describe('DevolucionService', () => {
       expect(m.kardexFilas[0].importeCUP).toBe(44);
     });
 
+    it('una venta del checkout guarda su propio precio: la devolución usa lo que se cobró, no el precio actual del producto', async () => {
+      // Hoy el arroz cuesta 10, pero se vendió a 16 (5 × 16 = 80 antes del descuento).
+      const m = montar({
+        venta: {
+          subtotal_venta: 80,
+          descuento_total: 0,
+          impuesto: 8,
+          productos: [
+            {
+              productoId: P1,
+              cantidad: 5,
+              descuentoMonto: 0,
+              subtotal: 80,
+              precioUnitario: 16,
+            },
+          ],
+        },
+      });
+
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 2, entregada: 2 }]),
+        USUARIO,
+      );
+
+      // 2 × 16 = 32 neto; factor de impuesto 1 + 8/80 = 1.1 -> 35.2
+      expect(res.montoDevuelto).toBe(35.2);
+      expect(res.lineas[0]).toMatchObject({ precioUnitario: 16 });
+    });
+
     it('devuelve en efectivo si el pago original fue en efectivo cobrado', async () => {
       const m = montar();
       const res = await m.servicio.registrar(

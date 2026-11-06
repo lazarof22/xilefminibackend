@@ -154,8 +154,9 @@ export class DevolucionOrigenService {
       );
     }
 
-    // La venta no guarda el precio unitario: se toma el precio de venta del
-    // producto menos el descuento de la línea (igual que al registrar la venta).
+    // Una venta del checkout guarda lo cobrado por línea (`subtotal`): se usa
+    // ese importe. Las ventas anteriores no lo guardan; para ellas se toma el
+    // precio de venta actual del producto menos el descuento de la línea.
     const precios = await this.preciosDe(
       venta.productos.map((p) => String(p.productoId)),
     );
@@ -164,7 +165,9 @@ export class DevolucionOrigenService {
       cantidad: p.cantidad,
       neto: Math.max(
         0,
-        (precios.get(this.hex(p.productoId)) ?? 0) * p.cantidad -
+        (typeof p.subtotal === 'number'
+          ? p.subtotal
+          : (precios.get(this.hex(p.productoId)) ?? 0) * p.cantidad) -
           (p.descuentoMonto ?? 0),
       ),
       ubicaciones: p.ubicaciones,
