@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -41,6 +42,8 @@ const normalizar = (s?: string): string =>
 
 @Injectable()
 export class ArqueoCajaService {
+  private readonly logger = new Logger(ArqueoCajaService.name);
+
   constructor(
     @InjectModel(ArqueoCaja.name) private arqueoModel: Model<ArqueoCaja>,
     @InjectModel(TurnoCaja.name) private turnoModel: Model<TurnoCaja>,
@@ -131,16 +134,28 @@ export class ArqueoCajaService {
     const plano = creado.toObject({
       flattenMaps: true,
     }) as unknown as ArqueoCajaPlano;
-    await this.turnoModel.updateOne(
-      { _id: turno._id },
-      { $set: { arqueo: plano._id } },
-    );
+    // El arqueo ya existe (índice único por turno): si solo falla el vínculo
+    // en el turno no se reporta error, porque reintentar daría 409.
+    try {
+      await this.turnoModel.updateOne(
+        { _id: turno._id },
+        { $set: { arqueo: plano._id } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Arqueo ${String(plano._id)} creado pero sin vincular al turno ${String(turno._id)}: ${String(error)}`,
+      );
+    }
     return plano;
   }
 
   async listar(turnoCajaId?: string): Promise<ArqueoCajaPlano[]> {
     const filtro: Record<string, unknown> = {};
-    if (turnoCajaId) filtro.turnoCajaId = new Types.ObjectId(turnoCajaId);
+    if (turnoCajaId) {
+      if (!isValidObjectId(turnoCajaId))
+        throw new BadRequestException('El ID del turno no es válido');
+      filtro.turnoCajaId = new Types.ObjectId(turnoCajaId);
+    }
     return (await this.arqueoModel
       .find(filtro)
       .sort({ createdAt: -1 })

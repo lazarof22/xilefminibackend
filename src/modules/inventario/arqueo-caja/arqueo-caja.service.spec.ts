@@ -188,6 +188,14 @@ describe('ArqueoCajaService', () => {
     });
   });
 
+  describe('listar', () => {
+    it('un turnoCajaId inválido responde 400, no un error 500 de conversión', async () => {
+      await expect(service.listar('no-es-un-id')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
   describe('crear', () => {
     it('guarda esperado, contado y diferencia POR MONEDA sin sumar monedas', async () => {
       const r = await service.crear(dtoBase(), usuario);
@@ -235,6 +243,12 @@ describe('ArqueoCajaService', () => {
         { _id: turnoId },
         { $set: { arqueo: r._id } },
       );
+    });
+
+    it('si solo falla el vínculo con el turno, el arqueo ya creado se devuelve (reintentar daría 409)', async () => {
+      turno.updateOne.mockRejectedValueOnce(new Error('caída de red'));
+      const r = await service.crear(dtoBase(), usuario);
+      expect(r._id).toBeDefined();
     });
 
     it('no rechaza si cuenta el mismo cajero, pero lo marca', async () => {
