@@ -56,9 +56,12 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
   describe('venta en efectivo (inventario por producto)', () => {
     it('si falla la lectura del costo la venta se cobra igual y el asiento queda sin valuar', async () => {
       const e = crearEntorno({ impuesto: 10 });
-      jest.spyOn(e.modelos.productos, 'findById').mockImplementation(() => {
-        throw new Error('lectura caída');
-      });
+      const lectura = jest
+        .spyOn(e.modelos.productos, 'findById')
+        .mockImplementation(() => {
+          throw new Error('lectura caída');
+        });
+      const aviso = jest.spyOn(Logger.prototype, 'warn');
 
       const { respuesta } = await e.checkout.ejecutar(
         dtoCheckout(e, [{ i: 0, cantidad: 1 }], efectivo({ billete1000: 1 })),
@@ -66,12 +69,24 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
         e.usuario(),
       );
 
+      // La lectura que falló es la del costo, y fue la única consecuencia:
+      // venta, stock, pago y Kardex quedan como en una venta normal.
+      expect(lectura).toHaveBeenCalled();
+      expect(aviso).toHaveBeenCalledWith(
+        expect.stringContaining('No se pudo valuar la salida'),
+      );
       expect(respuesta.comprobante).toBe('V-000001');
+      expect(e.stock(0)).toBe(9);
+      expect(e.modelos.ventas.docs).toHaveLength(1);
+      expect(e.modelos.pagoEfectivo.docs).toHaveLength(1);
       const venta = e.modelos.kardex.docs.find(
         (d) => d.tipo === KardexTipo.VENTA,
       );
-      expect(venta).toBeDefined();
+      expect(venta).toMatchObject({ cantidad: 1, stock: 9 });
       expect(venta).not.toHaveProperty('costoPromedio');
+      expect(venta).not.toHaveProperty('importeCUP');
+      aviso.mockRestore();
+      lectura.mockRestore();
     });
 
     it('valúa el asiento de Kardex de la venta al costo promedio vigente (Submayor SC-2-13) sin cambiar el promedio', async () => {

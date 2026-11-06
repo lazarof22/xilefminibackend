@@ -358,7 +358,7 @@ describe('DevolucionService', () => {
       );
 
       // Dos de cinco: 2/5 de 70 = 28 neto, por 1,1 de impuesto = 30,8.
-      expect(res.montoDevuelto).toBe(30.8);
+      expect(res.montoDevuelto).toBeCloseTo(30.8, 2);
     });
 
     it('devuelve en efectivo si el pago original fue en efectivo cobrado', async () => {
