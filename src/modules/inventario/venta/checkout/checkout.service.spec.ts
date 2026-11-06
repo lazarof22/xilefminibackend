@@ -54,6 +54,38 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
 
   // ─────────────────────────── Camino feliz ───────────────────────────
   describe('venta en efectivo (inventario por producto)', () => {
+    it('valúa el asiento de Kardex de la venta al costo promedio vigente (Submayor SC-2-13) sin cambiar el promedio', async () => {
+      const e = crearEntorno({ impuesto: 10 });
+      e.modelos.productos.porId(e.P[0])!.precio_compra = 40;
+      e.modelos.kardex.insertar({
+        productoId: e.P[1],
+        tipo: KardexTipo.COMPRA,
+        cantidad: 20,
+        stock: 20,
+        costoPromedio: 30,
+      });
+
+      await e.checkout.ejecutar(
+        dtoCheckout(
+          e,
+          [
+            { i: 0, cantidad: 2 },
+            { i: 1, cantidad: 3 },
+          ],
+          efectivo({ billete1000: 1 }),
+        ),
+        claveNueva(),
+        e.usuario(),
+      );
+
+      const ventas = e.modelos.kardex.docs.filter(
+        (d) => d.tipo === KardexTipo.VENTA,
+      );
+      // Arroz: sin promedio todavía, usa precio_compra (40). Frijol: promedio 30.
+      expect(ventas[0]).toMatchObject({ costoPromedio: 40, importeCUP: 80 });
+      expect(ventas[1]).toMatchObject({ costoPromedio: 30, importeCUP: 90 });
+    });
+
     it('cobra, descuenta el stock y deja pago, venta, Kardex y Reporte Plus', async () => {
       const e = crearEntorno({ impuesto: 10 });
       const clave = claveNueva();

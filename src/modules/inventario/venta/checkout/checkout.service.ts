@@ -29,6 +29,11 @@ import { EstadoOperacion } from '../../../operacion-idempotente/schema/operacion
 import { ExistenciaService } from '../../exitencia/existencia.service';
 import type { ResultadoMovimiento } from '../../exitencia/existencia.types';
 import { Kardex, KardexTipo } from '../../kardex/schema/kardex.schema';
+import {
+  costoVigente,
+  valuarMovimiento,
+} from '../../kardex/costo-promedio.util';
+import { ultimoCostoPromedio } from '../../kardex/costo-promedio.consulta';
 import { PagoService } from '../../pago/pago.service';
 import { Producto } from '../../producto/schemas/producto.schema';
 import {
@@ -699,9 +704,11 @@ export class CheckoutService {
 
     // Kardex: el movimiento queda registrado en el momento de la venta (ya no
     // espera al cierre del turno).
-    await insertarIgnorandoDuplicados(
-      this.kardexModel,
-      plan.lineas.map((l) => ({
+    // Submayor SC-2-13: la salida se valúa al costo promedio vigente (la venta
+    // no cambia el promedio).
+    const asientos: Record<string, unknown>[] = [];
+    for (const l of plan.lineas) {
+      asientos.push({
         _id: l.kardexId,
         fecha: plan.fecha,
         productoId: l.productoId,
@@ -710,10 +717,12 @@ export class CheckoutService {
         stock: Math.max(0, resultados.get(l.indice)?.stockFinal ?? 0),
         motivo: `Venta (${plan.pago.tipo}) ${comprobante}`,
         referencia: comprobante,
+        ...valuarMovimiento(l.cantidad, await this.costoDeSalida(l.productoId)),
         createdAt: plan.fecha,
         updatedAt: plan.fecha,
-      })),
-    );
+      });
+    }
+    await insertarIgnorandoDuplicados(this.kardexModel, asientos);
 
     // Reporte Plus, con `enKardex: true` para que el cierre de turno no lo duplique.
     const metodoPago = {
@@ -747,6 +756,32 @@ export class CheckoutService {
       op,
       sinIndefinidos(respuesta) as unknown as Record<string, unknown>,
     );
+  }
+
+  /**
+   * Costo con el que sale una unidad: el último promedio del Kardex del
+   * producto o, sin él, su precio de compra. Una lectura que falla no debe
+   * frenar una venta ya cobrada: el asiento se escribe sin valuar y se avisa.
+   */
+  private async costoDeSalida(
+    productoId: Types.ObjectId,
+  ): Promise<number | undefined> {
+    try {
+      const producto = await this.productoModel
+        .findById(productoId)
+        .select('precio_compra')
+        .lean()
+        .exec();
+      return costoVigente(
+        await ultimoCostoPromedio(this.kardexModel, productoId),
+        producto?.precio_compra,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo valuar la salida del producto ${String(productoId)}; el asiento queda sin costo: ${String(error)}`,
+      );
+      return undefined;
+    }
   }
 
   // ───────────────────────────── Fallos y reversa ─────────────────────────────
