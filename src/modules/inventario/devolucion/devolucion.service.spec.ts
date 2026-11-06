@@ -802,8 +802,10 @@ describe('DevolucionService', () => {
     it('si la factura se está cancelando justo después de validar, deja el vale fallido, libera el cupo y no mueve stock', async () => {
       const m = montar();
       const f = m.facturas.insertar(facturaBase());
-      const original = m.origen.sigueVigente.bind(m.origen);
-      jest.spyOn(m.origen, 'sigueVigente').mockImplementationOnce(async (o) => {
+      const original = m.origen.sigueVigente.bind(m.origen) as (
+        o: unknown,
+      ) => Promise<boolean>;
+      jest.spyOn(m.origen, 'sigueVigente').mockImplementationOnce((o) => {
         f.estado = 'cancelada';
         f.inventarioEnProceso = true;
         return original(o);
