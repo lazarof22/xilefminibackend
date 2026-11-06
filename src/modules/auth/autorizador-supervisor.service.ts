@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -27,6 +32,13 @@ export const AUDIENCIA_EXTRACCION = 'extraccion';
 
 /** Lo que tarda en vencer la autorización (el cajero rellena el monto y la causa después de que el supervisor entra). */
 export const VIGENCIA_AUTORIZACION_SEGUNDOS = 120;
+
+/** Fallos de credenciales permitidos por sesión antes de bloquearla un rato. */
+export const MAX_INTENTOS_FALLIDOS = 5;
+export const BLOQUEO_INTENTOS_MS = 15 * 60 * 1000;
+
+export const MENSAJE_DEMASIADOS_INTENTOS =
+  'Demasiados intentos fallidos de autorización; espere unos minutos antes de volver a intentarlo';
 
 export interface Supervisor {
   userId: string;
@@ -66,6 +78,9 @@ export class AutorizadorSupervisorService {
   /** `jti` ya usados con su vencimiento (ms); se descartan al vencer. */
   private readonly consumidos = new Map<string, number>();
 
+  /** Fallos de credenciales por usuario de sesión: cuenta y fin de la ventana (ms). */
+  private readonly fallidos = new Map<string, { n: number; hasta: number }>();
+
   constructor(
     private readonly jwtService: JwtService,
     private readonly authService: AuthService,
@@ -78,10 +93,13 @@ export class AutorizadorSupervisorService {
     contraseña: string,
     actorUserId: string,
   ): Promise<AutorizacionEmitida> {
+    this.rechazarSiBloqueado(actorUserId);
     const supervisor = await this.authService.validateUser(nombre, contraseña);
     if (!supervisor || !esRolSupervisor(supervisor.rol)) {
+      this.registrarFallo(actorUserId);
       throw new ForbiddenException(MENSAJE_AUTORIZACION_RECHAZADA);
     }
+    this.fallidos.delete(actorUserId);
     const tokenAutorizador = await this.jwtService.signAsync(
       { sub: String(supervisor._id), act: actorUserId },
       {
@@ -96,6 +114,31 @@ export class AutorizadorSupervisorService {
       autorizadoPor: supervisor.nombre,
       venceEnSegundos: VIGENCIA_AUTORIZACION_SEGUNDOS,
     };
+  }
+
+  private rechazarSiBloqueado(actorUserId: string): void {
+    const f = this.fallidos.get(actorUserId);
+    if (!f) return;
+    if (f.hasta <= Date.now()) {
+      this.fallidos.delete(actorUserId);
+      return;
+    }
+    if (f.n >= MAX_INTENTOS_FALLIDOS) {
+      throw new HttpException(
+        MENSAJE_DEMASIADOS_INTENTOS,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private registrarFallo(actorUserId: string): void {
+    const ahora = Date.now();
+    const previo = this.fallidos.get(actorUserId);
+    const vigente = previo && previo.hasta > ahora ? previo : undefined;
+    this.fallidos.set(actorUserId, {
+      n: (vigente?.n ?? 0) + 1,
+      hasta: vigente?.hasta ?? ahora + BLOQUEO_INTENTOS_MS,
+    });
   }
 
   /** Verifica y CONSUME la autorización; `actorUserId` es quien la usa. */

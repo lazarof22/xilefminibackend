@@ -38,6 +38,10 @@ export class ExtraccionController {
     status: 403,
     description: 'Credenciales inválidas o sin rol de administrador/gerente',
   })
+  @ApiResponse({
+    status: 429,
+    description: 'Demasiados intentos fallidos desde esta sesión',
+  })
   solicitarAutorizacion(
     @Body() dto: SolicitarAutorizacionExtraccionDto,
     @Req() req: RequestWithUser,

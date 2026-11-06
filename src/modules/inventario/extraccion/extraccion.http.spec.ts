@@ -285,6 +285,37 @@ describe('Extracción de caja autorizada por supervisor (HTTP)', () => {
     }
   });
 
+  it('tras 5 intentos fallidos la sesión queda bloqueada (429), incluso con credenciales correctas, y otra sesión no se ve afectada', async () => {
+    const atacante = usuario('atacante', UsuarioRol.CAJERO);
+    usuarios.push(atacante);
+
+    for (let i = 0; i < 5; i++) {
+      const res = await autorizacion(atacante, gerente, `mala-${i}`);
+      expect(res.status).toBe(403);
+    }
+    const bloqueada = await autorizacion(atacante, gerente);
+    expect(bloqueada.status).toBe(429);
+    expect(bloqueada.body).not.toHaveProperty('tokenAutorizador');
+
+    expect((await autorizacion(cajero, gerente)).status).toBe(201);
+  });
+
+  it('un acierto antes del límite reinicia la cuenta de fallos', async () => {
+    const prudente = usuario('prudente', UsuarioRol.CAJERO);
+    usuarios.push(prudente);
+
+    for (let i = 0; i < 4; i++) {
+      await autorizacion(prudente, gerente, `mala-${i}`);
+    }
+    expect((await autorizacion(prudente, gerente)).status).toBe(201);
+    for (let i = 0; i < 4; i++) {
+      expect((await autorizacion(prudente, gerente, `mala-${i}`)).status).toBe(
+        403,
+      );
+    }
+    expect((await autorizacion(prudente, gerente)).status).toBe(201);
+  });
+
   it('una autorización vencida: 403', async () => {
     await post(tokenDe(cajero), {
       ...cuerpo,
