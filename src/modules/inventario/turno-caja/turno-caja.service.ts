@@ -115,9 +115,11 @@ export class TurnoCajaService {
   ): Promise<TurnoCajaPlano[]> {
     const filtro: Record<string, unknown> = {};
     if (query.estado) filtro.estado = query.estado;
-    if (usuario && this.esCajero(usuario))
+    if (usuario && this.esCajero(usuario)) {
+      if (query.cajeroId && query.cajeroId !== usuario.userId)
+        throw new ForbiddenException('Solo puede consultar sus propios turnos');
       filtro.cajeroId = new Types.ObjectId(usuario.userId);
-    else if (query.cajeroId)
+    } else if (query.cajeroId)
       filtro.cajeroId = new Types.ObjectId(query.cajeroId);
     return (await this.turnoModel
       .find(filtro)

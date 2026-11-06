@@ -188,14 +188,25 @@ describe('TurnoCajaService', () => {
       expect(r).toHaveLength(1);
     });
 
-    it('un cajero solo ve sus turnos aunque pida los de otro cajero', async () => {
+    it('un cajero que pide los turnos de otro cajero recibe 403, no un filtro ignorado en silencio', async () => {
       model.find.mockReturnValue(chain([]));
       const otro = new Types.ObjectId().toHexString();
-      await service.listar(
-        { cajeroId: otro },
-        { userId: cajero.toHexString(), nombre: 'Ana', rol: 'cajero' },
-      );
-      expect(model.find).toHaveBeenCalledWith({ cajeroId: cajero });
+      await expect(
+        service.listar(
+          { cajeroId: otro },
+          { userId: cajero.toHexString(), nombre: 'Ana', rol: 'cajero' },
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(model.find).not.toHaveBeenCalled();
+    });
+
+    it('un cajero sin filtro, o con su propio id, ve solo sus turnos', async () => {
+      model.find.mockReturnValue(chain([]));
+      const yo = { userId: cajero.toHexString(), nombre: 'Ana', rol: 'cajero' };
+      await service.listar({}, yo);
+      await service.listar({ cajeroId: yo.userId }, yo);
+      expect(model.find).toHaveBeenNthCalledWith(1, { cajeroId: cajero });
+      expect(model.find).toHaveBeenNthCalledWith(2, { cajeroId: cajero });
     });
 
     it('un gerente o económico pueden filtrar por cualquier cajero', async () => {

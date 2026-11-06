@@ -135,18 +135,31 @@ export class ArqueoCajaService {
       flattenMaps: true,
     }) as unknown as ArqueoCajaPlano;
     // El arqueo ya existe (índice único por turno): si solo falla el vínculo
-    // en el turno no se reporta error, porque reintentar daría 409.
-    try {
-      await this.turnoModel.updateOne(
-        { _id: turno._id },
-        { $set: { arqueo: plano._id } },
-      );
-    } catch (error) {
-      this.logger.error(
-        `Arqueo ${String(plano._id)} creado pero sin vincular al turno ${String(turno._id)}: ${String(error)}`,
-      );
-    }
+    // en el turno se reintenta y, si sigue fallando, no se reporta error
+    // porque reintentar la creación daría 409.
+    await this.vincularAlTurno(turno._id, plano._id);
     return plano;
+  }
+
+  private async vincularAlTurno(
+    turnoId: Types.ObjectId,
+    arqueoId: Types.ObjectId,
+  ): Promise<void> {
+    let ultimoError: unknown;
+    for (let i = 0; i < 3; i++) {
+      try {
+        await this.turnoModel.updateOne(
+          { _id: turnoId },
+          { $set: { arqueo: arqueoId } },
+        );
+        return;
+      } catch (error) {
+        ultimoError = error;
+      }
+    }
+    this.logger.error(
+      `Arqueo ${String(arqueoId)} creado pero sin vincular al turno ${String(turnoId)}: ${String(ultimoError)}`,
+    );
   }
 
   async listar(turnoCajaId?: string): Promise<ArqueoCajaPlano[]> {

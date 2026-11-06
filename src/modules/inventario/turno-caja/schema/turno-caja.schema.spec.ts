@@ -21,4 +21,13 @@ describe('TurnoCajaSchema indexes', () => {
     );
     expect(mismoPatron).toHaveLength(1);
   });
+
+  it("keeps an index for listing a cashier's turnos newest first", () => {
+    const compuesto = indices.find(
+      ([campos]) =>
+        JSON.stringify(campos) ===
+        JSON.stringify({ cajeroId: 1, fechaApertura: -1 }),
+    );
+    expect(compuesto).toBeDefined();
+  });
 });

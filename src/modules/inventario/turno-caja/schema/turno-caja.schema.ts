@@ -63,6 +63,9 @@ TurnoCajaSchema.index(
   },
 );
 
+// Listado de los turnos de un cajero, el más reciente primero.
+TurnoCajaSchema.index({ cajeroId: 1, fechaApertura: -1 });
+
 /** Turno tal como lo devuelve la API: el mapa de fondos como objeto plano. */
 export interface TurnoCajaPlano {
   _id: Types.ObjectId;

@@ -246,9 +246,20 @@ describe('ArqueoCajaService', () => {
     });
 
     it('si solo falla el vínculo con el turno, el arqueo ya creado se devuelve (reintentar daría 409)', async () => {
-      turno.updateOne.mockRejectedValueOnce(new Error('caída de red'));
+      turno.updateOne.mockRejectedValue(new Error('caída de red'));
       const r = await service.crear(dtoBase(), usuario);
       expect(r._id).toBeDefined();
+      expect(turno.updateOne).toHaveBeenCalledTimes(3);
+    });
+
+    it('un fallo pasajero al vincular se reintenta y el turno queda vinculado', async () => {
+      turno.updateOne.mockRejectedValueOnce(new Error('red'));
+      const r = await service.crear(dtoBase(), usuario);
+      expect(turno.updateOne).toHaveBeenCalledTimes(2);
+      expect(turno.updateOne).toHaveBeenLastCalledWith(
+        { _id: turnoId },
+        { $set: { arqueo: r._id } },
+      );
     });
 
     it('no rechaza si cuenta el mismo cajero, pero lo marca', async () => {
