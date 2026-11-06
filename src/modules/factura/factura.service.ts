@@ -1029,27 +1029,38 @@ export class FacturaService implements OnModuleInit {
    * logged because the marker would block further transitions.
    */
   private async devolverReclamoDeCancelacion(id: string): Promise<void> {
-    try {
-      await this.facturaModel
-        .findOneAndUpdate(
-          {
-            id,
-            estado: EstadoFactura.CANCELADA,
-            inventarioEnProceso: true,
-          },
-          {
-            $set: { estado: EstadoFactura.CONFIRMADA },
-            $unset: { inventarioEnProceso: 1 },
-            $inc: { revision: 1 },
-          },
-          { new: true },
-        )
-        .exec();
-    } catch (error) {
-      this.logger.error(
-        `La factura ${id} quedó cancelada con inventarioEnProceso tras detectar una devolución; devolverla a confirmada a mano: ${String(error)}`,
-      );
+    const intentos = 3;
+    let ultimoError: unknown;
+    for (let i = 0; i < intentos; i++) {
+      try {
+        const devuelta = await this.facturaModel
+          .findOneAndUpdate(
+            {
+              id,
+              estado: EstadoFactura.CANCELADA,
+              inventarioEnProceso: true,
+            },
+            {
+              $set: { estado: EstadoFactura.CONFIRMADA },
+              $unset: { inventarioEnProceso: 1 },
+              $inc: { revision: 1 },
+            },
+            { new: true },
+          )
+          .exec();
+        if (!devuelta) {
+          this.logger.error(
+            `La factura ${id} no coincidió al devolver el reclamo de cancelación; revisar su estado a mano`,
+          );
+        }
+        return;
+      } catch (error) {
+        ultimoError = error;
+      }
     }
+    this.logger.error(
+      `La factura ${id} quedó cancelada con inventarioEnProceso tras detectar una devolución; devolverla a confirmada a mano: ${String(ultimoError)}`,
+    );
   }
 
   /**

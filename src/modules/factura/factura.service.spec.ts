@@ -1731,6 +1731,28 @@ describe('FacturaService', () => {
         );
       });
 
+      it('retries giving the claim back when the first write fails, so the invoice is not left cancelled with the marker', async () => {
+        devolucionModelMock.exists
+          .mockReturnValueOnce(crearQueryMock<unknown>(null))
+          .mockReturnValueOnce(crearQueryMock<unknown>({ _id: 'vale-3' }));
+        const falla = crearQueryMock<Factura | null>(null);
+        (falla.exec as jest.Mock).mockRejectedValueOnce(new Error('red'));
+        facturaModelMock.findOneAndUpdate
+          .mockReturnValueOnce(crearQueryMock<Factura | null>(cancelando()))
+          .mockReturnValueOnce(falla)
+          .mockReturnValueOnce(
+            crearQueryMock<Factura | null>(
+              facturaReclamada({ estado: EstadoFactura.CONFIRMADA }),
+            ),
+          );
+
+        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
+          ConflictException,
+        );
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledTimes(3);
+      });
+
       it('claims cancelada with the marker, restores stock, then sets inventarioRevertido and clears the marker in one write', async () => {
         const reclamada = cancelando({ inventarioAplicado: true });
         const marcada = facturaReclamada({
