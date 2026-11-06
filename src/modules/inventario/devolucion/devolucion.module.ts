@@ -9,6 +9,10 @@ import {
 } from '../contenedor/schema/contenedor.schema';
 import { Kardex, KardexSchema } from '../kardex/schema/kardex.schema';
 import { Producto, ProductoSchema } from '../producto/schemas/producto.schema';
+import {
+  TurnoCaja,
+  TurnoCajaSchema,
+} from '../turno-caja/schema/turno-caja.schema';
 import { Venta, VentaSchema } from '../venta/schema/venta.schema';
 import { Pago, PagoSchema } from '../pago/schema/pago.schema';
 import {
@@ -39,6 +43,7 @@ import {
       { name: Producto.name, schema: ProductoSchema },
       { name: Almacen.name, schema: AlmacenSchema },
       { name: Contenedor.name, schema: ContenedorSchema },
+      { name: TurnoCaja.name, schema: TurnoCajaSchema },
       { name: Venta.name, schema: VentaSchema },
       { name: Pago.name, schema: PagoSchema },
       { name: Factura.name, schema: FacturaSchema },

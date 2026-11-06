@@ -196,6 +196,7 @@ export class ArqueoCajaService {
       this.devolucionModel,
       turno.fechaApertura,
       turno.fechaCierre ?? new Date(),
+      turno._id,
     );
 
     return resumirPorMoneda({

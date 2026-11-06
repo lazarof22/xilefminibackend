@@ -178,6 +178,7 @@ function montar(opciones: Opciones = {}) {
     ),
   };
 
+  const turnos = new FakeModel();
   const origen = new DevolucionOrigenService(
     ventas as never,
     facturas as never,
@@ -195,9 +196,11 @@ function montar(opciones: Opciones = {}) {
     origen,
     almacenes as never,
     contenedores as never,
+    turnos as never,
   );
 
   return {
+    turnos,
     servicio,
     origen,
     ventas,
@@ -823,6 +826,31 @@ describe('DevolucionService', () => {
       expect(otra.estado).toBe(EstadoDevolucion.REGISTRADA);
     });
 
+    it('estampa el turno abierto de quien registra para que el efectivo se cuente en ese turno', async () => {
+      const m = montar();
+      const turno = m.turnos.insertar({
+        cajeroId: new Types.ObjectId(),
+        estado: 'abierto',
+      });
+      const f = m.facturas.insertar(facturaBase());
+
+      const res = await m.servicio.registrar(dtoFactura(f._id, 1), {
+        userId: String(turno.cajeroId),
+        nombre: 'Cajero',
+      });
+
+      expect(String(res.turnoCaja)).toBe(String(turno._id));
+    });
+
+    it('sin turno abierto el vale no lleva turno (se cruza por fecha)', async () => {
+      const m = montar();
+      const f = m.facturas.insertar(facturaBase());
+
+      const res = await m.servicio.registrar(dtoFactura(f._id, 1), USUARIO);
+
+      expect(res.turnoCaja).toBeUndefined();
+    });
+
     it('el tope acumulado también rige para facturas', async () => {
       const m = montar();
       const f = m.facturas.insertar(facturaBase());
@@ -1019,6 +1047,7 @@ describe('DevolucionService', () => {
       };
       const servicio = new DevolucionService(
         modelo as never,
+        {} as never,
         {} as never,
         {} as never,
         {} as never,

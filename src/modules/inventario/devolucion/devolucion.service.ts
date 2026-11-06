@@ -13,6 +13,10 @@ import { ultimoCostoPromedio } from '../kardex/costo-promedio.consulta';
 import { ubicacionFisicaDe } from '../kardex/ubicacion-fisica.util';
 import { Almacen } from '../almacen/schema/almacen.schema';
 import { Contenedor } from '../contenedor/schema/contenedor.schema';
+import {
+  EstadoTurnoCaja,
+  TurnoCaja,
+} from '../turno-caja/schema/turno-caja.schema';
 import { Producto } from '../producto/schemas/producto.schema';
 import { ConsecutivoService } from '../consecutivo/consecutivo.service';
 import { ExistenciaService } from '../exitencia/existencia.service';
@@ -102,7 +106,25 @@ export class DevolucionService {
     @InjectModel(Almacen.name) private readonly almacenModel: Model<Almacen>,
     @InjectModel(Contenedor.name)
     private readonly contenedorModel: Model<Contenedor>,
+    @InjectModel(TurnoCaja.name)
+    private readonly turnoModel: Model<TurnoCaja>,
   ) {}
+
+  /** Turno de caja abierto de quien registra (solo lectura), si tiene uno. */
+  private async turnoAbiertoDe(
+    userId: string,
+  ): Promise<Types.ObjectId | undefined> {
+    if (!Types.ObjectId.isValid(userId)) return undefined;
+    const turno = await this.turnoModel
+      .findOne({
+        cajeroId: new Types.ObjectId(userId),
+        estado: EstadoTurnoCaja.ABIERTO,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return turno?._id as Types.ObjectId | undefined;
+  }
 
   // ─── Registrar ───────────────────────────────────────────────────
 
@@ -130,6 +152,7 @@ export class DevolucionService {
 
     let creada: { _id: Types.ObjectId };
     try {
+      const turnoCaja = await this.turnoAbiertoDe(usuario.userId);
       const numeroConsecutivo = await this.consecutivo.siguiente(
         CLAVE_CONSECUTIVO,
         PREFIJO_CONSECUTIVO,
@@ -173,6 +196,7 @@ export class DevolucionService {
         estado: EstadoDevolucion.PENDIENTE,
         fecha: new Date(),
         registradoPor: { userId: usuario.userId, nombre: usuario.nombre },
+        ...(turnoCaja ? { turnoCaja } : {}),
       });
       if (!(await this.origenService.sigueVigente(origen))) {
         await this.devolucionModel

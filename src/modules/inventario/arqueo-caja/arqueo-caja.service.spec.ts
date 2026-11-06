@@ -151,10 +151,16 @@ describe('ArqueoCajaService', () => {
       expect(devolucion.find).toHaveBeenCalledWith({
         formaDevolucionDinero: 'efectivo',
         estado: 'registrada',
-        fecha: {
-          $gte: new Date('2026-11-02T08:00:00'),
-          $lte: new Date('2026-11-02T18:00:00'),
-        },
+        $or: [
+          { turnoCaja: turnoId },
+          {
+            turnoCaja: { $exists: false },
+            fecha: {
+              $gte: new Date('2026-11-02T08:00:00'),
+              $lte: new Date('2026-11-02T18:00:00'),
+            },
+          },
+        ],
       });
       // 1000 (esperado sin devoluciones) - 100; USD no cambia
       expect(r.efectivoEsperado).toEqual({ CUP: 900, USD: 70 });

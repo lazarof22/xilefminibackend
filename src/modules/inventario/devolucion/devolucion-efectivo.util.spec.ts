@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { devolucionesEfectivoEnVentana } from './devolucion-efectivo.util';
 import {
   EstadoDevolucion,
@@ -44,5 +45,23 @@ describe('devolucionesEfectivoEnVentana', () => {
       { monto: 150, moneda: 'CUP' },
       { monto: 20, moneda: 'USD' },
     ]);
+  });
+
+  it('with a turno, counts the vales stamped with it and only the unstamped ones by date', async () => {
+    const { modelo, find } = crearModelo([]);
+    const desde = new Date('2026-11-03T08:00:00Z');
+    const hasta = new Date('2026-11-03T20:00:00Z');
+    const turno = new Types.ObjectId();
+
+    await devolucionesEfectivoEnVentana(modelo, desde, hasta, turno);
+
+    expect(find).toHaveBeenCalledWith({
+      formaDevolucionDinero: FormaDevolucionDinero.EFECTIVO,
+      estado: EstadoDevolucion.REGISTRADA,
+      $or: [
+        { turnoCaja: turno },
+        { turnoCaja: { $exists: false }, fecha: { $gte: desde, $lte: hasta } },
+      ],
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import type { MovimientoMoneda } from '../reporte_plus/efectivo-turno.util';
 import {
   Devolucion,
@@ -13,18 +13,31 @@ import {
  *
  * Solo cuentan los vales `registrada` con forma `efectivo`; una devolución a
  * crédito (`descuenta_deuda`) o por transferencia (`nota_credito`) no mueve
- * la caja. El vale no guarda el turno ni el cajero, por eso se cruza por fecha.
+ * la caja. Un vale registrado con un turno abierto lleva su `turnoCaja`: con
+ * `turnoId` se cuenta solo en ese turno (no en otro cuya ventana lo contenga).
+ * Los vales sin turno (anteriores o de quien no tenía uno abierto) se siguen
+ * cruzando por fecha.
  */
 export async function devolucionesEfectivoEnVentana(
   modelo: Model<Devolucion>,
   desde: Date,
   hasta: Date,
+  turnoId?: Types.ObjectId,
 ): Promise<MovimientoMoneda[]> {
+  const ventana = { $gte: desde, $lte: hasta };
+  const alcance = turnoId
+    ? {
+        $or: [
+          { turnoCaja: turnoId },
+          { turnoCaja: { $exists: false }, fecha: ventana },
+        ],
+      }
+    : { fecha: ventana };
   const filas = (await modelo
     .find({
       formaDevolucionDinero: FormaDevolucionDinero.EFECTIVO,
       estado: EstadoDevolucion.REGISTRADA,
-      fecha: { $gte: desde, $lte: hasta },
+      ...alcance,
     })
     .select('montoDevuelto moneda')
     .lean()

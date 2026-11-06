@@ -64,7 +64,12 @@ export class CuadreCajaService {
       : 0;
 
     const devolucionesTurno = turno
-      ? await this.devolucionesEfectivo(turno.fechaApertura, new Date(), moneda)
+      ? await this.devolucionesEfectivo(
+          turno.fechaApertura,
+          new Date(),
+          moneda,
+          turno._id,
+        )
       : 0;
     const depositosBancarios =
       createCuadreCajaDto.depositos_bancarios ?? depositosTurno;
@@ -118,17 +123,19 @@ export class CuadreCajaService {
 
   /**
    * Devoluciones pagadas en efectivo en una moneda y ventana de tiempo: salida
-   * física de caja (el vale no guarda el turno, se cruza por fecha).
+   * física de caja (un vale con turno cuenta solo en él; el resto se cruza por fecha).
    */
   private async devolucionesEfectivo(
     desde: Date,
     hasta: Date,
     moneda: string,
+    turnoId?: Types.ObjectId,
   ): Promise<number> {
     const movimientos = await devolucionesEfectivoEnVentana(
       this.devolucionModel,
       desde,
       hasta,
+      turnoId,
     );
     return this.redondear(
       movimientos
@@ -430,6 +437,7 @@ export class CuadreCajaService {
         inicio,
         fin,
         moneda,
+        turno?._id,
       ),
     };
   }

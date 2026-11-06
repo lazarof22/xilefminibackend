@@ -165,6 +165,13 @@ export class Devolucion {
   @Prop({ type: RegistradoPor, _id: false })
   registradoPor?: RegistradoPor;
 
+  /**
+   * Turno de caja abierto de quien registró el vale (doc §6.10): la salida de
+   * efectivo se cuenta en ese turno y no en otro cuya ventana la contenga.
+   */
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TurnoCaja', index: true })
+  turnoCaja?: Types.ObjectId;
+
   /** Motivo técnico cuando `estado = fallida`. */
   @Prop()
   errorAplicacion?: string;

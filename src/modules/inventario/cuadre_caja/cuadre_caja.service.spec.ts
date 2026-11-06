@@ -176,7 +176,10 @@ describe('CuadreCajaService', () => {
 
     it('sin turno abierto el cálculo es el de siempre, en CUP y sin turnoCaja', async () => {
       usuarioModel.findById.mockResolvedValue({ _id: empleadoId });
-      const c = (await service.create(dtoBase())) as unknown as Record<string, unknown>;
+      const c = (await service.create(dtoBase())) as unknown as Record<
+        string,
+        unknown
+      >;
       expect(c.efectivo_esperado).toBe(700);
       expect(c.moneda).toBe('CUP');
       expect(c.turnoCaja).toBeUndefined();
@@ -194,13 +197,24 @@ describe('CuadreCajaService', () => {
           ]),
       });
 
-      const c = (await service.create(dtoBase())) as unknown as Record<string, unknown>;
+      const c = (await service.create(dtoBase())) as unknown as Record<
+        string,
+        unknown
+      >;
 
       expect(devolucionModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
           formaDevolucionDinero: 'efectivo',
           estado: 'registrada',
-          fecha: expect.objectContaining({ $gte: turnoAbierto.fechaApertura }),
+          $or: [
+            { turnoCaja: turnoAbierto._id },
+            {
+              turnoCaja: { $exists: false },
+              fecha: expect.objectContaining({
+                $gte: turnoAbierto.fechaApertura,
+              }),
+            },
+          ],
         }),
       );
       expect(c.devoluciones_efectivo).toBe(150);
@@ -212,7 +226,10 @@ describe('CuadreCajaService', () => {
       usuarioModel.findById.mockResolvedValue({ _id: empleadoId });
       turnoModel.findOne.mockReturnValue(lean(turnoAbierto));
 
-      const c = (await service.create(dtoBase())) as unknown as Record<string, unknown>;
+      const c = (await service.create(dtoBase())) as unknown as Record<
+        string,
+        unknown
+      >;
 
       expect(turnoModel.findOne).toHaveBeenCalledWith({
         cajeroId: new Types.ObjectId(empleadoId),
@@ -228,7 +245,10 @@ describe('CuadreCajaService', () => {
     it('usa el fondo de la moneda pedida y no mezcla monedas', async () => {
       usuarioModel.findById.mockResolvedValue({ _id: empleadoId });
       turnoModel.findOne.mockReturnValue(lean(turnoAbierto));
-      const c = (await service.create({ ...dtoBase(), moneda: 'USD' })) as unknown as Record<string, unknown>;
+      const c = (await service.create({
+        ...dtoBase(),
+        moneda: 'USD',
+      })) as unknown as Record<string, unknown>;
       expect(c.moneda).toBe('USD');
       expect(c.fondo_inicial).toBe(50);
       expect(c.efectivo_esperado).toBe(750);
@@ -258,8 +278,14 @@ describe('CuadreCajaService', () => {
     it('un crédito mayor no cambia el esperado cuando se informa el efectivo recibido', async () => {
       usuarioModel.findById.mockResolvedValue({ _id: empleadoId });
       const base = { ...dtoBase(), otros_motivos: [], efectivo_recibido: 500 };
-      const a = (await service.create(base)) as unknown as Record<string, unknown>;
-      const b = (await service.create({ ...base, creditos: 9999 })) as unknown as Record<string, unknown>;
+      const a = (await service.create(base)) as unknown as Record<
+        string,
+        unknown
+      >;
+      const b = (await service.create({
+        ...base,
+        creditos: 9999,
+      })) as unknown as Record<string, unknown>;
       expect(b.efectivo_esperado).toBe(a.efectivo_esperado);
     });
 
@@ -279,14 +305,21 @@ describe('CuadreCajaService', () => {
 
     it('al actualizar conserva el fondo del turno y recalcula', async () => {
       cuadreModel.findById.mockReturnValue(
-        lean({ ...dtoBase(), total_efectivo: 800, fondo_inicial: 1000, moneda: 'CUP' }),
+        lean({
+          ...dtoBase(),
+          total_efectivo: 800,
+          fondo_inicial: 1000,
+          moneda: 'CUP',
+        }),
       );
       cuadreModel.findByIdAndUpdate.mockImplementation(
         (_id: string, data: Record<string, unknown>) => ({
           populate: () => ({ exec: () => Promise.resolve(data) }),
         }),
       );
-      const r = (await service.update('id', { recargos: 100 })) as unknown as Record<string, unknown>;
+      const r = (await service.update('id', {
+        recargos: 100,
+      })) as unknown as Record<string, unknown>;
       expect(r.efectivo_esperado).toBe(1800);
     });
   });
