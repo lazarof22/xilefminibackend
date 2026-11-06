@@ -5,8 +5,8 @@ plazo. Los depósitos son una **salida física** del efectivo esperado del turno
 
 | Método | Ruta                                                                                                | Roles                                     |
 | ------ | --------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `POST` | `/deposito-bancario` `{ turnoCajaId, monto, moneda?, banco, referencia?, fecha? }`                  | cajero, administrador, economico, gerente |
-| `GET`  | `/deposito-bancario?turnoCajaId=` / `/:id`                                                          | autenticado                               |
+| `POST` | `/deposito-bancario` `{ turnoCajaId, monto, moneda?, banco, referencia?, fecha? }`                  | cajero (solo sobre su turno; si no, 403), administrador, economico, gerente |
+| `GET`  | `/deposito-bancario?turnoCajaId=` / `/:id`                                                          | cajero (solo los que registró), administrador, economico, gerente |
 | `GET`  | `/deposito-bancario/alertas`                                                                        | autenticado                               |
 | `GET`  | `/deposito-bancario/configuracion`                                                                  | autenticado                               |
 | `PUT`  | `/deposito-bancario/configuracion` `{ alertasActivas?, plazoDiasHabiles?, maxDiasEntreDepositos? }` | administrador                             |

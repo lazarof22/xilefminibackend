@@ -14,8 +14,8 @@ bancarios (doc §6.6).
 | ------- | ------------------------------------------------------------------ | ------------------------------ |
 | `POST`  | `/turno-caja` `{ fondoInicial: { CUP: 5000, USD: 20 } }`           | cajero, administrador          |
 | `GET`   | `/turno-caja/abierto` (turno abierto del usuario, vacío si no hay) | autenticado                    |
-| `GET`   | `/turno-caja?estado=&cajeroId=`                                    | autenticado                    |
-| `GET`   | `/turno-caja/:id`                                                  | autenticado                    |
+| `GET`   | `/turno-caja?estado=&cajeroId=`                                    | cajero (solo los suyos; otro `cajeroId` -> 403), administrador, gerente, economico |
+| `GET`   | `/turno-caja/:id`                                                  | igual; un cajero con turno ajeno -> 403 |
 | `PATCH` | `/turno-caja/:id/cerrar` `{ observaciones? }`                      | cajero (propio), administrador |
 
 Errores: 400 fondo inválido, 403 rol o turno ajeno, 404, 409 (ya hay un turno

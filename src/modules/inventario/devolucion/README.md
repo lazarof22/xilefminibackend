@@ -38,8 +38,14 @@ la aplicación falla, el cupo se libera (solo quien marca el vale `fallida` lo l
 paso condicional `pendiente -> aplicando` mueve stock; el resto devuelve el vale
 tal cual. El documento existe **antes** de mover stock. Si algo falla se deshace el
 stock, se borra el Kardex escrito y el vale queda `fallida` (evidencia, no cuenta
-en listados ni en el acumulado). Un vale que se queda `aplicando` indica un corte
-de proceso durante la aplicación: revisar a mano (se registra en el log).
+en listados ni en el acumulado).
+
+Un corte de proceso deja vales a medias; un cron (cada 5 min, `DevolucionRecuperacionCron`)
+los resuelve cuando es inequívoco: un vale `pendiente` de más de 10 min no movió
+nada, queda `fallida` y libera su cupo; un vale `aplicando` de más de 10 min con el
+Kardex escrito para **cada** producto solo necesita cerrarse y pasa a `registrada`.
+Si falta algún asiento no se adivina qué se movió: queda `aplicando` (conserva el
+cupo, bloquea cancelar la factura) y el log pide revisar el stock a mano.
 
 ## Dinero (doc §7.3) y costuras con las fases 2/3
 
@@ -72,10 +78,10 @@ Costuras que **no** se inventaron aquí:
 El cuadre debe restar del efectivo esperado lo devuelto en efectivo:
 `GET /devolucion?formaDevolucionDinero=efectivo&desde=<apertura>&hasta=<cierre>`
 (solo `registrada`, `moneda` por devolución, `montoDevuelto`). `desde`/`hasta`
-aceptan ISO 8601; una fecha sola incluye todo ese día en UTC. La integración del
-turno (vincular cada devolución en efectivo al `TurnoCaja` abierto) queda para el
-módulo de caja: este módulo expone `fecha`, `montoDevuelto` y `moneda` y no lo
-importa.
+aceptan ISO 8601; una fecha sola incluye todo ese día en UTC. Al registrar, el
+vale lleva `turnoCaja` si quien lo registra tiene un turno abierto; el cuadre y el
+arqueo cuentan ese vale solo en su turno, y los vales sin turno siguen cruzándose
+por fecha (`devolucionesEfectivoEnVentana`).
 
 ## Pendiente de registro
 
