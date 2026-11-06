@@ -123,7 +123,7 @@ export class DevolucionService {
       .select('_id')
       .lean()
       .exec();
-    return turno?._id as Types.ObjectId | undefined;
+    return turno?._id;
   }
 
   // ─── Registrar ───────────────────────────────────────────────────
