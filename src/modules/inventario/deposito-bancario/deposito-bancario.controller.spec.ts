@@ -3,7 +3,10 @@ import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
-import { DepositoBancarioController } from './deposito-bancario.controller';
+import {
+  DepositoBancarioController,
+  ROLES_REGISTRAR_DEPOSITO,
+} from './deposito-bancario.controller';
 
 const contexto = (rol: string, handler: (...a: never[]) => unknown) =>
   ({
@@ -45,13 +48,17 @@ describe('DepositoBancarioController', () => {
     ).toBe(true);
   });
 
-  it('las lecturas (alertas, configuración, listados) no llevan @Roles', () => {
-    for (const h of [
-      proto.alertas,
-      proto.configuracion,
-      proto.listar,
-      proto.findOne,
-    ])
+  it('alertas y configuración son lecturas abiertas; listar y consultar un depósito exigen rol', () => {
+    for (const h of [proto.alertas, proto.configuracion])
       expect(Reflect.getMetadata('roles', h)).toBeUndefined();
+    for (const h of [proto.listar, proto.findOne])
+      expect(Reflect.getMetadata('roles', h)).toEqual(ROLES_REGISTRAR_DEPOSITO);
+    const guard = new RolesGuard(new Reflector());
+    expect(
+      guard.canActivate(contexto(UsuarioRol.FACTURADOR, proto.listar)),
+    ).toBe(false);
+    expect(
+      guard.canActivate(contexto(UsuarioRol.ECONOMICO, proto.findOne)),
+    ).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,8 @@ import {
   EstadoTurnoCaja,
   TurnoCaja,
 } from '../turno-caja/schema/turno-caja.schema';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
+import type { JwtUser } from '../../auth/types/jwt-user.type';
 import { CreateDepositoBancarioDto } from './dto/create-deposito-bancario.dto';
 import { ListarDepositosQueryDto } from './dto/listar-depositos-query.dto';
 import { UpdateConfiguracionDepositoDto } from './dto/update-configuracion-deposito.dto';
@@ -45,6 +48,11 @@ interface TurnoParaAlerta {
   fechaCierre?: Date;
 }
 
+type UsuarioDeposito = Pick<JwtUser, 'userId' | 'rol'>;
+
+const esCajero = (u?: UsuarioDeposito): u is UsuarioDeposito =>
+  u?.rol === (UsuarioRol.CAJERO as string);
+
 @Injectable()
 export class DepositoBancarioService {
   constructor(
@@ -55,18 +63,30 @@ export class DepositoBancarioService {
     @InjectModel(TurnoCaja.name) private turnoModel: Model<TurnoCaja>,
   ) {}
 
+  /**
+   * Un cajero solo deposita el efectivo de SU turno; economico, gerente y
+   * administrador registran el de cualquier turno.
+   */
   async registrar(
     dto: CreateDepositoBancarioDto,
     usuarioId: string,
+    rol?: string,
   ): Promise<DepositoBancario> {
     if (!(dto.monto > 0))
       throw new BadRequestException('El monto debe ser mayor que cero');
-    const turno = await this.turnoModel
+    const turno = (await this.turnoModel
       .findById(dto.turnoCajaId)
-      .select('_id')
+      .select('_id cajeroId')
       .lean()
-      .exec();
+      .exec()) as unknown as { _id: Types.ObjectId; cajeroId?: unknown } | null;
     if (!turno) throw new NotFoundException('Turno de caja no encontrado');
+    if (
+      esCajero({ userId: usuarioId, rol: rol ?? '' }) &&
+      String(turno.cajeroId) !== usuarioId
+    )
+      throw new ForbiddenException(
+        'Un cajero solo registra depósitos de su propio turno',
+      );
 
     const creado = await this.depositoModel.create({
       turnoCajaId: new Types.ObjectId(dto.turnoCajaId),
@@ -80,14 +100,22 @@ export class DepositoBancarioService {
     return creado.toObject();
   }
 
-  async listar(query: ListarDepositosQueryDto): Promise<DepositoBancario[]> {
+  async listar(
+    query: ListarDepositosQueryDto,
+    usuario?: UsuarioDeposito,
+  ): Promise<DepositoBancario[]> {
     const filtro: Record<string, unknown> = {};
     if (query.turnoCajaId)
       filtro.turnoCajaId = new Types.ObjectId(query.turnoCajaId);
+    if (esCajero(usuario))
+      filtro.registradoPor = new Types.ObjectId(usuario.userId);
     return this.depositoModel.find(filtro).sort({ fecha: -1 }).lean().exec();
   }
 
-  async findOne(id: string): Promise<DepositoBancario> {
+  async findOne(
+    id: string,
+    usuario?: UsuarioDeposito,
+  ): Promise<DepositoBancario> {
     if (!isValidObjectId(id))
       throw new NotFoundException('Depósito no encontrado');
     const dep = (await this.depositoModel
@@ -95,6 +123,10 @@ export class DepositoBancarioService {
       .lean()
       .exec()) as unknown as DepositoBancario | null;
     if (!dep) throw new NotFoundException('Depósito no encontrado');
+    if (esCajero(usuario) && String(dep.registradoPor) !== usuario.userId)
+      throw new ForbiddenException(
+        'Solo puede consultar sus propios depósitos',
+      );
     return dep;
   }
 

@@ -26,6 +26,14 @@ import { AbrirTurnoCajaDto } from './dto/abrir-turno-caja.dto';
 import { CerrarTurnoCajaDto } from './dto/cerrar-turno-caja.dto';
 import { ListarTurnosCajaQueryDto } from './dto/listar-turnos-caja-query.dto';
 
+/** Consultar turnos: el cajero solo ve los suyos (filtrado en el servicio). */
+export const ROLES_LEER_TURNOS = [
+  UsuarioRol.CAJERO,
+  UsuarioRol.ADMIN,
+  UsuarioRol.GERENTE,
+  UsuarioRol.ECONOMICO,
+];
+
 /** Abrir y cerrar turno: Cajero y Administrador (doc §6.9). */
 export const ROLES_TURNO_CAJA = [UsuarioRol.CAJERO, UsuarioRol.ADMIN];
 
@@ -63,19 +71,25 @@ export class TurnoCajaController {
   }
 
   @Get()
+  @Roles(...ROLES_LEER_TURNOS)
   @ApiOperation({ summary: 'Listar turnos de caja (más recientes primero)' })
   @ApiResponse({ status: 200, description: 'Lista de turnos' })
-  listar(@Query() query: ListarTurnosCajaQueryDto) {
-    return this.turnoCajaService.listar(query);
+  @ApiResponse({ status: 403, description: 'Rol sin permiso' })
+  listar(
+    @Query() query: ListarTurnosCajaQueryDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.turnoCajaService.listar(query, req.user);
   }
 
   @Get(':id')
+  @Roles(...ROLES_LEER_TURNOS)
   @ApiOperation({ summary: 'Obtener un turno de caja' })
   @ApiParam({ name: 'id', description: 'ID del turno' })
   @ApiResponse({ status: 200, description: 'Turno' })
   @ApiResponse({ status: 404, description: 'No encontrado' })
-  findOne(@Param('id') id: string) {
-    return this.turnoCajaService.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.turnoCajaService.findOne(id, req.user);
   }
 
   @Patch(':id/cerrar')

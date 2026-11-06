@@ -1,6 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { DepositoBancarioService } from './deposito-bancario.service';
 import { DepositoBancario } from './schema/deposito-bancario.schema';
@@ -92,6 +96,47 @@ describe('DepositoBancarioService', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(deposito.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('propiedad del turno y lecturas', () => {
+    const yo = usuario;
+    const dto = () => ({
+      turnoCajaId: turnoId.toHexString(),
+      monto: 10,
+      banco: 'BPA',
+    });
+
+    it('un cajero no deposita sobre el turno de otro cajero (403) y no se guarda nada', async () => {
+      turno.findById.mockImplementation(() =>
+        chain({ _id: turnoId, cajeroId: new Types.ObjectId() }),
+      );
+      await expect(
+        service.registrar(dto(), yo, 'cajero'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(deposito.create).not.toHaveBeenCalled();
+    });
+
+    it('un cajero deposita sobre su propio turno; un económico, sobre el de cualquiera', async () => {
+      turno.findById.mockImplementation(() =>
+        chain({ _id: turnoId, cajeroId: new Types.ObjectId(yo) }),
+      );
+      await service.registrar(dto(), yo, 'cajero');
+      turno.findById.mockImplementation(() =>
+        chain({ _id: turnoId, cajeroId: new Types.ObjectId() }),
+      );
+      await service.registrar(dto(), yo, 'economico');
+      expect(deposito.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('un cajero solo lista los depósitos que registró', async () => {
+      await service.listar({}, { userId: yo, rol: 'cajero' });
+      expect(deposito.find).toHaveBeenCalledWith({
+        registradoPor: new Types.ObjectId(yo),
+      });
+      deposito.find.mockClear();
+      await service.listar({}, { userId: yo, rol: 'gerente' });
+      expect(deposito.find).toHaveBeenCalledWith({});
     });
   });
 

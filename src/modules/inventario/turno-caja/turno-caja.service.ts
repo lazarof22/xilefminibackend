@@ -108,10 +108,17 @@ export class TurnoCajaService {
     return cerrado;
   }
 
-  async listar(query: ListarTurnosCajaQueryDto): Promise<TurnoCajaPlano[]> {
+  /** Un cajero solo ve sus propios turnos; el resto de roles con acceso, todos. */
+  async listar(
+    query: ListarTurnosCajaQueryDto,
+    usuario?: UsuarioTurno,
+  ): Promise<TurnoCajaPlano[]> {
     const filtro: Record<string, unknown> = {};
     if (query.estado) filtro.estado = query.estado;
-    if (query.cajeroId) filtro.cajeroId = new Types.ObjectId(query.cajeroId);
+    if (usuario && this.esCajero(usuario))
+      filtro.cajeroId = new Types.ObjectId(usuario.userId);
+    else if (query.cajeroId)
+      filtro.cajeroId = new Types.ObjectId(query.cajeroId);
     return (await this.turnoModel
       .find(filtro)
       .sort({ fechaApertura: -1 })
@@ -119,8 +126,19 @@ export class TurnoCajaService {
       .exec()) as unknown as TurnoCajaPlano[];
   }
 
-  async findOne(id: string): Promise<TurnoCajaPlano> {
-    return this.buscar(id);
+  async findOne(id: string, usuario?: UsuarioTurno): Promise<TurnoCajaPlano> {
+    const turno = await this.buscar(id);
+    if (
+      usuario &&
+      this.esCajero(usuario) &&
+      String(turno.cajeroId) !== usuario.userId
+    )
+      throw new ForbiddenException('Solo puede consultar sus propios turnos');
+    return turno;
+  }
+
+  private esCajero(usuario: UsuarioTurno): boolean {
+    return usuario.rol === (UsuarioRol.CAJERO as string);
   }
 
   private async buscar(id: string): Promise<TurnoCajaPlano> {

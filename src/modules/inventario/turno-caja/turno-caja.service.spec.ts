@@ -187,5 +187,58 @@ describe('TurnoCajaService', () => {
       expect(c.sort).toHaveBeenCalledWith({ fechaApertura: -1 });
       expect(r).toHaveLength(1);
     });
+
+    it('un cajero solo ve sus turnos aunque pida los de otro cajero', async () => {
+      model.find.mockReturnValue(chain([]));
+      const otro = new Types.ObjectId().toHexString();
+      await service.listar(
+        { cajeroId: otro },
+        { userId: cajero.toHexString(), nombre: 'Ana', rol: 'cajero' },
+      );
+      expect(model.find).toHaveBeenCalledWith({ cajeroId: cajero });
+    });
+
+    it('un gerente o económico pueden filtrar por cualquier cajero', async () => {
+      model.find.mockReturnValue(chain([]));
+      await service.listar(
+        { cajeroId: cajero.toHexString() },
+        { userId: 'g1', nombre: 'Gina', rol: 'gerente' },
+      );
+      expect(model.find).toHaveBeenCalledWith({ cajeroId: cajero });
+    });
+  });
+
+  describe('findOne con usuario', () => {
+    const turnoDe = (cajeroId: Types.ObjectId) =>
+      model.findById.mockImplementation(() =>
+        chain({ _id: new Types.ObjectId(), cajeroId }),
+      );
+
+    it('un cajero no puede consultar el turno de otro (403), pero sí el suyo', async () => {
+      const ana = {
+        userId: cajero.toHexString(),
+        nombre: 'Ana',
+        rol: 'cajero',
+      };
+      turnoDe(new Types.ObjectId());
+      await expect(
+        service.findOne(new Types.ObjectId().toHexString(), ana),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      turnoDe(cajero);
+      await expect(
+        service.findOne(new Types.ObjectId().toHexString(), ana),
+      ).resolves.toBeDefined();
+    });
+
+    it('un gerente consulta el turno de cualquiera', async () => {
+      turnoDe(new Types.ObjectId());
+      await expect(
+        service.findOne(new Types.ObjectId().toHexString(), {
+          userId: 'g1',
+          nombre: 'Gina',
+          rol: 'gerente',
+        }),
+      ).resolves.toBeDefined();
+    });
   });
 });

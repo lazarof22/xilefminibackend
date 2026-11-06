@@ -4,7 +4,10 @@ import { Test } from '@nestjs/testing';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
-import { TurnoCajaController } from './turno-caja.controller';
+import {
+  ROLES_LEER_TURNOS,
+  TurnoCajaController,
+} from './turno-caja.controller';
 import { TurnoCajaService } from './turno-caja.service';
 
 const GUARDS_METADATA_KEY = '__guards__';
@@ -65,10 +68,22 @@ describe('TurnoCajaController', () => {
     );
   });
 
-  it('las lecturas no llevan @Roles', () => {
-    for (const h of [proto.abierto, proto.listar, proto.findOne]) {
-      expect(Reflect.getMetadata(ROLES_METADATA_KEY, h)).toBeUndefined();
+  it('el turno abierto propio no lleva @Roles; listar y consultar turnos exigen rol', () => {
+    expect(
+      Reflect.getMetadata(ROLES_METADATA_KEY, proto.abierto),
+    ).toBeUndefined();
+    for (const h of [proto.listar, proto.findOne]) {
+      expect(Reflect.getMetadata(ROLES_METADATA_KEY, h)).toEqual(
+        ROLES_LEER_TURNOS,
+      );
     }
+    const guard = new RolesGuard(new Reflector());
+    expect(
+      guard.canActivate(contexto(UsuarioRol.FACTURADOR, proto.listar)),
+    ).toBe(false);
+    expect(guard.canActivate(contexto(UsuarioRol.GERENTE, proto.findOne))).toBe(
+      true,
+    );
   });
 
   it('usa el usuario autenticado como cajero', async () => {

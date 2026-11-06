@@ -53,7 +53,7 @@ export class DepositoBancarioController {
     @Body() dto: CreateDepositoBancarioDto,
     @Req() req: RequestWithUser,
   ) {
-    return this.service.registrar(dto, req.user.userId);
+    return this.service.registrar(dto, req.user.userId, req.user.rol);
   }
 
   @Get('alertas')
@@ -87,16 +87,19 @@ export class DepositoBancarioController {
   }
 
   @Get()
+  @Roles(...ROLES_REGISTRAR_DEPOSITO)
   @ApiOperation({ summary: 'Listar depósitos (más recientes primero)' })
-  listar(@Query() query: ListarDepositosQueryDto) {
-    return this.service.listar(query);
+  @ApiResponse({ status: 403, description: 'Rol sin permiso' })
+  listar(@Query() query: ListarDepositosQueryDto, @Req() req: RequestWithUser) {
+    return this.service.listar(query, req.user);
   }
 
   @Get(':id')
+  @Roles(...ROLES_REGISTRAR_DEPOSITO)
   @ApiOperation({ summary: 'Obtener un depósito' })
   @ApiParam({ name: 'id', description: 'ID del depósito' })
   @ApiResponse({ status: 404, description: 'No encontrado' })
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.service.findOne(id, req.user);
   }
 }
