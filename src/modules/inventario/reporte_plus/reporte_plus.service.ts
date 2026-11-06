@@ -30,6 +30,7 @@ import {
 import { Devolucion } from '../devolucion/schema/devolucion.schema';
 import { devolucionesEfectivoEnVentana } from '../devolucion/devolucion-efectivo.util';
 import { LineaReportePlus } from './dto/registrar-venta-reporte.dto';
+import { insertarIgnorandoDuplicados } from '../../../common/utils/insertar-idempotente';
 import {
   CierreTurnoResultado,
   ResumenReportePlus,
@@ -110,6 +111,39 @@ export class ReportePlusService {
         enKardex: l.enKardex,
         moneda: l.moneda || MONEDA_POR_DEFECTO,
       })),
+    );
+  }
+
+  /**
+   * Como `registrarLineas`, pero cada línea trae su `id` (el `_id` de la fila)
+   * y el paso es repetible: las filas que ya existen se ignoran. Lo usa el
+   * checkout, que repite este paso al recuperar una operación caída.
+   */
+  async registrarLineasRepetible(lineas: LineaReportePlus[]): Promise<void> {
+    await insertarIgnorandoDuplicados(
+      this.reportePlusModel,
+      lineas.map((l) => {
+        if (!l.id) {
+          throw new BadRequestException(
+            'Cada línea del reporte necesita su id para poder repetirse sin duplicar',
+          );
+        }
+        return {
+          _id: new Types.ObjectId(l.id),
+          fecha: l.fecha ?? new Date(),
+          productoId: new Types.ObjectId(l.productoId),
+          producto: { codigo: l.codigo, nombre: l.nombre },
+          cantidadVendida: l.cantidadVendida,
+          stockFinal: l.stockFinal,
+          metodoPago: l.metodoPago,
+          total: l.total,
+          descuento: l.descuento,
+          impuesto: l.impuesto,
+          origen: l.origen,
+          referencia: l.referencia,
+          enKardex: l.enKardex,
+        };
+      }),
     );
   }
 

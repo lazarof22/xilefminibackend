@@ -34,6 +34,31 @@ class ItemVenta {
     @Prop({ type: [UbicacionVenta], default: undefined })
     ubicaciones?: UbicacionVenta[];
 
+    // ── Lo que calculó el servidor en el checkout (Fase 2); ausente en ventas anteriores ──
+
+    @Prop()
+    codigo?: string;
+
+    @Prop()
+    nombre?: string;
+
+    @Prop()
+    precioUnitario?: number;
+
+    @Prop()
+    descuentoPct?: number;
+
+    /** Precio × cantidad, antes del descuento. */
+    @Prop()
+    subtotal?: number;
+
+    @Prop()
+    impuesto?: number;
+
+    /** Lo que se cobra por la línea: subtotal − descuento + impuesto. */
+    @Prop()
+    total?: number;
+
 }
 
 
@@ -55,6 +80,34 @@ export class Venta {
 
     @Prop({ required: true,type: Types.ObjectId, ref: 'Pago' })
     pago!: Types.ObjectId;
+
+    // ── Fase 2 (checkout): ausentes en las ventas registradas con POST /venta ──
+
+    /** Número correlativo del comprobante simplificado del POS (V-000123). */
+    @Prop({ index: true })
+    comprobante?: string;
+
+    @Prop({ type: Types.ObjectId, ref: 'Cliente' })
+    clienteId?: Types.ObjectId;
+
+    @Prop()
+    clienteNombre?: string;
+
+    /** Quién cobró (nombre del usuario). */
+    @Prop()
+    usuario?: string;
+
+    /** Clave de idempotencia (`Idempotency-Key`) con la que se registró. */
+    @Prop()
+    operacion?: string;
+
+    /** Impuesto aplicado (%), tal como estaba al vender. */
+    @Prop()
+    impuestoPorciento?: number;
+
+    /** Total cobrado: subtotal − descuento + impuesto. */
+    @Prop()
+    total?: number;
 
 }
 
