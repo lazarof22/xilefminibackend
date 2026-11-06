@@ -147,12 +147,13 @@ export class DevolucionService {
     );
     this.validarForma(dto, origen);
     const lineas = this.prepararLineas(dto, origen);
+    // Antes de reservar cupo: si esta lectura falla no queda nada que liberar.
+    const turnoCaja = await this.turnoAbiertoDe(usuario.userId);
 
     const reservas = await this.reservar(origen, lineas);
 
     let creada: { _id: Types.ObjectId };
     try {
-      const turnoCaja = await this.turnoAbiertoDe(usuario.userId);
       const numeroConsecutivo = await this.consecutivo.siguiente(
         CLAVE_CONSECUTIVO,
         PREFIJO_CONSECUTIVO,
@@ -326,8 +327,10 @@ export class DevolucionService {
    */
   async recuperarInterrumpidas(
     antiguedadMs = ANTIGUEDAD_APLICANDO_MS,
-  ): Promise<{ registradas: number; enRevision: number }> {
+  ): Promise<{ registradas: number; enRevision: number; liberadas: number }> {
     const limite = new Date(Date.now() - antiguedadMs);
+    const liberadas = await this.liberarPendientesAbandonados(limite);
+
     const atascados = await this.devolucionModel
       .find({ estado: EstadoDevolucion.APLICANDO, updatedAt: { $lt: limite } })
       .lean()
@@ -336,13 +339,21 @@ export class DevolucionService {
     let registradas = 0;
     let enRevision = 0;
     for (const vale of atascados as DevolucionPersistida[]) {
-      const esperadas = vale.lineas.filter(
-        (l) => l.cantidadEntregada > EPSILON,
-      ).length;
-      const escritas = await this.kardexModel
-        .countDocuments({ referencia: vale.numeroConsecutivo })
-        .exec();
-      if (esperadas > 0 && escritas >= esperadas) {
+      const esperadas = vale.lineas
+        .filter((l) => l.cantidadEntregada > EPSILON)
+        .map((l) => String(l.producto));
+      const escritas = new Set(
+        (
+          (await this.kardexModel
+            .find({ referencia: vale.numeroConsecutivo })
+            .select('productoId')
+            .lean()
+            .exec()) as unknown as { productoId: unknown }[]
+        ).map((k) => String(k.productoId)),
+      );
+      const completo =
+        esperadas.length > 0 && esperadas.every((p) => escritas.has(p));
+      if (completo) {
         const cerrada = await this.devolucionModel
           .findOneAndUpdate(
             { _id: vale._id, estado: EstadoDevolucion.APLICANDO },
@@ -359,10 +370,46 @@ export class DevolucionService {
       }
       enRevision++;
       this.logger.error(
-        `Devolución ${vale.numeroConsecutivo} lleva en "aplicando" desde ${String((vale as { updatedAt?: Date }).updatedAt)} con ${escritas}/${esperadas} líneas en el Kardex: revisar el stock a mano`,
+        `Devolución ${vale.numeroConsecutivo} lleva en "aplicando" desde ${String((vale as { updatedAt?: Date }).updatedAt)} con ${esperadas.filter((p) => escritas.has(p)).length}/${esperadas.length} líneas en el Kardex: revisar el stock a mano`,
       );
     }
-    return { registradas, enRevision };
+    return { registradas, enRevision, liberadas };
+  }
+
+  /**
+   * Un vale `pendiente` no movió nada (`aplicar` lo pasa a `aplicando` antes de
+   * tocar el stock): si el proceso murió justo después de crearlo, solo retiene
+   * cupo. Se marca `fallida` (quien lo marca libera el cupo, una sola vez) y la
+   * persona puede registrar la devolución de nuevo.
+   */
+  private async liberarPendientesAbandonados(limite: Date): Promise<number> {
+    const abandonados = (await this.devolucionModel
+      .find({ estado: EstadoDevolucion.PENDIENTE, updatedAt: { $lt: limite } })
+      .lean()
+      .exec()) as DevolucionPersistida[];
+
+    let liberadas = 0;
+    for (const vale of abandonados) {
+      const marcado = await this.devolucionModel
+        .findOneAndUpdate(
+          { _id: vale._id, estado: EstadoDevolucion.PENDIENTE },
+          {
+            $set: {
+              estado: EstadoDevolucion.FALLIDA,
+              errorAplicacion:
+                'Vale pendiente abandonado: nunca llegó a aplicarse',
+            },
+          },
+        )
+        .exec();
+      if (!marcado) continue;
+      await this.liberarVale(vale);
+      liberadas++;
+      this.logger.warn(
+        `Devolución ${vale.numeroConsecutivo}: vale pendiente abandonado; cupo liberado`,
+      );
+    }
+    return liberadas;
   }
 
   // ─── Consultas ───────────────────────────────────────────────────

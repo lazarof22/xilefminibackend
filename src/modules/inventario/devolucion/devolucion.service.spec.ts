@@ -115,12 +115,17 @@ function montar(opciones: Opciones = {}) {
       kardexFilas.push(fila);
       return Promise.resolve(fila);
     }),
-    countDocuments: jest.fn((filtro: Doc) => ({
-      exec: () =>
-        Promise.resolve(
-          kardexFilas.filter((f) => f.referencia === filtro.referencia).length,
-        ),
-    })),
+    find: jest.fn((filtro: Doc) => {
+      const cadena = {
+        select: () => cadena,
+        lean: () => cadena,
+        exec: () =>
+          Promise.resolve(
+            kardexFilas.filter((f) => f.referencia === filtro.referencia),
+          ),
+      };
+      return cadena;
+    }),
     deleteMany: jest.fn((filtro: Doc) => ({
       exec: () => {
         for (let i = kardexFilas.length - 1; i >= 0; i--) {
@@ -842,6 +847,24 @@ describe('DevolucionService', () => {
       expect(String(res.turnoCaja)).toBe(String(turno._id));
     });
 
+    it('si falla la búsqueda del turno no queda cupo reservado ni vale creado', async () => {
+      const m = montar();
+      const f = m.facturas.insertar(facturaBase());
+      jest.spyOn(m.turnos, 'findOne').mockImplementationOnce(() => {
+        throw new Error('caída');
+      });
+
+      await expect(
+        m.servicio.registrar(dtoFactura(f._id, 1), {
+          userId: new Types.ObjectId().toHexString(),
+          nombre: 'Cajero',
+        }),
+      ).rejects.toThrow('caída');
+
+      expect(m.acumulados.docs).toHaveLength(0);
+      expect(m.devoluciones.docs).toHaveLength(0);
+    });
+
     it('sin turno abierto el vale no lleva turno (se cruza por fecha)', async () => {
       const m = montar();
       const f = m.facturas.insertar(facturaBase());
@@ -994,38 +1017,86 @@ describe('DevolucionService', () => {
       const m = montar();
       const v = vale(m);
       m.kardexFilas.push(
-        { referencia: 'DEV-000099' },
-        { referencia: 'DEV-000099' },
+        { referencia: 'DEV-000099', productoId: P1 },
+        { referencia: 'DEV-000099', productoId: P2 },
       );
 
       const res = await m.servicio.recuperarInterrumpidas();
 
-      expect(res).toEqual({ registradas: 1, enRevision: 0 });
+      expect(res).toEqual({ registradas: 1, enRevision: 0, liberadas: 0 });
       expect(v.estado).toBe(EstadoDevolucion.REGISTRADA);
     });
 
     it('si falta Kardex no adivina qué se movió: deja el vale como está (conserva el cupo) y lo cuenta para revisión manual', async () => {
       const m = montar();
       const v = vale(m);
-      m.kardexFilas.push({ referencia: 'DEV-000099' });
+      m.kardexFilas.push({ referencia: 'DEV-000099', productoId: P1 });
 
       const res = await m.servicio.recuperarInterrumpidas();
 
-      expect(res).toEqual({ registradas: 0, enRevision: 1 });
+      expect(res).toEqual({ registradas: 0, enRevision: 1, liberadas: 0 });
       expect(v.estado).toBe(EstadoDevolucion.APLICANDO);
+    });
+
+    it('dos asientos del mismo producto no cuentan como todas las líneas: cada producto del vale debe tener el suyo', async () => {
+      const m = montar();
+      const v = vale(m);
+      m.kardexFilas.push(
+        { referencia: 'DEV-000099', productoId: P1 },
+        { referencia: 'DEV-000099', productoId: P1 },
+      );
+
+      const res = await m.servicio.recuperarInterrumpidas();
+
+      expect(res.registradas).toBe(0);
+      expect(v.estado).toBe(EstadoDevolucion.APLICANDO);
+    });
+
+    it('un vale pendiente abandonado no movió nada: queda fallido y libera su cupo; uno reciente no se toca', async () => {
+      const m = montar();
+      m.acumulados.insertar({
+        origenTipo: 'venta',
+        origenId: m.ventaId.toHexString(),
+        productoId: P1.toHexString(),
+        devuelta: 2,
+      });
+      const viejo = m.devoluciones.insertar({
+        numeroConsecutivo: 'DEV-000100',
+        estado: EstadoDevolucion.PENDIENTE,
+        origenTipo: 'venta',
+        origenRef: m.ventaId,
+        updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+        lineas: [{ producto: P1, cantidadEntregada: 2 }],
+      });
+      const reciente = m.devoluciones.insertar({
+        numeroConsecutivo: 'DEV-000101',
+        estado: EstadoDevolucion.PENDIENTE,
+        origenTipo: 'venta',
+        origenRef: m.ventaId,
+        updatedAt: new Date(),
+        lineas: [{ producto: P2, cantidadEntregada: 1 }],
+      });
+
+      const res = await m.servicio.recuperarInterrumpidas();
+
+      expect(res).toEqual({ registradas: 0, enRevision: 0, liberadas: 1 });
+      expect(viejo.estado).toBe(EstadoDevolucion.FALLIDA);
+      expect(reciente.estado).toBe(EstadoDevolucion.PENDIENTE);
+      expect(m.acumulados.docs[0].devuelta).toBe(0);
+      expect(m.existencia.reponerProducto).not.toHaveBeenCalled();
     });
 
     it('no toca un vale que se está aplicando ahora mismo', async () => {
       const m = montar();
       const v = vale(m, { updatedAt: new Date() });
       m.kardexFilas.push(
-        { referencia: 'DEV-000099' },
-        { referencia: 'DEV-000099' },
+        { referencia: 'DEV-000099', productoId: P1 },
+        { referencia: 'DEV-000099', productoId: P2 },
       );
 
       const res = await m.servicio.recuperarInterrumpidas();
 
-      expect(res).toEqual({ registradas: 0, enRevision: 0 });
+      expect(res).toEqual({ registradas: 0, enRevision: 0, liberadas: 0 });
       expect(v.estado).toBe(EstadoDevolucion.APLICANDO);
     });
   });
