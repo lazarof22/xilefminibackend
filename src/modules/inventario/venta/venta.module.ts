@@ -16,7 +16,7 @@ import { Pago, PagoSchema } from '../pago/schema/pago.schema';
 import { ReportePlusModule } from '../reporte_plus/reporte_plus.module';
 import { ExistenciaModule } from '../exitencia/existencia.module';
 import { PagoModule } from '../pago/pago.module';
-import { ConfiguracionTributariaModule } from '../../configuracion-tributaria/configuracion-tributaria.module';
+import { ConfiguracionTributariaModule } from '../../configuracion/configuracion-tributaria/configuracion-tributaria.module';
 import { OperacionIdempotenteModule } from '../../operacion-idempotente/operacion-idempotente.module';
 import {
   VentaContador,

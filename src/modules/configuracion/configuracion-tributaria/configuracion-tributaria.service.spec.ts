@@ -1,6 +1,9 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ConfiguracionTributariaService } from './configuracion-tributaria.service';
 import { ConfiguracionTributaria } from './schemas/configuracion-tributaria.schema';
@@ -99,6 +102,33 @@ describe('ConfiguracionTributariaService', () => {
       const activa = await service.obtenerActiva();
       expect(activa?.impuestoVentasPct).toBe(10);
       expect(docs).toHaveLength(1);
+    });
+  });
+
+  describe('obtenerImpuestoVentas (lo que usa el cobro del punto de venta)', () => {
+    const doc = (pct: number): Doc => ({
+      _id: new Types.ObjectId(),
+      impuestoVentasPct: pct,
+      vigenteDesde: new Date('2026-01-01'),
+      activa: true,
+      bonificaciones: [],
+    });
+
+    it('sin configuración el impuesto es 0 %', async () => {
+      const { service } = await crear();
+      await expect(service.obtenerImpuestoVentas()).resolves.toBe(0);
+    });
+
+    it('devuelve el impuesto de la configuración vigente', async () => {
+      const { service } = await crear([doc(10)]);
+      await expect(service.obtenerImpuestoVentas()).resolves.toBe(10);
+    });
+
+    it('un valor fuera de 0-100 en la base detiene la venta en vez de corregirse en silencio', async () => {
+      const { service } = await crear([doc(150)]);
+      await expect(service.obtenerImpuestoVentas()).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
     });
   });
 

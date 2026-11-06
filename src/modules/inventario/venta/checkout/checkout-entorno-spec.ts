@@ -20,8 +20,7 @@ import { ExistenciaService } from '../../exitencia/existencia.service';
 import { Doc, FakeModel, Interruptor } from '../../exitencia/fake-mongo-spec';
 import { PagoService } from '../../pago/pago.service';
 import { ReportePlusService } from '../../reporte_plus/reporte_plus.service';
-import { ConfiguracionTributariaService } from '../../../configuracion-tributaria/configuracion-tributaria.service';
-import { CLAVE_CONFIG_VENTAS } from '../../../configuracion-tributaria/schema/configuracion-tributaria.schema';
+import { ConfiguracionTributariaService } from '../../../configuracion/configuracion-tributaria/configuracion-tributaria.service';
 import { OperacionIdempotenteService } from '../../../operacion-idempotente/operacion-idempotente.service';
 import type { JwtUser } from '../../../auth/types/jwt-user.type';
 import type { CreateCheckoutDto } from '../dto/create-checkout.dto';
@@ -133,8 +132,10 @@ export function crearEntorno(opciones: OpcionesEntorno = {}) {
     opciones.impuesto !== undefined
       ? [
           {
-            clave: CLAVE_CONFIG_VENTAS,
-            impuestoVentasPorciento: opciones.impuesto,
+            impuestoVentasPct: opciones.impuesto,
+            vigenteDesde: new Date(0),
+            activa: true,
+            bonificaciones: [],
           },
         ]
       : [],

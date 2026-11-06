@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
@@ -27,6 +31,24 @@ export class ConfiguracionTributariaService {
       .sort({ vigenteDesde: -1, createdAt: -1 })
       .lean()
       .exec() as unknown as ConfiguracionTributariaDocument | null;
+  }
+
+  /**
+   * Impuesto sobre ventas vigente, en %, para el cobro del punto de venta.
+   * Sin configuración es 0. Un valor inválido en la base de datos NO se
+   * corrige en silencio: vender con un impuesto equivocado es peor que
+   * detener la venta con un error claro.
+   */
+  async obtenerImpuestoVentas(): Promise<number> {
+    const activa = await this.obtenerActiva();
+    if (!activa) return 0;
+    const porciento = Number(activa.impuestoVentasPct);
+    if (!esPorcentajeValido(porciento)) {
+      throw new InternalServerErrorException(
+        'La configuración tributaria del impuesto sobre ventas no es válida (debe estar entre 0 y 100). Corríjala antes de vender.',
+      );
+    }
+    return porciento;
   }
 
   /** Todas las configuraciones (auditoría), la más reciente primero. */

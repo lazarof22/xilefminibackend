@@ -25,7 +25,7 @@ Idempotency-Key: <UUID>              (obligatoria; un UUID por OPERACIÓN, no po
 ```
 
 El cliente **no envía precios ni totales ni montos**. Cualquier propiedad que no esté en el contrato se rechaza (400).
-El precio sale del producto, el impuesto de `config_tributaria` y el efectivo recibido de sumar el desglose.
+El precio sale del producto, el impuesto de la configuración tributaria vigente y el efectivo recibido de sumar el desglose.
 
 Respuesta `201`:
 
@@ -92,9 +92,9 @@ muestra cualquier desfase), corrija a mano y no reenvíe esa clave: responde `40
 
 ## Configuración
 
-* **Impuesto sobre ventas (%)** — por defecto 0 (el punto de venta no cobraba impuesto):
-  `db.config_tributaria.updateOne({ clave: 'ventas' }, { $set: { impuestoVentasPorciento: 10 } }, { upsert: true })`
-  Un valor fuera de 0–100 detiene las ventas con un 500 claro, no se corrige en silencio.
+* **Impuesto sobre ventas (%)** — por defecto 0 (el punto de venta no cobraba impuesto). Se edita en la pantalla
+  Configuración → Configuración tributaria (`PUT /configuracion-tributaria`, colección `configuracion_tributaria`, con
+  historial); el cobro lee la configuración vigente. Un valor fuera de 0–100 detiene las ventas con un 500 claro, no se corrige en silencio.
 * **Descuento máximo por rol** — `checkout-politica.ts` (`DESCUENTO_MAXIMO_POR_ROL`). Hoy todos los roles llegan a 100 %
   (como antes); para limitar a un rol, baje su número (por ejemplo `[UsuarioRol.CAJERO]: 10`).
 

@@ -14,7 +14,7 @@ import {
   esClaveDuplicada,
   insertarIgnorandoDuplicados,
 } from '../../../../common/utils/insertar-idempotente';
-import { ConfiguracionTributariaService } from '../../../configuracion-tributaria/configuracion-tributaria.service';
+import { ConfiguracionTributariaService } from '../../../configuracion/configuracion-tributaria/configuracion-tributaria.service';
 import { Cliente } from '../../../clientes y provedores/cliente/schemas/cliente.schema';
 import { redondear } from '../../../factura/factura-totales';
 import type { JwtUser } from '../../../auth/types/jwt-user.type';
