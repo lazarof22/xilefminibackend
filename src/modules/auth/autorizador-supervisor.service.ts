@@ -93,10 +93,9 @@ export class AutorizadorSupervisorService {
     contraseña: string,
     actorUserId: string,
   ): Promise<AutorizacionEmitida> {
-    this.rechazarSiBloqueado(actorUserId);
+    this.reservarIntento(actorUserId);
     const supervisor = await this.authService.validateUser(nombre, contraseña);
     if (!supervisor || !esRolSupervisor(supervisor.rol)) {
-      this.registrarFallo(actorUserId);
       throw new ForbiddenException(MENSAJE_AUTORIZACION_RECHAZADA);
     }
     this.fallidos.delete(actorUserId);
@@ -116,25 +115,24 @@ export class AutorizadorSupervisorService {
     };
   }
 
-  private rechazarSiBloqueado(actorUserId: string): void {
-    const f = this.fallidos.get(actorUserId);
-    if (!f) return;
-    if (f.hasta <= Date.now()) {
-      this.fallidos.delete(actorUserId);
-      return;
+  /**
+   * Cuenta el intento ANTES de validar (síncrono, sin `await` de por medio):
+   * así peticiones en paralelo no pueden pasar todas el límite. Un acierto
+   * borra la cuenta. También descarta las ventanas ya vencidas para que el
+   * mapa no crezca sin límite.
+   */
+  private reservarIntento(actorUserId: string): void {
+    const ahora = Date.now();
+    for (const [usuario, f] of this.fallidos) {
+      if (f.hasta <= ahora) this.fallidos.delete(usuario);
     }
-    if (f.n >= MAX_INTENTOS_FALLIDOS) {
+    const vigente = this.fallidos.get(actorUserId);
+    if (vigente && vigente.n >= MAX_INTENTOS_FALLIDOS) {
       throw new HttpException(
         MENSAJE_DEMASIADOS_INTENTOS,
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-  }
-
-  private registrarFallo(actorUserId: string): void {
-    const ahora = Date.now();
-    const previo = this.fallidos.get(actorUserId);
-    const vigente = previo && previo.hasta > ahora ? previo : undefined;
     this.fallidos.set(actorUserId, {
       n: (vigente?.n ?? 0) + 1,
       hasta: vigente?.hasta ?? ahora + BLOQUEO_INTENTOS_MS,
