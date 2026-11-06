@@ -14,7 +14,7 @@ export enum EstadoTurnoCaja {
  */
 @Schema({ timestamps: true, collection: 'turnos_caja' })
 export class TurnoCaja {
-  @Prop({ type: Types.ObjectId, ref: 'Usuarios', required: true, index: true })
+  @Prop({ type: Types.ObjectId, ref: 'Usuarios', required: true })
   cajeroId!: Types.ObjectId;
 
   @Prop()
@@ -57,6 +57,9 @@ TurnoCajaSchema.index(
   {
     unique: true,
     partialFilterExpression: { estado: EstadoTurnoCaja.ABIERTO },
+    // Un nombre propio: en una base que ya tiene un `cajeroId_1` simple, el
+    // índice único no chocaría con él (mismo patrón, otras opciones).
+    name: 'cajeroId_turno_abierto_unico',
   },
 );
 
