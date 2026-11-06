@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PagoService } from './pago.service';
 import {
   CreatePagoCreditoDto,
@@ -8,6 +17,7 @@ import {
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Pago')
+@UseGuards(JwtAuthGuard)
 @Controller('pago')
 export class PagoController {
   constructor(private readonly pagoService: PagoService) {}

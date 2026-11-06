@@ -8,7 +8,9 @@ import {
   Param,
   Patch,
   Post,
+  UseGuards,
 } from "@nestjs/common";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import {
   ApiBody,
   ApiOperation,
@@ -22,6 +24,7 @@ import { CreateTasaDto } from "./dto/create-tasa.dto";
 import { UpdateTasaDto } from "./dto/update-tasa.dto";
 
 @ApiTags("Tasas")
+@UseGuards(JwtAuthGuard)
 @Controller("tasas")
 export class TasaController {
   constructor(

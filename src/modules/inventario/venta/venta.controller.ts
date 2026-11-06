@@ -6,7 +6,9 @@ import { ApiBearerAuth, ApiHeader, ApiOperation, ApiQuery, ApiResponse } from '@
 import { CheckoutService } from './checkout/checkout.service';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
-import { ModuloApp } from '../../auth/schemas/usuarios.schema';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { ModuloApp, UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import type { JwtUser, RequestWithUser } from '../../auth/types/jwt-user.type';
 
 /** Lo único que se usa de la respuesta de Express (así no se depende de sus tipos). */
@@ -21,6 +23,10 @@ function exigirPuntoDeVenta(usuario: JwtUser): void {
   }
 }
 
+/** Corregir o borrar una venta ya cobrada, o registrarla sin el checkout (flujo anterior): solo supervisión. */
+const ROLES_SUPERVISION_VENTA = [UsuarioRol.ADMIN, UsuarioRol.GERENTE];
+
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('venta')
 export class VentaController {
   constructor(
@@ -31,6 +37,7 @@ export class VentaController {
   @ApiOperation({ summary: 'Registrar una nueva venta' })
   @ApiResponse({ status: 201, description: 'Venta registrada con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
+  @Roles(...ROLES_SUPERVISION_VENTA)
   @Post()
   create(@Body() createVentaDto: CreateVentaDto) {
     return this.ventaService.create(createVentaDto);
@@ -102,6 +109,7 @@ export class VentaController {
   @ApiOperation({ summary: 'Modificar una venta' })
   @ApiResponse({ status: 201, description: 'VVenta modificada con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
+  @Roles(...ROLES_SUPERVISION_VENTA)
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateVentaDto: UpdateVentaDto) {
     return this.ventaService.update(id, updateVentaDto);
@@ -111,6 +119,7 @@ export class VentaController {
   @ApiOperation({ summary: 'Eliminar una venta' })
   @ApiResponse({ status: 201, description: 'Venta eliminada con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
+  @Roles(...ROLES_SUPERVISION_VENTA)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.ventaService.remove(id);
