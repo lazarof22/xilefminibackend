@@ -30,6 +30,7 @@ import { ExistenciaService } from '../../exitencia/existencia.service';
 import type { ResultadoMovimiento } from '../../exitencia/existencia.types';
 import { Kardex, KardexTipo } from '../../kardex/schema/kardex.schema';
 import { PagoService } from '../../pago/pago.service';
+import type { ClienteDelPago } from '../../pago/pago.service';
 import { Producto } from '../../producto/schemas/producto.schema';
 import {
   MetodoPagoReporte,
@@ -47,8 +48,10 @@ import { calcularVenta, EntradaLinea } from './checkout-totales';
 import {
   AMBITO_CHECKOUT,
   cuerpoError,
+  detalleDivisas,
   estadoDeStock,
   leerPlan,
+  ParametrosCheckout,
   PlanCheckout,
   RespuestaCheckout,
   ResultadoLinea,
@@ -148,14 +151,28 @@ export class CheckoutService {
     private readonly tributaria: ConfiguracionTributariaService,
   ) {}
 
-  /** Lo que la pantalla necesita saber del servidor para mostrar un estimado fiel. */
-  async parametros(
-    usuario: JwtUser,
-  ): Promise<{ impuestoPorciento: number; descuentoMaximoPct: number }> {
-    return {
+  /**
+   * Lo que la pantalla necesita saber del servidor para mostrar un estimado
+   * fiel: impuesto, descuento máximo y las monedas con las que se puede cobrar
+   * efectivo (con su tasa y sus billetes).
+   */
+  async parametros(usuario: JwtUser): Promise<ParametrosCheckout> {
+    const base = {
       impuestoPorciento: await this.tributaria.obtenerImpuestoVentas(),
       descuentoMaximoPct: descuentoMaximoPara(usuario.rol),
     };
+
+    // Una configuración de monedas rota NO debe impedir vender en CUP: la
+    // pantalla cae a los billetes de CUP de siempre y el cobro en otra moneda
+    // se rechaza con su propio mensaje.
+    try {
+      return { ...base, ...(await this.pagos.monedasDeCobro()) };
+    } catch (error) {
+      this.logger.error(
+        `No se pudieron cargar las monedas de cobro; el punto de venta cobrará solo en CUP: ${String(error)}`,
+      );
+      return { ...base, monedas: [] };
+    }
   }
 
   async ejecutar(
@@ -369,13 +386,13 @@ export class CheckoutService {
       );
     }
 
-    const pago = this.pagos.prepararPagoCheckout(
+    const pago = await this.pagos.prepararPagoCheckout(
       dto.pago,
       totales.total,
-      cliente?._id,
+      cliente,
     );
 
-    const advertencias: string[] = [];
+    const advertencias: string[] = [...(pago.advertencias ?? [])];
     const almacenId = dto.almacenId;
     const contenedorId = dto.ubicacionOrigen?.contenedorId;
 
@@ -412,7 +429,7 @@ export class CheckoutService {
 
   private async buscarCliente(
     clienteId: string,
-  ): Promise<{ _id: Types.ObjectId; nombre_cliente?: string }> {
+  ): Promise<ClienteDelPago & { nombre_cliente?: string }> {
     const cliente = await this.clienteModel
       .findById(new Types.ObjectId(clienteId))
       .lean()
@@ -422,9 +439,18 @@ export class CheckoutService {
       throw new NotFoundException('Cliente no encontrado');
     }
 
+    const datos = cliente as Partial<ClienteDelPago> & {
+      nombre_cliente?: string;
+    };
+
     return {
       _id: cliente._id,
-      nombre_cliente: (cliente as { nombre_cliente?: string }).nombre_cliente,
+      nombre_cliente: datos.nombre_cliente,
+      tipoIdentidad: datos.tipoIdentidad,
+      id_cliente: datos.id_cliente,
+      nit: datos.nit,
+      telefono_cliente: datos.telefono_cliente,
+      codigoPais: datos.codigoPais,
     };
   }
 
@@ -585,8 +611,13 @@ export class CheckoutService {
         montoRecibido: plan.pago.montoRecibido,
         cambio: plan.pago.cambio,
         esCuentaCasa: plan.pago.esCuentaCasa,
+        ...detalleDivisas(plan),
       },
       cambio: plan.pago.cambio,
+      ...(plan.pago.cambioConvertido !== undefined
+        ? { cambioConvertido: plan.pago.cambioConvertido }
+        : {}),
+      ...(plan.pago.tasaUsada ? { tasaUsada: plan.pago.tasaUsada } : {}),
       comprobante,
       advertencias: plan.advertencias,
       idempotencia: { clave, estado: 'completada', repetida: false },

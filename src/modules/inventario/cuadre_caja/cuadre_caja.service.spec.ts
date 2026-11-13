@@ -3,7 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { CuadreCajaService } from './cuadre_caja.service';
 import { CuadreCaja } from './schema/cuadre_caja.schema';
-import { Usuario } from '../../auth/schemas/empleado.schema';
+import { Usuarios } from '../../auth/schemas/usuarios.schema';
 import { Venta } from '../venta/schema/venta.schema';
 import { Pago } from '../pago/schema/pago.schema';
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
@@ -38,7 +38,7 @@ describe('CuadreCajaService', () => {
       providers: [
         CuadreCajaService,
         { provide: getModelToken(CuadreCaja.name), useValue: cuadreModel },
-        { provide: getModelToken(Usuario.name), useValue: usuarioModel },
+        { provide: getModelToken(Usuarios.name), useValue: usuarioModel },
         { provide: getModelToken(Venta.name), useValue: ventaModel },
         { provide: getModelToken(Pago.name), useValue: pagoModel },
         {
@@ -142,6 +142,11 @@ describe('CuadreCajaService', () => {
       total_creditos: 200,
       descuentos: 20,
       total_extracciones_dia: 50,
+      // Sin pagos en otra moneda (pagos de antes de la Fase 3): nada que corregir.
+      ajuste_divisas: 0,
+      efectivo_por_moneda: [
+        { moneda: 'CUP', recibido: 480, cambio_entregado: 0, neto: 480 },
+      ],
     });
   });
 });

@@ -13,6 +13,12 @@ import { Pago } from '../pago/schema/pago.schema';
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import { normalizarFecha, rangoDelDia } from '../../../common/utils/fecha.util';
 import { Model, Types, UpdateQuery } from 'mongoose';
+import { MONEDA_BASE } from '../pago/divisas';
+import {
+  ajusteDivisasCUP,
+  flujoDeEfectivo,
+  PagoEfectivoLeido,
+} from './cuadre-divisas';
 
 @Injectable()
 export class CuadreCajaService {
@@ -48,9 +54,11 @@ export class CuadreCajaService {
   }
 
   /**
-   * Efectivo esperado en caja:
+   * Efectivo esperado en caja (en CUP):
    * ventas netas (ya incluyen descuentos e impuestos) + recargos
-   * - extracciones - transferencias - créditos ± otros motivos.
+   * - extracciones - transferencias - créditos ± otros motivos
+   * + ajuste por divisas (las ventas cobradas o devueltas en otra moneda no
+   * movieron CUP por su total: ver `cuadre-divisas.ts`).
    * `descuentos` es informativo porque ya está restado en `total_ventas_dia`.
    */
   private calcular(datos: CalculoCuadre): {
@@ -73,6 +81,7 @@ export class CuadreCajaService {
         (datos.total_extracciones_dia || 0) -
         (datos.valor_transferencias || 0) -
         (datos.creditos || 0) +
+        (datos.ajuste_divisas || 0) +
         otros,
     );
     const diferencia = this.redondear(totalEfectivo - efectivoEsperado);
@@ -168,6 +177,8 @@ export class CuadreCajaService {
       valor_transferencias:
         updateCuadreCajaDto.valor_transferencias ?? actual.valor_transferencias,
       creditos: updateCuadreCajaDto.creditos ?? actual.creditos,
+      ajuste_divisas:
+        updateCuadreCajaDto.ajuste_divisas ?? actual.ajuste_divisas,
       otros_motivos: updateCuadreCajaDto.otros_motivos ?? actual.otros_motivos,
       desglose_billetes: desglose,
       total_efectivo: totalEfectivo,
@@ -241,6 +252,8 @@ export class CuadreCajaService {
     let totalTransferencias = 0;
     let totalCreditos = 0;
     let totalDescuentos = 0;
+    let ajusteDivisas = 0;
+    const porMoneda = new Map<string, { recibido: number; cambio: number }>();
 
     for (const venta of ventas) {
       const total = this.totalVenta(venta);
@@ -254,6 +267,24 @@ export class CuadreCajaService {
         totalCreditos += total;
       } else {
         totalEfectivo += total;
+
+        // Qué entró y salió de cada caja física (CUP, USD...) por esta venta.
+        const flujo = flujoDeEfectivo(pago, total);
+        ajusteDivisas += ajusteDivisasCUP(flujo, total);
+
+        const entrada = porMoneda.get(flujo.moneda) ?? {
+          recibido: 0,
+          cambio: 0,
+        };
+        entrada.recibido += flujo.recibido;
+        porMoneda.set(flujo.moneda, entrada);
+
+        const salida = porMoneda.get(flujo.monedaCambio) ?? {
+          recibido: 0,
+          cambio: 0,
+        };
+        salida.cambio += flujo.cambio;
+        porMoneda.set(flujo.monedaCambio, salida);
       }
     }
 
@@ -275,6 +306,17 @@ export class CuadreCajaService {
       total_creditos: this.redondear(totalCreditos),
       descuentos: this.redondear(totalDescuentos),
       total_extracciones_dia: this.redondear(totalExtracciones),
+      ajuste_divisas: this.redondear(ajusteDivisas),
+      efectivo_por_moneda: [...porMoneda.entries()]
+        .sort(([a], [b]) =>
+          a === MONEDA_BASE ? -1 : b === MONEDA_BASE ? 1 : a.localeCompare(b),
+        )
+        .map(([moneda, { recibido, cambio }]) => ({
+          moneda,
+          recibido: this.redondear(recibido),
+          cambio_entregado: this.redondear(cambio),
+          neto: this.redondear(recibido - cambio),
+        })),
     };
   }
 
@@ -291,6 +333,7 @@ type CalculoCuadre = Pick<
   CreateCuadreCajaDto,
   | 'total_ventas_dia'
   | 'recargos'
+  | 'ajuste_divisas'
   | 'total_extracciones_dia'
   | 'valor_transferencias'
   | 'creditos'
@@ -300,10 +343,21 @@ type CalculoCuadre = Pick<
   otros_motivos?: { monto: number; tipo: string }[];
 };
 
-interface PagoResumen {
+interface PagoResumen extends PagoEfectivoLeido {
   _id: Types.ObjectId;
   metodoPago?: string;
   esCuentaCasa?: boolean;
+}
+
+/** Lo que entró y salió de una caja física (una moneda) con las ventas en efectivo del día. */
+export interface EfectivoPorMoneda {
+  moneda: string;
+  /** Lo que entregaron los clientes en esa moneda. */
+  recibido: number;
+  /** El cambio que salió de la caja en esa moneda. */
+  cambio_entregado: number;
+  /** Lo que queda en esa caja por las ventas del día (recibido − cambio). */
+  neto: number;
 }
 
 export interface ResumenDiario {
@@ -315,4 +369,8 @@ export interface ResumenDiario {
   total_creditos: number;
   descuentos: number;
   total_extracciones_dia: number;
+  /** Corrección en CUP por las ventas en efectivo cobradas o devueltas en otra moneda (suele ser negativa). */
+  ajuste_divisas: number;
+  /** Efectivo por moneda física, para contar cada caja por separado. */
+  efectivo_por_moneda: EfectivoPorMoneda[];
 }

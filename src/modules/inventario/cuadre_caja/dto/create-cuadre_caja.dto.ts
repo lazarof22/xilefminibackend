@@ -154,6 +154,15 @@ export class CreateCuadreCajaDto {
   @Min(0, { message: 'Los recargos no pueden ser negativos' })
   recargos!: number;
 
+  @ApiPropertyOptional({
+    description:
+      'Ajuste en CUP por ventas en efectivo cobradas o devueltas en otra moneda (puede ser negativo). Lo calcula el resumen diario; sin enviarlo vale 0',
+    default: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'El ajuste por divisas debe ser un número' })
+  ajuste_divisas?: number;
+
   @ApiProperty({ description: 'Descuentos', minimum: 0 })
   @IsNotEmpty({ message: 'Los descuentos son obligatorios' })
   @IsNumber({}, { message: 'Los descuentos deben ser un número' })

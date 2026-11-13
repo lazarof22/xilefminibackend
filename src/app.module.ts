@@ -42,6 +42,10 @@ import { CiudadModule } from './modules/nomencladores/ciudad/ciudad.module';
 import { IpvModule } from './modules/inventario/ipv/ipv.module'
 import {ProveedorModule} from './modules/clientes y provedores/proveedor/proveedor.module'
 import { CausaDisminucionModule } from './modules/nomencladores/causa-disminucion/causa-disminucion.module';
+import { DenominacionMonedaModule } from './modules/nomencladores/denominacion-moneda/denominacion-moneda.module';
+import { BancoModule } from './modules/nomencladores/banco/banco.module';
+import { CanalPagoModule } from './modules/nomencladores/canal-pago/canal-pago.module';
+import { ConfiguracionPagosModule } from './modules/configuracion-pagos/configuracion-pagos.module';
 
 
 @Module({
@@ -97,7 +101,11 @@ import { CausaDisminucionModule } from './modules/nomencladores/causa-disminucio
     CiudadModule,
     IpvModule,
     ProveedorModule,
-    CausaDisminucionModule
+    CausaDisminucionModule,
+    DenominacionMonedaModule,
+    BancoModule,
+    CanalPagoModule,
+    ConfiguracionPagosModule,
   ],
   controllers: [AppController],
   providers: [AppService],
