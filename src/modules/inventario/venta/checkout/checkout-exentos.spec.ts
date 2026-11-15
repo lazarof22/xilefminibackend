@@ -183,7 +183,7 @@ describe('CheckoutService.ejecutar — producto exento', () => {
         { i: 1, cantidad: 3, descuentoPct: 20 },
       ]),
       claveNueva(),
-      e.usuario(),
+      e.usuario('gerente'),
     );
 
     // Arroz 200 → impuesto 20; Frijol 150 − 30 = 120 exento.

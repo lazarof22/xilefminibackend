@@ -52,6 +52,14 @@ export class Cliente {
     default: TipoCliente.ESTANDAR,
   })
   tipo_cliente!: TipoCliente;
+
+  /**
+   * Descuento fijo (1-100 %) de un cliente con descuento: el punto de venta lo
+   * aplica solo a cada línea. Solo existe cuando `tipo_cliente` es
+   * `cliente_descuento`; en otro tipo se borra.
+   */
+  @Prop({ type: Number, min: 0, max: 100 })
+  descuentoPct?: number;
 }
 
 export const ClienteSchema = SchemaFactory.createForClass(Cliente);

@@ -283,7 +283,8 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
           efectivo({ billete500: 1 }),
         ),
         claveNueva(),
-        e.usuario(),
+        // Manual discounts are for administrador/gerente only (§6.9).
+        e.usuario('gerente'),
       );
 
       expect(respuesta.venta).toMatchObject({
@@ -584,7 +585,7 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
         e.checkout.ejecutar(
           dtoCheckout(e, [{ i: 0, cantidad: 1, descuentoPct: 100 }]),
           claveNueva(),
-          e.usuario(),
+          e.usuario('gerente'),
         ),
       );
 
@@ -1169,20 +1170,25 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
 
   // ─────────────────────────── Descuento por rol ───────────────────────────
   describe('descuento por rol', () => {
-    it('hoy todos los roles pueden descontar (como antes), el servidor lo valida', async () => {
+    it('el gerente puede descontar a mano; el empleado no (§6.9), el servidor lo valida', async () => {
       const e = crearEntorno();
+      const items = [{ i: 0, cantidad: 1, descuentoPct: 50 }];
 
       const { respuesta } = await e.checkout.ejecutar(
-        dtoCheckout(
-          e,
-          [{ i: 0, cantidad: 1, descuentoPct: 50 }],
-          efectivo({ billete100: 1 }),
-        ),
+        dtoCheckout(e, items, efectivo({ billete100: 1 })),
         claveNueva(),
-        e.usuario('empleado'),
+        e.usuario('gerente'),
       );
-
       expect(respuesta.venta.total).toBe(50);
+
+      const fallo = await error(
+        e.checkout.ejecutar(
+          dtoCheckout(e, items, efectivo({ billete100: 1 })),
+          claveNueva(),
+          e.usuario('empleado'),
+        ),
+      );
+      expect(fallo.getStatus()).toBe(403);
     });
 
     it('con un tope por rol, un descuento mayor recibe 403 sin tocar nada; dentro del tope se vende', async () => {
@@ -1243,7 +1249,7 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
     it('parametros devuelve el impuesto vigente, el descuento máximo del rol y las monedas de cobro', async () => {
       const e = crearEntorno({ impuesto: 7.5 });
 
-      const parametros = await e.checkout.parametros(e.usuario('cajero'));
+      const parametros = await e.checkout.parametros(e.usuario('gerente'));
 
       expect(parametros).toMatchObject({
         impuestoPorciento: 7.5,
@@ -1269,7 +1275,7 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
         .spyOn(Logger.prototype, 'error')
         .mockImplementation(() => undefined);
 
-      expect(await e.checkout.parametros(e.usuario('cajero'))).toEqual({
+      expect(await e.checkout.parametros(e.usuario('gerente'))).toEqual({
         impuestoPorciento: 7.5,
         descuentoMaximoPct: 100,
         monedas: [],

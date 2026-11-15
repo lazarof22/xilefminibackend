@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Cliente } from './schemas/cliente.schema';
+import { Cliente, TipoCliente } from './schemas/cliente.schema';
 import { Model } from 'mongoose';
 import {
   PATRON_CI,
@@ -58,6 +58,22 @@ export class ClienteService {
     return { id_cliente: idCliente?.trim() || numero, nit: numero };
   }
 
+  /** El descuento de un cliente con descuento: un número mayor que 0 y hasta 100. */
+  private validarDescuento(descuentoPct: unknown): number {
+    if (
+      typeof descuentoPct !== 'number' ||
+      !Number.isFinite(descuentoPct) ||
+      descuentoPct <= 0 ||
+      descuentoPct > 100
+    ) {
+      throw new BadRequestException(
+        'Un cliente con descuento necesita un descuento mayor que 0 y hasta 100%',
+      );
+    }
+
+    return descuentoPct;
+  }
+
   //Crear un cliente
   async create(createClienteDto: CreateClienteDto): Promise<Cliente> {
     const tipoIdentidad = createClienteDto.tipoIdentidad ?? 'CI';
@@ -71,6 +87,13 @@ export class ClienteService {
         ...identidad,
         tipoIdentidad,
     };
+
+    // El descuento solo existe en un cliente con descuento.
+    if (createClienteDto.tipo_cliente === TipoCliente.DESCUENTO) {
+      datos.descuentoPct = this.validarDescuento(createClienteDto.descuentoPct);
+    } else {
+      delete datos.descuentoPct;
+    }
 
     // Validar id_cliente
     const existClienteById = await this.clienteModel.findOne({
@@ -161,7 +184,33 @@ export class ClienteService {
     }
   }
 
-  const updatecli = await this.clienteModel.findByIdAndUpdate(id, cambios, {new :true}).exec();
+  let actualizacion: Record<string, unknown> = cambios;
+
+  if (
+    UpdateClienteDto.tipo_cliente !== undefined ||
+    UpdateClienteDto.descuentoPct !== undefined
+  ) {
+    const actual = await this.clienteModel.findById(id).lean().exec();
+    if (!actual) {
+      throw new NotFoundException('No se encontró el cliente');
+    }
+
+    const tipo = UpdateClienteDto.tipo_cliente ?? actual.tipo_cliente;
+
+    if (tipo === TipoCliente.DESCUENTO) {
+      cambios.descuentoPct = this.validarDescuento(
+        UpdateClienteDto.descuentoPct ?? actual.descuentoPct,
+      );
+    } else {
+      // Sin ser cliente con descuento no hay porcentaje: se borra el que hubiera.
+      delete cambios.descuentoPct;
+      if (actual.descuentoPct !== undefined) {
+        actualizacion = { $set: cambios, $unset: { descuentoPct: '' } };
+      }
+    }
+  }
+
+  const updatecli = await this.clienteModel.findByIdAndUpdate(id, actualizacion, {new :true}).exec();
 
   if (!updatecli) {
     throw new NotFoundException('No se encontró el cliente');

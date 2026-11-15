@@ -4,9 +4,13 @@ import {
   IsIn,
   IsNotEmpty,
   IsOptional,
+  IsNumber,
+  IsPositive,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import {
   PATRON_CODIGO_PAIS,
@@ -75,4 +79,15 @@ export class CreateClienteDto {
         message: `tipo_cliente debe ser uno de: ${Object.values(TipoCliente).join(', ')}`,
     })
     tipo_cliente!: TipoCliente;
+
+    /**
+     * Descuento fijo (% sobre 0 y hasta 100) que el punto de venta aplica solo
+     * a este cliente. Obligatorio si es `cliente_descuento`; en otro tipo se
+     * ignora (el servicio lo descarta).
+     */
+    @ValidateIf((o: CreateClienteDto) => o.tipo_cliente === TipoCliente.DESCUENTO)
+    @IsNumber({}, { message: 'El descuento del cliente debe ser un número' })
+    @IsPositive({ message: 'El descuento del cliente debe ser mayor que 0' })
+    @Max(100, { message: 'El descuento del cliente no puede superar 100%' })
+    descuentoPct?: number;
 }

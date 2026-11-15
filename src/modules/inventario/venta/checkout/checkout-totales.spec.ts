@@ -177,10 +177,12 @@ describe('repartirCentimos', () => {
 });
 
 describe('política de descuento por rol', () => {
-  it('por defecto todos los roles pueden hasta el 100 % (como antes del checkout)', () => {
-    expect(descuentoMaximoPara('cajero')).toBe(100);
+  it('por defecto solo el administrador y el gerente descuentan a mano (§6.9)', () => {
+    expect(descuentoMaximoPara('cajero')).toBe(0);
     expect(descuentoMaximoPara('administrador')).toBe(100);
-    expect(() => validarDescuentos([0, 50, 100], 'cajero')).not.toThrow();
+    expect(() => validarDescuentos([0, 50, 100], 'gerente')).not.toThrow();
+    expect(() => validarDescuentos([0, 0], 'cajero')).not.toThrow();
+    expect(() => validarDescuentos([50], 'cajero')).toThrow(ForbiddenException);
   });
 
   it('con un tope por rol, rechaza (403) lo que lo supere y acepta lo que no', () => {

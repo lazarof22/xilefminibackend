@@ -5,6 +5,7 @@ import { validate } from 'class-validator';
 import { Doc, FakeModel } from '../../inventario/exitencia/fake-mongo-spec';
 import { ClienteService } from './cliente.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
+import { UpdateClienteDto } from './dto/update-cliente.dto';
 
 /**
  * Identidad del cliente (Fase 3): se identifica con CI (11 dígitos) o con NIT,
@@ -417,7 +418,10 @@ describe('CreateClienteDto', () => {
       'cliente_descuento',
       'cliente_cuenta_casa',
     ]) {
-      expect(await propiedadesConError({ tipo_cliente: tipo })).toEqual([]);
+      // The discount client also needs its discount (§6.8).
+      expect(
+        await propiedadesConError({ tipo_cliente: tipo, descuentoPct: 10 }),
+      ).toEqual([]);
     }
   });
 
@@ -455,5 +459,198 @@ describe('CreateClienteDto', () => {
     const errores = await propiedadesConError({ codigoPais: prefijo });
 
     expect(errores).toEqual(valido ? [] : ['codigoPais']);
+  });
+});
+
+/**
+ * Design document §6.8: a "cliente con descuento" carries a fixed discount (%)
+ * that the point of sale applies automatically. `descuentoPct` only exists for
+ * that client type.
+ */
+describe('descuentoPct del cliente con descuento', () => {
+  const valido = {
+    nombre_cliente: 'Juan Pérez',
+    telefono_cliente: '53456789',
+    email_cliente: 'juan@correo.cu',
+    direccion_cliente: 'Calle 1 #23',
+    tipo_cliente: 'cliente_descuento',
+  };
+
+  const errores = async (
+    clase: typeof CreateClienteDto | typeof UpdateClienteDto,
+    datos: Record<string, unknown>,
+  ) =>
+    (await validate(plainToInstance(clase, { ...valido, ...datos }))).map(
+      (e) => e.property,
+    );
+
+  describe('DTO', () => {
+    it('un cliente con descuento exige descuentoPct', async () => {
+      expect(await errores(CreateClienteDto, {})).toEqual(['descuentoPct']);
+    });
+
+    it.each([0, -5, 100.5, 101, 'abc', null])(
+      'rechaza descuentoPct %p en un cliente con descuento',
+      async (valor) => {
+        expect(await errores(CreateClienteDto, { descuentoPct: valor })).toEqual(
+          ['descuentoPct'],
+        );
+      },
+    );
+
+    it.each([1, 12.5, 100])('acepta descuentoPct %p', async (valor) => {
+      expect(await errores(CreateClienteDto, { descuentoPct: valor })).toEqual(
+        [],
+      );
+    });
+
+    it('en otros tipos de cliente no se exige ni se valida', async () => {
+      for (const tipo of ['cliente_estandar', 'cliente_cuenta_casa']) {
+        expect(
+          await errores(CreateClienteDto, { tipo_cliente: tipo }),
+        ).toEqual([]);
+        expect(
+          await errores(CreateClienteDto, {
+            tipo_cliente: tipo,
+            descuentoPct: 500,
+          }),
+        ).toEqual([]);
+      }
+    });
+
+    it('el DTO de actualización hereda la regla cuando trae el tipo', async () => {
+      expect(
+        await errores(UpdateClienteDto, { descuentoPct: 0 }),
+      ).toEqual(['descuentoPct']);
+      expect(
+        await errores(UpdateClienteDto, { descuentoPct: 10 }),
+      ).toEqual([]);
+      expect(await validate(plainToInstance(UpdateClienteDto, {}))).toEqual(
+        [],
+      );
+    });
+  });
+
+  describe('create', () => {
+    it('guarda el descuento de un cliente con descuento', async () => {
+      const { servicio, coleccion } = crearServicio();
+
+      await servicio.create(
+        datosBase({ tipo_cliente: 'cliente_descuento', descuentoPct: 15 } as never),
+      );
+
+      expect(coleccion.docs[0]).toMatchObject({ descuentoPct: 15 });
+    });
+
+    it('en otro tipo de cliente se ignora el descuento enviado', async () => {
+      const { servicio, coleccion } = crearServicio();
+
+      await servicio.create(datosBase({ descuentoPct: 15 } as never));
+
+      expect(coleccion.docs[0].descuentoPct).toBeUndefined();
+    });
+
+    it('un cliente con descuento sin descuentoPct válido se rechaza (400)', async () => {
+      const { servicio, coleccion } = crearServicio();
+
+      const error = await fallo(
+        servicio.create(
+          datosBase({ tipo_cliente: 'cliente_descuento' } as never),
+        ),
+      );
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.message).toMatch(/descuento/i);
+      expect(coleccion.docs).toHaveLength(0);
+    });
+  });
+
+  describe('update', () => {
+    const descuento: Doc = {
+      id_cliente: CI,
+      tipoIdentidad: 'CI',
+      tipo_cliente: 'cliente_descuento',
+      descuentoPct: 10,
+      nombre_cliente: 'Juan Pérez',
+      telefono_cliente: '53456789',
+    };
+    const estandar: Doc = {
+      ...descuento,
+      tipo_cliente: 'cliente_estandar',
+      descuentoPct: undefined,
+    };
+
+    it('cambia el porcentaje de un cliente con descuento', async () => {
+      const { servicio, coleccion } = crearServicio([descuento]);
+
+      await servicio.update(String(coleccion.docs[0]._id), {
+        descuentoPct: 25,
+      });
+
+      expect(coleccion.docs[0].descuentoPct).toBe(25);
+    });
+
+    it('un porcentaje inválido se rechaza y no cambia nada', async () => {
+      const { servicio, coleccion } = crearServicio([descuento]);
+
+      const error = await fallo(
+        servicio.update(String(coleccion.docs[0]._id), { descuentoPct: 0 }),
+      );
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(coleccion.docs[0].descuentoPct).toBe(10);
+    });
+
+    it('pasar a otro tipo de cliente borra el descuento', async () => {
+      const { servicio, coleccion } = crearServicio([descuento]);
+
+      await servicio.update(String(coleccion.docs[0]._id), {
+        tipo_cliente: 'cliente_estandar',
+      } as never);
+
+      expect(coleccion.docs[0].tipo_cliente).toBe('cliente_estandar');
+      expect(coleccion.docs[0].descuentoPct).toBeUndefined();
+    });
+
+    it('en un cliente que no es de descuento, el porcentaje enviado se ignora', async () => {
+      const { servicio, coleccion } = crearServicio([estandar]);
+
+      await servicio.update(String(coleccion.docs[0]._id), {
+        descuentoPct: 30,
+        nombre_cliente: 'Juan P.',
+      });
+
+      expect(coleccion.docs[0].nombre_cliente).toBe('Juan P.');
+      expect(coleccion.docs[0].descuentoPct).toBeUndefined();
+    });
+
+    it('pasar a cliente con descuento exige un porcentaje', async () => {
+      const { servicio, coleccion } = crearServicio([estandar]);
+      const id = String(coleccion.docs[0]._id);
+
+      const error = await fallo(
+        servicio.update(id, { tipo_cliente: 'cliente_descuento' } as never),
+      );
+      await servicio.update(id, {
+        tipo_cliente: 'cliente_descuento',
+        descuentoPct: 20,
+      } as never);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(coleccion.docs[0]).toMatchObject({
+        tipo_cliente: 'cliente_descuento',
+        descuentoPct: 20,
+      });
+    });
+
+    it('cambiar solo el nombre sigue sin leer el cliente', async () => {
+      const { servicio, coleccion, modelo } = crearServicio([descuento]);
+
+      await servicio.update(String(coleccion.docs[0]._id), {
+        nombre_cliente: 'Otro',
+      });
+
+      expect(modelo.findById).not.toHaveBeenCalled();
+    });
   });
 });

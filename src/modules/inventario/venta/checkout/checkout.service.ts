@@ -15,7 +15,10 @@ import {
   insertarIgnorandoDuplicados,
 } from '../../../../common/utils/insertar-idempotente';
 import { ConfiguracionTributariaService } from '../../../configuracion/configuracion-tributaria/configuracion-tributaria.service';
-import { Cliente } from '../../../clientes y provedores/cliente/schemas/cliente.schema';
+import {
+  Cliente,
+  TipoCliente,
+} from '../../../clientes y provedores/cliente/schemas/cliente.schema';
 import { redondear } from '../../../factura/factura-totales';
 import type { JwtUser } from '../../../auth/types/jwt-user.type';
 import { huellaDe } from '../../../operacion-idempotente/huella';
@@ -45,7 +48,11 @@ import {
   VentaContador,
 } from '../schema/venta-contador.schema';
 import { Venta } from '../schema/venta.schema';
-import { descuentoMaximoPara, validarDescuentos } from './checkout-politica';
+import {
+  descuentoEfectivoPct,
+  descuentoMaximoPara,
+  validarDescuentos,
+} from './checkout-politica';
 import { calcularVenta, EntradaLinea } from './checkout-totales';
 import {
   AMBITO_CHECKOUT,
@@ -341,6 +348,8 @@ export class CheckoutService {
       );
     }
 
+    // El tope del rol solo limita el descuento que el cajero escribe a mano:
+    // el del cliente con descuento es automático y se suma después.
     validarDescuentos(
       dto.items.map((i) => i.descuentoPct ?? 0),
       usuario.rol,
@@ -355,6 +364,9 @@ export class CheckoutService {
       .lean()
       .exec();
     const productoPorId = new Map(productos.map((p) => [String(p._id), p]));
+
+    // §6.8: el descuento del cliente con descuento se aplica solo a cada línea.
+    const descuentoCliente = cliente?.descuentoClientePct ?? 0;
 
     const entradas: EntradaLinea[] = dto.items.map((item, i) => {
       const producto = productoPorId.get(idsProducto[i]);
@@ -375,7 +387,10 @@ export class CheckoutService {
           gravado: producto.gravado,
         },
         cantidad: item.cantidad,
-        descuentoPct: item.descuentoPct ?? 0,
+        descuentoPct: descuentoEfectivoPct(
+          item.descuentoPct ?? 0,
+          descuentoCliente,
+        ),
       };
     });
 
@@ -402,6 +417,16 @@ export class CheckoutService {
     if (!unificado && (almacenId || contenedorId)) {
       advertencias.push(
         'Se ignoró la ubicación de origen: el inventario todavía no está unificado, el stock sale del total del producto',
+      );
+    }
+
+    // Se avisa solo si el descuento del cliente llegó a aplicarse en alguna línea.
+    if (
+      descuentoCliente > 0 &&
+      dto.items.some((i) => (i.descuentoPct ?? 0) <= descuentoCliente)
+    ) {
+      advertencias.push(
+        `Se aplicó el descuento del cliente (${descuentoCliente}%)`,
       );
     }
 
@@ -432,7 +457,9 @@ export class CheckoutService {
 
   private async buscarCliente(
     clienteId: string,
-  ): Promise<ClienteDelPago & { nombre_cliente?: string }> {
+  ): Promise<
+    ClienteDelPago & { nombre_cliente?: string; descuentoClientePct?: number }
+  > {
     const cliente = await this.clienteModel
       .findById(new Types.ObjectId(clienteId))
       .lean()
@@ -444,7 +471,17 @@ export class CheckoutService {
 
     const datos = cliente as Partial<ClienteDelPago> & {
       nombre_cliente?: string;
+      tipo_cliente?: string;
+      descuentoPct?: number;
     };
+    const pctCliente = Number(datos.descuentoPct);
+    // Solo un cliente con descuento y un porcentaje válido descuenta.
+    const descuentoClientePct =
+      datos.tipo_cliente === TipoCliente.DESCUENTO &&
+      Number.isFinite(pctCliente) &&
+      pctCliente > 0
+        ? Math.min(pctCliente, 100)
+        : undefined;
 
     return {
       _id: cliente._id,
@@ -454,6 +491,7 @@ export class CheckoutService {
       nit: datos.nit,
       telefono_cliente: datos.telefono_cliente,
       codigoPais: datos.codigoPais,
+      descuentoClientePct,
     };
   }
 

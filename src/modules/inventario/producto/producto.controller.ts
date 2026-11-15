@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req, ForbiddenException } from '@nestjs/common';
 import { ProductoService } from './producto.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
@@ -6,6 +6,11 @@ import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
+import type { RequestWithUser } from '../../auth/types/jwt-user.type';
+
+/** §6.9 "cambio de precio": solo el administrador y el gerente. */
+const ROLES_CAMBIO_DE_PRECIO: readonly string[] = [UsuarioRol.ADMIN, UsuarioRol.GERENTE];
 
 
 @ApiTags('Producto')
@@ -42,9 +47,38 @@ export class ProductoController {
   @ApiOperation({ summary: 'Modificar un producto' })
   @ApiResponse({ status: 201, description: 'Producto modificado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
+  @ApiResponse({ status: 403, description: 'Solo el administrador o el gerente pueden cambiar el precio de venta' })
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateProductoDto: UpdateProductoDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() updateProductoDto: UpdateProductoDto,
+    @Req() req: RequestWithUser,
+  ) {
+    await this.exigirPermisoDePrecio(id, updateProductoDto, req.user.rol);
     return this.productoService.update(id, updateProductoDto);
+  }
+
+  /**
+   * Cambiar el precio de venta es cosa del administrador y el gerente. Solo
+   * cuenta como cambio si el valor enviado difiere del guardado: reenviar el
+   * mismo precio (la pantalla suele mandar la ficha completa) no se bloquea.
+   */
+  private async exigirPermisoDePrecio(
+    id: string,
+    dto: UpdateProductoDto,
+    rol: string,
+  ): Promise<void> {
+    if (dto.precio_venta === undefined || ROLES_CAMBIO_DE_PRECIO.includes(rol)) {
+      return;
+    }
+
+    const actual = await this.productoService.findOne(id);
+
+    if (Math.abs(Number(actual.precio_venta) - Number(dto.precio_venta)) > 1e-9) {
+      throw new ForbiddenException(
+        'Solo el administrador o el gerente pueden cambiar el precio de venta',
+      );
+    }
   }
 
   @ApiOperation({ summary: 'Asignar un contenedor a un producto' })
