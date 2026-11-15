@@ -6,6 +6,7 @@ const PREFIJOS_REALES: Record<string, string> = {
   'SC-2-04': 'REC', // recepcion.service.ts: siguiente('recepcion', 'REC')
   'SC-2-08': 'DEV', // devolucion.service.ts: PREFIJO_CONSECUTIVO = 'DEV'
   'SC-2-16': 'AJU', // ajuste-inventario.service.ts: siguiente('ajuste', 'AJU')
+  'SC-2-09': 'TRF', // transferencia.service.ts: siguiente('transferencia', 'TRF')
 };
 
 describe('FichasNormativasService', () => {
@@ -15,6 +16,7 @@ describe('FichasNormativasService', () => {
     expect(service.listar().map((f) => f.codigo)).toEqual([
       'SC-2-04',
       'SC-2-08',
+      'SC-2-09',
       'SC-2-16',
       'SC-3-06',
       'SC-2-13',
@@ -75,6 +77,11 @@ describe('FichasNormativasService', () => {
       'recibidoPor',
       'firma',
     ]);
+    expect(service.obtener('SC-2-09').firmas).toEqual([
+      'autorizadoPor',
+      'entregadoPor',
+      'recibidoPor',
+    ]);
     expect(service.obtener('SC-2-16').firmas).toEqual([
       'autorizadoPor',
       'firmadoPor',
@@ -87,6 +94,25 @@ describe('FichasNormativasService', () => {
     expect(service.obtener('SC-3-06').norma).toBe('Resolución 12/2007');
   });
 
+  it('SC-2-09 describes the transfer form and its module', () => {
+    const ficha = service.obtener('SC-2-09');
+    expect(ficha.nombre).toBe('Transferencia entre almacenes');
+    expect(ficha.moduloApi).toBe('src/modules/inventario/transferencia');
+    expect(ficha.camposObligatorios).toEqual(
+      expect.arrayContaining([
+        'almacen_origen',
+        'almacen_destino',
+        'contenedor_origen',
+        'contenedor_destino',
+        'producto',
+        'cantidad',
+        'autorizadoPor',
+        'entregadoPor',
+        'recibidoPor',
+      ]),
+    );
+  });
+
   it('obtener is case-insensitive and ignores surrounding spaces', () => {
     expect(service.obtener(' sc-2-04 ').codigo).toBe('SC-2-04');
   });
@@ -97,6 +123,6 @@ describe('FichasNormativasService', () => {
 
   it('listar returns a copy: mutating it does not alter the catalog', () => {
     service.listar().pop();
-    expect(service.listar()).toHaveLength(5);
+    expect(service.listar()).toHaveLength(6);
   });
 });

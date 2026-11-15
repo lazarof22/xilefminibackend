@@ -59,8 +59,8 @@ describe('FichasNormativasController', () => {
     ).toEqual([UsuarioRol.ADMIN, UsuarioRol.GERENTE, UsuarioRol.ECONOMICO]);
   });
 
-  it('GET list returns the five sheets', () => {
-    expect(controller.listar()).toHaveLength(5);
+  it('GET list returns the six sheets', () => {
+    expect(controller.listar()).toHaveLength(6);
   });
 
   it('GET :codigo returns the sheet', () => {

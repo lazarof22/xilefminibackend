@@ -16,6 +16,7 @@ formato, ejemplo }, firmas, moduloApi }`. The code lookup is case-insensitive.
 | ------- | ----------------------------- | ------ | --------------------------------------- |
 | SC-2-04 | Informe de Recepción          | `REC`  | `src/modules/inventario/recepcion`      |
 | SC-2-08 | Vale de Entrega o Devolución  | `DEV`  | `src/modules/inventario/devolucion`     |
+| SC-2-09 | Transferencia entre almacenes | `TRF`  | `src/modules/inventario/transferencia`  |
 | SC-2-16 | Ajuste de Inventario          | `AJU`  | `src/modules/inventario/ajuste-inventario` |
 | SC-3-06 | Arqueo de Caja (Res. 12/2007) | none   | `src/modules/inventario/arqueo-caja`    |
 | SC-2-13 | Submayor / Kardex             | none   | `src/modules/inventario/kardex`         |

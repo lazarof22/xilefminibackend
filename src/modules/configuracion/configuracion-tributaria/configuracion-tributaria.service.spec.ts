@@ -21,6 +21,23 @@ interface Doc {
   }[];
 }
 
+type Filtro = {
+  activa?: boolean;
+  _id?: { $ne: Types.ObjectId };
+  vigenteDesde?: { $gte?: Date; $lte?: Date };
+};
+
+/** Evaluates the subset of Mongo filters the service uses. */
+function coincide(d: Doc, f: Filtro): boolean {
+  if (f.activa !== undefined && d.activa !== f.activa) return false;
+  if (f._id && d._id.equals(f._id.$ne)) return false;
+  if (f.vigenteDesde?.$gte && !(d.vigenteDesde >= f.vigenteDesde.$gte))
+    return false;
+  if (f.vigenteDesde?.$lte && !(d.vigenteDesde <= f.vigenteDesde.$lte))
+    return false;
+  return true;
+}
+
 /** Modelo en memoria con la superficie de Mongoose que usa el servicio. */
 function modeloEnMemoria(inicial: Doc[] = []) {
   const docs: Doc[] = [...inicial];
@@ -42,33 +59,49 @@ function modeloEnMemoria(inicial: Doc[] = []) {
       docs.push(doc);
       return Promise.resolve(doc);
     }),
-    updateMany: jest.fn(
-      (filtro: { activa: boolean; _id?: { $ne: Types.ObjectId } }) => {
-        for (const d of docs) {
-          const excluido = filtro._id && d._id.equals(filtro._id.$ne);
-          if (d.activa === filtro.activa && !excluido) d.activa = false;
-        }
-        return { exec: () => Promise.resolve({}) };
-      },
-    ),
+    updateMany: jest.fn((filtro: Filtro) => {
+      for (const d of docs) if (coincide(d, filtro)) d.activa = false;
+      return { exec: () => Promise.resolve({}) };
+    }),
     findOne: jest.fn(),
     find: jest.fn(() => consulta(() => ordenar(docs))),
   };
-  modelo.findOne.mockImplementation((filtro: { activa: boolean }) => {
+  modelo.findOne.mockImplementation((filtro: Filtro) => {
     const q = {
       sort: () => q,
       lean: () => q,
       exec: () =>
-        Promise.resolve(
-          ordenar(docs.filter((d) => d.activa === filtro.activa))[0] ?? null,
-        ),
+        Promise.resolve(ordenar(docs.filter((d) => coincide(d, filtro)))[0] ?? null),
     };
     return q;
   });
   return { modelo, docs };
 }
 
+/** Fixed "now" for every test; only `Date` is faked. */
+const AHORA = new Date('2026-11-15T12:00:00.000Z');
+
 describe('ConfiguracionTributariaService', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: AHORA,
+      doNotFake: [
+        'nextTick',
+        'setImmediate',
+        'clearImmediate',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'queueMicrotask',
+        'performance',
+        'hrtime',
+      ],
+    });
+  });
+
+  afterEach(() => jest.useRealTimers());
+
   async function crear(inicial: Doc[] = []) {
     const { modelo, docs } = modeloEnMemoria(inicial);
     const mod = await Test.createTestingModule({
@@ -213,6 +246,118 @@ describe('ConfiguracionTributariaService', () => {
       const antes = Date.now();
       const r = await service.guardar({ impuestoVentasPct: 10 });
       expect(r.vigenteDesde.getTime()).toBeGreaterThanOrEqual(antes);
+    });
+  });
+
+  describe('vigenteDesde (§6.7): una configuración futura no se aplica antes de su fecha', () => {
+    const doc = (
+      pct: number,
+      vigenteDesde: string,
+      activa = true,
+    ): Doc => ({
+      _id: new Types.ObjectId(),
+      impuestoVentasPct: pct,
+      vigenteDesde: new Date(vigenteDesde),
+      activa,
+      bonificaciones: [],
+    });
+
+    it('obtenerActiva ignora una configuración con vigenteDesde futura', async () => {
+      const { service } = await crear([doc(10, '2026-12-01')]);
+      await expect(service.obtenerActiva()).resolves.toBeNull();
+      await expect(service.obtenerImpuestoVentas()).resolves.toBe(0);
+    });
+
+    it('con una vigente y otra futura aplica la vigente', async () => {
+      const { service } = await crear([
+        doc(10, '2026-01-01'),
+        doc(12, '2026-12-01'),
+      ]);
+      const activa = await service.obtenerActiva();
+      expect(activa?.impuestoVentasPct).toBe(10);
+      await expect(service.obtenerImpuestoVentas()).resolves.toBe(10);
+    });
+
+    it('la futura pasa a aplicarse cuando llega su fecha', async () => {
+      const { service } = await crear([
+        doc(10, '2026-01-01'),
+        doc(12, '2026-12-01'),
+      ]);
+      expect((await service.obtenerActiva())?.impuestoVentasPct).toBe(10);
+
+      jest.setSystemTime(new Date('2026-11-30T23:59:59.999Z'));
+      expect((await service.obtenerActiva())?.impuestoVentasPct).toBe(10);
+
+      jest.setSystemTime(new Date('2026-12-01T00:00:00.000Z'));
+      expect((await service.obtenerActiva())?.impuestoVentasPct).toBe(12);
+      await expect(service.obtenerImpuestoVentas()).resolves.toBe(12);
+    });
+
+    it('guardar con fecha futura NO desactiva la vigente y ambas quedan seleccionables por fecha', async () => {
+      const vigente = doc(10, '2026-01-01');
+      const { service, docs } = await crear([vigente]);
+
+      const futura = await service.guardar({
+        impuestoVentasPct: 12,
+        vigenteDesde: '2026-12-01',
+      });
+
+      expect(docs.find((d) => d._id.equals(vigente._id))?.activa).toBe(true);
+      expect(docs.find((d) => d._id.equals(futura._id))?.activa).toBe(true);
+      expect((await service.obtenerActiva())?.impuestoVentasPct).toBe(10);
+
+      jest.setSystemTime(new Date('2026-12-01T00:00:00.000Z'));
+      expect((await service.obtenerActiva())?.impuestoVentasPct).toBe(12);
+    });
+
+    it('guardar con fecha futura reemplaza otra pendiente de la misma fecha o posterior, pero no una pendiente anterior', async () => {
+      const pendienteAnterior = doc(11, '2026-11-20');
+      const pendienteIgual = doc(12, '2026-12-01');
+      const pendientePosterior = doc(13, '2027-01-01');
+      const { service, docs } = await crear([
+        doc(10, '2026-01-01'),
+        pendienteAnterior,
+        pendienteIgual,
+        pendientePosterior,
+      ]);
+
+      const nueva = await service.guardar({
+        impuestoVentasPct: 14,
+        vigenteDesde: '2026-12-01',
+      });
+
+      const activa = (d: Doc) => docs.find((x) => x._id.equals(d._id))?.activa;
+      expect(activa(pendienteAnterior)).toBe(true);
+      expect(activa(pendienteIgual)).toBe(false);
+      expect(activa(pendientePosterior)).toBe(false);
+      expect(activa(nueva as unknown as Doc)).toBe(true);
+    });
+
+    it('guardar con fecha vigente desactiva las ya vigentes pero conserva las pendientes', async () => {
+      const previa = doc(10, '2026-01-01');
+      const pendiente = doc(13, '2027-01-01');
+      const { service, docs } = await crear([previa, pendiente]);
+
+      const nueva = await service.guardar({
+        impuestoVentasPct: 11,
+        vigenteDesde: '2026-11-01',
+      });
+
+      const activa = (d: Doc) => docs.find((x) => x._id.equals(d._id))?.activa;
+      expect(activa(previa)).toBe(false);
+      expect(activa(pendiente)).toBe(true);
+      expect(activa(nueva as unknown as Doc)).toBe(true);
+      expect((await service.obtenerActiva())?.impuestoVentasPct).toBe(11);
+    });
+
+    it('historial sigue listando todas, también las futuras y las desactivadas', async () => {
+      const { service } = await crear([
+        doc(10, '2026-01-01', false),
+        doc(12, '2026-12-01'),
+        doc(11, '2026-06-01'),
+      ]);
+      const h = await service.historial();
+      expect(h.map((d) => d.impuestoVentasPct)).toEqual([12, 11, 10]);
     });
   });
 

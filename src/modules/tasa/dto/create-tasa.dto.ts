@@ -23,12 +23,6 @@ export class CreateTasaDto {
     @Min(0)
     tasaMercadoInformal!: number;
 
-    @ApiProperty({ required: false, default: 0 })
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    iva?: number;
-
     @ApiProperty({
         required: false,
         default: 0,

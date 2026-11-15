@@ -1,6 +1,11 @@
-import { IsNotEmpty, IsNumber, IsMongoId, Min, IsOptional, IsDateString, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsMongoId, Min, IsOptional, IsDateString, IsEnum, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TipoTransferencia } from '../schema/transferencia.schema';
+
+/** Trims strings before validation so a blank signature counts as empty. */
+const recortar = ({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value;
 
 export class CreateTransferenciaDto {
     @ApiProperty({ description: 'ID del almacén de origen' })
@@ -47,4 +52,22 @@ export class CreateTransferenciaDto {
     @IsOptional()
     @IsEnum(TipoTransferencia)
     tipo?: TipoTransferencia;
+
+    @ApiProperty({ description: 'Quien autoriza la transferencia (SC-2-09)' })
+    @Transform(recortar)
+    @IsString({ message: 'Quien autoriza debe ser un texto' })
+    @IsNotEmpty({ message: 'Quien autoriza la transferencia es obligatorio' })
+    autorizadoPor!: string;
+
+    @ApiProperty({ description: 'Quien entrega la mercancía (SC-2-09)' })
+    @Transform(recortar)
+    @IsString({ message: 'Quien entrega debe ser un texto' })
+    @IsNotEmpty({ message: 'Quien entrega la mercancía es obligatorio' })
+    entregadoPor!: string;
+
+    @ApiProperty({ description: 'Quien recibe la mercancía (SC-2-09)' })
+    @Transform(recortar)
+    @IsString({ message: 'Quien recibe debe ser un texto' })
+    @IsNotEmpty({ message: 'Quien recibe la mercancía es obligatorio' })
+    recibidoPor!: string;
 }

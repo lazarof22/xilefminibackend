@@ -22,12 +22,15 @@ export class ConfiguracionTributariaService {
   ) {}
 
   /**
-   * Configuración vigente, o `null` si nunca se configuró. No se inventa un
-   * impuesto por defecto: la UI muestra "sin configurar".
+   * Configuración vigente ahora: la más reciente con `activa: true` Y
+   * `vigenteDesde <= ahora`. Una configuración con fecha futura nunca se
+   * devuelve antes de su fecha. Devuelve `null` si nunca se configuró o si
+   * aún no entró en vigor ninguna. No se inventa un impuesto por defecto: la
+   * UI muestra "sin configurar".
    */
   async obtenerActiva(): Promise<ConfiguracionTributariaDocument | null> {
     return this.model
-      .findOne({ activa: true })
+      .findOne({ activa: true, vigenteDesde: { $lte: new Date() } })
       .sort({ vigenteDesde: -1, createdAt: -1 })
       .lean()
       .exec() as unknown as ConfiguracionTributariaDocument | null;
@@ -61,8 +64,19 @@ export class ConfiguracionTributariaService {
   }
 
   /**
-   * Crea una configuración nueva y desactiva las anteriores. Se crea primero
-   * para no dejar el sistema sin configuración activa si la creación falla.
+   * Crea una configuración nueva. Se crea primero para no dejar el sistema
+   * sin configuración activa si la creación falla.
+   *
+   * Qué desactiva (`activa: false`), según su `vigenteDesde` (V) y el ahora:
+   * - V ya en vigor (V <= ahora): las otras que también están en vigor
+   *   (`vigenteDesde <= ahora`), que quedan superadas. Las pendientes
+   *   (futuras) se conservan: corregir el impuesto actual no cancela un
+   *   cambio ya programado.
+   * - V futura: solo las otras pendientes con `vigenteDesde >= V`, que la
+   *   nueva reemplaza. La configuración en vigor NO se desactiva: sigue
+   *   aplicándose hasta que llegue V (ver `obtenerActiva`); las pendientes
+   *   anteriores a V tampoco se tocan.
+   * Las desactivadas se conservan para auditoría (`historial`).
    */
   async guardar(
     dto: GuardarConfiguracionTributariaDto,
@@ -98,8 +112,20 @@ export class ConfiguracionTributariaService {
       activa: true,
       bonificaciones,
     });
+    const ahora = new Date();
+    const reemplazadas =
+      vigenteDesde <= ahora
+        ? { $lte: ahora }
+        : { $gte: vigenteDesde };
     await this.model
-      .updateMany({ activa: true, _id: { $ne: creada._id } }, { $set: { activa: false } })
+      .updateMany(
+        {
+          activa: true,
+          _id: { $ne: creada._id },
+          vigenteDesde: reemplazadas,
+        },
+        { $set: { activa: false } },
+      )
       .exec();
     return creada;
   }

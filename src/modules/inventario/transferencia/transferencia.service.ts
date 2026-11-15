@@ -51,6 +51,12 @@ import {
 
 import { ExistenciaService } from '../exitencia/existencia.service';
 
+import { ConsecutivoService } from '../consecutivo/consecutivo.service';
+
+/** Key and prefix of the shared correlative sequence (`TRF-000001`). */
+const CLAVE_CONSECUTIVO = 'transferencia';
+const PREFIJO_CONSECUTIVO = 'TRF';
+
 @Injectable()
 export class TransferenciaService {
     private readonly logger = new Logger(TransferenciaService.name);
@@ -81,6 +87,8 @@ export class TransferenciaService {
         private readonly connection: Connection,
 
         private readonly existenciaService: ExistenciaService,
+
+        private readonly consecutivo: ConsecutivoService,
     ) { }
 
     async create(
@@ -145,18 +153,33 @@ export class TransferenciaService {
          *   cada una atómica por documento, y si algo falla a mitad se
          *   deshace lo ya hecho (ver ejecutarTransferencia).
          */
+        /**
+         * The number is requested lazily, once per request: a transaction
+         * callback that MongoDB retries must not burn one number per retry.
+         */
+        let numeroConsecutivo: Promise<string> | undefined;
+        const obtenerNumero = () =>
+            (numeroConsecutivo ??= this.consecutivo.siguiente(
+                CLAVE_CONSECUTIVO,
+                PREFIJO_CONSECUTIVO,
+            ));
+
         if (await this.soportaTransacciones()) {
             return this.connection.transaction(
                 (session) =>
                     this.ejecutarTransferencia(
                         createTransferenciaDto,
+                        obtenerNumero,
                         session,
                     ),
                 { readPreference: 'primary' },
             );
         }
 
-        return this.ejecutarTransferencia(createTransferenciaDto);
+        return this.ejecutarTransferencia(
+            createTransferenciaDto,
+            obtenerNumero,
+        );
     }
 
     /**
@@ -214,9 +237,15 @@ export class TransferenciaService {
      * El descuento del origen usa una condición atómica
      * (`cantidad >= N`), por lo que dos transferencias simultáneas nunca
      * pueden dejar el stock en negativo.
+     *
+     * El consecutivo (SC-2-09) se asigna ANTES de mover el stock, una vez
+     * validados almacenes, contenedores y producto. El contador no forma
+     * parte de la transacción: si el movimiento falla después, el número
+     * queda quemado (hueco en la secuencia) y nunca se reutiliza.
      */
     private async ejecutarTransferencia(
         dto: CreateTransferenciaDto,
+        obtenerNumero: () => Promise<string>,
         session?: ClientSession,
     ): Promise<Transferencia> {
         const deshacer: Array<() => Promise<unknown>> = [];
@@ -309,6 +338,8 @@ export class TransferenciaService {
                 throw new NotFoundException('El producto no existe');
             }
 
+            const numeroConsecutivo = await obtenerNumero();
+
             /**
              * REBAJAR DEL ORIGEN (almacén + contenedor exactos).
              * Falla sin tocar nada si no hay stock suficiente.
@@ -373,6 +404,7 @@ export class TransferenciaService {
                     [
                         {
                             ...dto,
+                            numeroConsecutivo,
                             tipo: dto.tipo ?? TipoTransferencia.ENVIADA,
                         },
                     ],
@@ -388,7 +420,7 @@ export class TransferenciaService {
             /**
              * Kardex: salida del origen y entrada al destino.
              */
-            const referencia = transferenciaGuardada._id.toString();
+            const referencia = numeroConsecutivo;
 
             /**
              * SC-2-13: ambos movimientos se valúan al costo promedio vigente

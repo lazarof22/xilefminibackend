@@ -34,6 +34,23 @@ export class Transferencia {
 
     @Prop({ required: true, enum: TipoTransferencia, default: TipoTransferencia.ENVIADA })
     tipo!: TipoTransferencia;
+
+    /**
+     * SC-2-09. Correlative number (`TRF-000001`). Sparse unique: transfers
+     * stored before this field existed have none.
+     */
+    @Prop({ trim: true, index: { unique: true, sparse: true } })
+    numeroConsecutivo!: string;
+
+    /** SC-2-09 signatures. Not required at schema level so older documents stay valid. */
+    @Prop({ trim: true })
+    autorizadoPor!: string;
+
+    @Prop({ trim: true })
+    entregadoPor!: string;
+
+    @Prop({ trim: true })
+    recibidoPor!: string;
 }
 
 export const TransferenciaSchema = SchemaFactory.createForClass(Transferencia);

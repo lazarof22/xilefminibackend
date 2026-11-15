@@ -40,6 +40,7 @@ import {
 } from '../exitencia/schema/existencia.schema';
 
 import { ExistenciaModule } from '../exitencia/existencia.module';
+import { ConsecutivoModule } from '../consecutivo/consecutivo.module';
 
 @Module({
     controllers: [
@@ -52,6 +53,7 @@ import { ExistenciaModule } from '../exitencia/existencia.module';
 
     imports: [
         ExistenciaModule,
+        ConsecutivoModule,
         MongooseModule.forFeature([
             {
                 name: Transferencia.name,

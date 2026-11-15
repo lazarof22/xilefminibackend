@@ -14,9 +14,6 @@ export class Tasa {
     @Prop({ required: true, min: 0 })
     tasaMercadoInformal!: number;
 
-    @Prop({ min: 0, default: 0 })
-    iva?: number;
-
     /** Variación respecto a la tasa anterior de la misma moneda. */
     @Prop({ type: Number, default: 0 })
     fluctuacion!: number;

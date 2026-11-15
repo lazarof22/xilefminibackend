@@ -119,7 +119,6 @@ export class TasaService {
         return this.tasaModel.create({
             tasaBancoCentral: dto.tasaBancoCentral,
             tasaMercadoInformal: dto.tasaMercadoInformal,
-            iva: dto.iva ?? 0,
             fluctuacion: dto.fluctuacion ?? 0,
             activa: dto.activa ?? true,
             moneda: codigo,
