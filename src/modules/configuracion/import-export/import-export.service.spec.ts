@@ -105,17 +105,18 @@ describe('ImportExportService.importFromJson', () => {
     'operaciones_idempotentes',
     'system.users',
   ])(
-    'rejects with 400 a request targeting %s and inserts nothing',
+    'skips %s, reports it in errors and still imports the other collections',
     async (nombre) => {
       const { servicio, insertOne } = crearServicio({});
 
-      const promesa = servicio.importFromJson({
+      const res = await servicio.importFromJson({
         productos: [{ nombre: 'Arroz' }],
         [nombre]: [{ usuario: 'intruso' }],
       });
 
-      await expect(promesa).rejects.toBeInstanceOf(BadRequestException);
-      expect(insertOne).not.toHaveBeenCalled();
+      expect(res.imported).toBe(1);
+      expect(insertOne).toHaveBeenCalledTimes(1);
+      expect(res.errors).toEqual([expect.stringContaining(nombre)]);
     },
   );
 

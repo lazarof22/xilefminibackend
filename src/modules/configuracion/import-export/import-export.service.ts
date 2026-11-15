@@ -161,12 +161,16 @@ export class ImportExportService {
 
         let categoriaId;
         if (row.categoria) {
-          categoriaId = await this.nomencladorHelper.findOrCreateCategoria(row.categoria);
+          categoriaId = await this.nomencladorHelper.findOrCreateCategoria(
+            row.categoria,
+          );
         }
 
         let estadoId;
         if (row.estado) {
-          estadoId = await this.nomencladorHelper.findOrCreateEstado(row.estado);
+          estadoId = await this.nomencladorHelper.findOrCreateEstado(
+            row.estado,
+          );
         }
 
         const existing = await this.productoModel.findOne({
@@ -227,9 +231,7 @@ export class ImportExportService {
    *   en NomencladorHelper; se valida formato pero no se auto-crea).
    * - Si el código ya existe, la fila se rechaza (no se hace upsert).
    */
-  async importCuentasFromCsv(
-    csv: string,
-  ): Promise<ImportResult> {
+  async importCuentasFromCsv(csv: string): Promise<ImportResult> {
     const lines = csv
       .split('\n')
       .map((l) => l.trim())
@@ -273,9 +275,7 @@ export class ImportExportService {
           continue;
         }
 
-        if (
-          await this.cuentaModel.findOne({ codigo: row.codigo }).exec()
-        ) {
+        if (await this.cuentaModel.findOne({ codigo: row.codigo }).exec()) {
           errors.push(`Código duplicado: ${row.codigo}`);
           continue;
         }
@@ -314,17 +314,17 @@ export class ImportExportService {
           padreId = new Types.ObjectId(row.padre);
         }
 
-        const naturalezaId = await this.nomencladorHelper.findOrCreateNaturalezaCuenta(
-          row.naturaleza,
-        );
+        const naturalezaId =
+          await this.nomencladorHelper.findOrCreateNaturalezaCuenta(
+            row.naturaleza,
+          );
 
         const nivelPadre = padreId
           ? ((await this.cuentaModel.findById(padreId).exec())?.nivel ?? 0)
           : 0;
-        const nivel =
-          padreId
-            ? nivelPadre + 1
-            : row.codigo.split('.').filter(Boolean).length || 1;
+        const nivel = padreId
+          ? nivelPadre + 1
+          : row.codigo.split('.').filter(Boolean).length || 1;
 
         await this.cuentaModel.create({
           codigo: row.codigo,
@@ -374,21 +374,20 @@ export class ImportExportService {
     return result;
   }
 
-  async importFromJson(
-    data: Record<string, unknown[]>,
-  ): Promise<ImportResult> {
+  async importFromJson(data: Record<string, unknown[]>): Promise<ImportResult> {
     const errors: string[] = [];
     let imported = 0;
 
-    const prohibidas = Object.keys(data).filter(esColeccionProtegida);
-    if (prohibidas.length > 0) {
-      throw new BadRequestException(
-        `No se pueden importar estas colecciones: ${prohibidas.join(', ')}`,
-      );
-    }
-
     for (const [collectionName, docs] of Object.entries(data)) {
       if (collectionName === CLAVE_OMITIDAS || !Array.isArray(docs)) continue;
+      // Older backups carry users and licenses: they are never restored from
+      // a file, but the rest of the backup still imports.
+      if (esColeccionProtegida(collectionName)) {
+        errors.push(
+          `${collectionName}: colección protegida, no se importa desde un respaldo`,
+        );
+        continue;
+      }
       try {
         const collection = this.connection.db!.collection(collectionName);
         for (const doc of docs) {

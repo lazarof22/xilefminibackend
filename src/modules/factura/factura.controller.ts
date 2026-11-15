@@ -41,8 +41,8 @@ const ROLES_ESCRITURA = [
 
 /**
  * Cancelling/voiding an invoice is restricted to administrador and gerente
- * (doc 6.9, "Anular factura / venta"). `DELETE :id` (soft delete) keeps
- * `ROLES_ESCRITURA` as before.
+ * (doc 6.9, "Anular factura / venta"). `DELETE :id` is also a soft void of
+ * the invoice, so it uses the same list.
  */
 const ROLES_ANULACION = [UsuarioRol.ADMIN, UsuarioRol.GERENTE];
 
