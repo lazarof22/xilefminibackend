@@ -34,6 +34,12 @@ export interface ProductoOrigen {
   precioUnitario: number;
   /** Ubicaciones de las que salió (venta/factura) o en las que quedó (compra). */
   ubicaciones: UbicacionCantidad[];
+  /**
+   * Multiplicador del impuesto propio de este producto (total con impuesto /
+   * neto de sus líneas). Solo existe cuando TODAS sus líneas guardan su
+   * impuesto; si falta, se usa el `factorImpuesto` medio del documento.
+   */
+  factorImpuesto?: number;
 }
 
 /** Documento de origen ya validado, con todo lo que el servidor deduce de él. */
@@ -77,6 +83,8 @@ interface LineaCruda {
   productoId: unknown;
   cantidad: number;
   neto: number;
+  /** Neto + impuesto de la línea, cuando el documento lo guarda por línea. */
+  conImpuesto?: number;
   ubicaciones?: { almacen: unknown; contenedor: unknown; cantidad: number }[];
 }
 
@@ -160,18 +168,29 @@ export class DevolucionOrigenService {
     const precios = await this.preciosDe(
       venta.productos.map((p) => String(p.productoId)),
     );
-    const lineas: LineaCruda[] = venta.productos.map((p) => ({
-      productoId: p.productoId,
-      cantidad: p.cantidad,
-      neto: Math.max(
+    const lineas: LineaCruda[] = venta.productos.map((p) => {
+      const neto = Math.max(
         0,
         (typeof p.subtotal === 'number'
           ? p.subtotal
           : (precios.get(this.hex(p.productoId)) ?? 0) * p.cantidad) -
           (p.descuentoMonto ?? 0),
-      ),
-      ubicaciones: p.ubicaciones,
-    }));
+      );
+      return {
+        productoId: p.productoId,
+        cantidad: p.cantidad,
+        neto,
+        // A checkout line stores its own tax: the refund follows that line,
+        // not the sale-wide average (exempt and taxed items differ).
+        conImpuesto:
+          typeof p.impuesto === 'number'
+            ? typeof p.total === 'number'
+              ? Math.max(0, p.total)
+              : neto + p.impuesto
+            : undefined,
+        ubicaciones: p.ubicaciones,
+      };
+    });
     const productos = this.agrupar(lineas);
     const netoTotal = [...lineas].reduce((s, l) => s + l.neto, 0);
 
@@ -230,10 +249,30 @@ export class DevolucionOrigenService {
           : 'efectivo',
     );
 
-    const lineas: LineaCruda[] = factura.items.map((i) => ({
+    const items = factura.items as ((typeof factura.items)[number] & {
+      exento?: boolean;
+    })[];
+    const neto = (i: { total: number }) => Math.max(0, i.total);
+    const netoDocumento = items.reduce((s, i) => s + neto(i), 0);
+    // Per-line tax is only known when every item says whether it is exempt:
+    // the invoice tax then falls on the taxable base alone. Older invoices
+    // (no flag) keep the document average.
+    const conBandera = items.every((i) => typeof i.exento === 'boolean');
+    const baseImponible = items.reduce(
+      (s, i) => (i.exento ? s : s + neto(i)),
+      0,
+    );
+    const impuestoDocumento = Math.max(0, factura.total) - netoDocumento;
+    const factorGravado =
+      baseImponible > 0 ? 1 + impuestoDocumento / baseImponible : 1;
+
+    const lineas: LineaCruda[] = items.map((i) => ({
       productoId: i.productoId,
       cantidad: i.cantidad,
-      neto: Math.max(0, i.total),
+      neto: neto(i),
+      conImpuesto: conBandera
+        ? neto(i) * (i.exento ? 1 : factorGravado)
+        : undefined,
     }));
     const productos = this.agrupar(lineas);
 
@@ -250,7 +289,7 @@ export class DevolucionOrigenService {
       );
     }
 
-    const netoTotal = lineas.reduce((s, l) => s + l.neto, 0);
+    const netoTotal = netoDocumento;
 
     return {
       tipo: DevolucionTipo.VENTA,
@@ -312,15 +351,26 @@ export class DevolucionOrigenService {
       {
         cantidad: number;
         neto: number;
+        conImpuesto: number;
+        /** Todas las líneas del producto guardan su impuesto. */
+        porLinea: boolean;
         filas: NonNullable<LineaCruda['ubicaciones']>;
       }
     >();
 
     for (const l of lineas) {
       const id = this.hex(l.productoId);
-      const actual = acumulado.get(id) ?? { cantidad: 0, neto: 0, filas: [] };
+      const actual = acumulado.get(id) ?? {
+        cantidad: 0,
+        neto: 0,
+        conImpuesto: 0,
+        porLinea: true,
+        filas: [],
+      };
       actual.cantidad = redondear(actual.cantidad + l.cantidad);
       actual.neto += l.neto;
+      if (l.conImpuesto === undefined) actual.porLinea = false;
+      else actual.conImpuesto += l.conImpuesto;
       actual.filas.push(...(l.ubicaciones ?? []));
       acumulado.set(id, actual);
     }
@@ -333,6 +383,9 @@ export class DevolucionOrigenService {
           vendida: a.cantidad,
           precioUnitario: a.cantidad > 0 ? redondear(a.neto / a.cantidad) : 0,
           ubicaciones: fusionarOrigen(a.filas),
+          ...(a.porLinea && a.neto > 0
+            ? { factorImpuesto: a.conImpuesto / a.neto }
+            : {}),
         },
       ]),
     );

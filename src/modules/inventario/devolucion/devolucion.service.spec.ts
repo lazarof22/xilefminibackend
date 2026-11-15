@@ -785,6 +785,168 @@ describe('DevolucionService', () => {
     });
   });
 
+  describe('impuesto por línea en el reembolso', () => {
+    /** Checkout sale: P1 exempt (100, no tax), P2 taxed (100 + 10 % = 110). */
+    const ventaMixta = (extra: Partial<Doc> = {}): Partial<Doc> => ({
+      subtotal_venta: 200,
+      descuento_total: 0,
+      impuesto: 10,
+      total: 210,
+      productos: [
+        {
+          productoId: P1,
+          cantidad: 10,
+          descuentoMonto: 0,
+          subtotal: 100,
+          impuesto: 0,
+          total: 100,
+        },
+        {
+          productoId: P2,
+          cantidad: 5,
+          descuentoMonto: 0,
+          subtotal: 100,
+          impuesto: 10,
+          total: 110,
+        },
+      ],
+      ...extra,
+    });
+
+    it('devolver solo el producto exento reembolsa su total sin impuesto', async () => {
+      const m = montar({ venta: ventaMixta() });
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 10, entregada: 10 }]),
+        USUARIO,
+      );
+      expect(res.montoDevuelto).toBe(100);
+    });
+
+    it('devolver solo el producto gravado reembolsa su total con su impuesto', async () => {
+      const m = montar({ venta: ventaMixta() });
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P2, solicitada: 5, entregada: 5 }]),
+        USUARIO,
+      );
+      expect(res.montoDevuelto).toBe(110);
+    });
+
+    it('devolver ambos reembolsa el total de la venta', async () => {
+      const m = montar({ venta: ventaMixta() });
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [
+          { producto: P1, solicitada: 10, entregada: 10 },
+          { producto: P2, solicitada: 5, entregada: 5 },
+        ]),
+        USUARIO,
+      );
+      expect(Math.abs(res.montoDevuelto - 210)).toBeLessThanOrEqual(0.01);
+    });
+
+    it('una devolución parcial de la línea gravada es la parte proporcional de su total', async () => {
+      const m = montar({ venta: ventaMixta() });
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P2, solicitada: 2, entregada: 2 }]),
+        USUARIO,
+      );
+      expect(res.montoDevuelto).toBe(44); // 2/5 of 110
+    });
+
+    it('con descuento en la línea gravada reembolsa la parte proporcional de lo cobrado', async () => {
+      // P2: 100 - 20 discount = 80 net, 10 % tax = 8 -> 88 charged.
+      const m = montar({
+        venta: ventaMixta({
+          impuesto: 8,
+          total: 188,
+          productos: [
+            {
+              productoId: P1,
+              cantidad: 10,
+              descuentoMonto: 0,
+              subtotal: 100,
+              impuesto: 0,
+              total: 100,
+            },
+            {
+              productoId: P2,
+              cantidad: 5,
+              descuentoMonto: 20,
+              subtotal: 100,
+              impuesto: 8,
+              total: 88,
+            },
+          ],
+        }),
+      });
+      const parcial = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P2, solicitada: 1, entregada: 1 }]),
+        USUARIO,
+      );
+      expect(parcial.montoDevuelto).toBe(17.6); // 1/5 of 88
+      const resto = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P2, solicitada: 4, entregada: 4 }]),
+        USUARIO,
+      );
+      expect(
+        Math.abs(parcial.montoDevuelto + resto.montoDevuelto - 88),
+      ).toBeLessThanOrEqual(0.01);
+    });
+
+    it('una venta anterior sin impuesto por línea sigue usando el factor medio del documento', async () => {
+      const m = montar({
+        venta: ventaMixta({
+          productos: [
+            { productoId: P1, cantidad: 10, descuentoMonto: 0, subtotal: 100 },
+            { productoId: P2, cantidad: 5, descuentoMonto: 0, subtotal: 100 },
+          ],
+        }),
+      });
+      const res = await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 10, entregada: 10 }]),
+        USUARIO,
+      );
+      expect(res.montoDevuelto).toBe(105); // average factor 1 + 10/200 = 1.05
+    });
+
+    it('una factura con el indicador exento por ítem aplica el impuesto solo a la base gravada', async () => {
+      const m = montar();
+      const f = m.facturas.insertar({
+        id: 'FAC-000002',
+        estado: 'confirmada',
+        inventarioAplicado: true,
+        metodoPago: 'efectivo',
+        moneda: 'CUP',
+        total: 210,
+        items: [
+          {
+            productoId: P1.toHexString(),
+            cantidad: 10,
+            total: 100,
+            exento: true,
+          },
+          {
+            productoId: P2.toHexString(),
+            cantidad: 5,
+            total: 100,
+            exento: false,
+          },
+        ],
+        inventarioUbicaciones: [
+          { productoId: P1, almacen: A, contenedor: C1, cantidad: 10 },
+          { productoId: P2, almacen: A, contenedor: C1, cantidad: 5 },
+        ],
+      });
+      const dto = (producto: Types.ObjectId, n: number) => ({
+        ...dtoVenta(f._id, [{ producto, solicitada: n, entregada: n }]),
+        origenTipo: DevolucionOrigenTipo.FACTURA,
+      });
+      const exento = await m.servicio.registrar(dto(P1, 10), USUARIO);
+      const gravado = await m.servicio.registrar(dto(P2, 5), USUARIO);
+      expect(exento.montoDevuelto).toBe(100);
+      expect(gravado.montoDevuelto).toBe(110);
+    });
+  });
+
   describe('devolución de factura', () => {
     const facturaBase = (extra: Partial<Doc> = {}): Doc => ({
       id: 'FAC-000001',
@@ -1141,6 +1303,83 @@ describe('DevolucionService', () => {
       expect(reciente.estado).toBe(EstadoDevolucion.PENDIENTE);
       expect(m.acumulados.docs[0].devuelta).toBe(0);
       expect(m.existencia.reponerProducto).not.toHaveBeenCalled();
+    });
+
+    it('si sigueVigente falla tras crear el vale, el vale queda fallido y el cupo se libera una sola vez (la recuperación no lo libera de nuevo)', async () => {
+      const m = montar();
+      jest
+        .spyOn(m.origen, 'sigueVigente')
+        .mockRejectedValueOnce(new Error('fallo de red'));
+
+      await expect(
+        m.servicio.registrar(
+          dtoVenta(m.ventaId, [{ producto: P1, solicitada: 4, entregada: 4 }]),
+          USUARIO,
+        ),
+      ).rejects.toThrow('fallo de red');
+
+      expect(m.devoluciones.docs[0].estado).toBe(EstadoDevolucion.FALLIDA);
+      expect(m.acumulados.docs[0].devuelta).toBe(0);
+
+      // A second vale holds a real reservation that must stay untouched.
+      await m.servicio.registrar(
+        dtoVenta(m.ventaId, [{ producto: P1, solicitada: 1, entregada: 1 }]),
+        USUARIO,
+      );
+      m.devoluciones.docs[0].updatedAt = new Date(Date.now() - 60 * 60 * 1000);
+      const res = await m.servicio.recuperarInterrumpidas();
+
+      expect(res.liberadas).toBe(0);
+      expect(m.acumulados.docs[0].devuelta).toBe(1);
+    });
+
+    it('si no se puede marcar fallido el vale, conserva el cupo y la recuperación lo libera exactamente una vez', async () => {
+      const m = montar();
+      jest
+        .spyOn(m.origen, 'sigueVigente')
+        .mockRejectedValueOnce(new Error('fallo de red'));
+      m.devoluciones.fallarSi = (filtro, update) =>
+        (update as Doc).$set?.estado === EstadoDevolucion.FALLIDA
+          ? new Error('base caída')
+          : undefined;
+
+      await expect(
+        m.servicio.registrar(
+          dtoVenta(m.ventaId, [{ producto: P1, solicitada: 4, entregada: 4 }]),
+          USUARIO,
+        ),
+      ).rejects.toThrow('fallo de red');
+      expect(m.devoluciones.docs[0].estado).toBe(EstadoDevolucion.PENDIENTE);
+      expect(m.acumulados.docs[0].devuelta).toBe(4);
+
+      m.devoluciones.fallarSi = undefined;
+      m.devoluciones.docs[0].updatedAt = new Date(Date.now() - 60 * 60 * 1000);
+      await m.servicio.recuperarInterrumpidas();
+      await m.servicio.recuperarInterrumpidas();
+
+      expect(m.acumulados.docs[0].devuelta).toBe(0);
+    });
+
+    it('liberar el cupo nunca deja devuelta por debajo de 0', async () => {
+      const m = montar();
+      m.acumulados.insertar({
+        origenTipo: 'venta',
+        origenId: m.ventaId.toHexString(),
+        productoId: P1.toHexString(),
+        devuelta: 1,
+      });
+      m.devoluciones.insertar({
+        numeroConsecutivo: 'DEV-000100',
+        estado: EstadoDevolucion.PENDIENTE,
+        origenTipo: 'venta',
+        origenRef: m.ventaId,
+        updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+        lineas: [{ producto: P1, cantidadEntregada: 3 }],
+      });
+
+      await m.servicio.recuperarInterrumpidas();
+
+      expect(m.acumulados.docs[0].devuelta).toBe(0);
     });
 
     it('no toca un vale que se está aplicando ahora mismo', async () => {

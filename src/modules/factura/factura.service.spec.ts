@@ -422,6 +422,161 @@ describe('FacturaService', () => {
     });
   });
 
+  describe('tax-exempt productos', () => {
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+    });
+
+    const EXENTO_ID = '507f1f77bcf86cd799439055';
+
+    const productosMixtos = () =>
+      crearQueryMock<ProductoDocument[]>([
+        {
+          _id: PRODUCTO_ID,
+          almacen: undefined,
+          gravado: 'gravado',
+        } as unknown as ProductoDocument,
+        {
+          _id: EXENTO_ID,
+          almacen: undefined,
+          gravado: 'exento',
+        } as unknown as ProductoDocument,
+      ]);
+
+    const dtoMixto = (extra: Record<string, unknown> = {}) =>
+      ({
+        ...baseDto(),
+        items: [
+          { ...itemBase, id: 'a', cantidad: 1, precio: 100 },
+          {
+            ...itemBase,
+            id: 'b',
+            productoId: EXENTO_ID,
+            cantidad: 1,
+            precio: 100,
+            ...extra,
+          },
+        ],
+        impuesto: { tipo: 'ISV', porciento: 10 },
+      }) as unknown as CreateFacturaDto;
+
+    it('create taxes only the taxable base when one producto is exempt', async () => {
+      productoModelMock.find.mockReturnValue(productosMixtos());
+
+      await crear(dtoMixto());
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.impuesto).importe).toBe(10);
+      expect(construidoCon.total).toBe(210);
+    });
+
+    it('create ignores an exento flag sent by the client', async () => {
+      // Both productos are taxable in the catalog; the client claims one is exempt.
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([
+          {
+            _id: PRODUCTO_ID,
+            gravado: 'gravado',
+          } as unknown as ProductoDocument,
+          { _id: EXENTO_ID, gravado: 'gravado' } as unknown as ProductoDocument,
+        ]),
+      );
+
+      await crear(dtoMixto({ exento: true }));
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.impuesto).importe).toBe(20);
+      expect(construidoCon.total).toBe(220);
+    });
+
+    it('create keeps every output unchanged when no producto is exempt', async () => {
+      const dto = {
+        ...baseDto(),
+        items: [{ ...itemBase, cantidad: 1, precio: 100 }],
+        impuesto: { tipo: 'ISV', porciento: 10 },
+      } as unknown as CreateFacturaDto;
+
+      await crear(dto);
+
+      const construidoCon = facturaModelMock.mock.calls[0][0];
+      expect(comoRegistro(construidoCon.impuesto).importe).toBe(10);
+      expect(construidoCon.total).toBe(110);
+      expect(construidoCon.items).toEqual([
+        expect.not.objectContaining({ exento: expect.anything() }),
+      ]);
+    });
+
+    it('update recalculates the tax over the taxable base only when items change', async () => {
+      const existente = {
+        id: 'FAC-000001',
+        estado: EstadoFactura.EDICION,
+        items: [{ ...itemBase, total: 200 }],
+        almacenId: ALMACEN_ID,
+        almacenCodigo: 'ALM-001',
+        cliente: 'Venta al público',
+      } as unknown as Factura;
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(existente),
+      );
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(existente),
+      );
+      productoModelMock.find.mockReturnValue(productosMixtos());
+
+      const dto = dtoMixto();
+      await service.update('FAC-000001', {
+        items: dto.items,
+        impuesto: dto.impuesto,
+      });
+
+      const set = comoRegistro(
+        comoRegistro(facturaModelMock.findOneAndUpdate.mock.calls[0][1]).$set,
+      );
+      expect(comoRegistro(set.impuesto).importe).toBe(10);
+      expect(set.total).toBe(210);
+    });
+
+    it('update re-flags the stored items when only impuesto changes', async () => {
+      const existente = {
+        id: 'FAC-000001',
+        estado: EstadoFactura.EDICION,
+        items: [
+          { ...itemBase, id: 'a', cantidad: 1, precio: 100, total: 100 },
+          {
+            ...itemBase,
+            id: 'b',
+            productoId: EXENTO_ID,
+            cantidad: 1,
+            precio: 100,
+            total: 100,
+          },
+        ],
+        almacenId: ALMACEN_ID,
+        almacenCodigo: 'ALM-001',
+        cliente: 'Venta al público',
+      } as unknown as Factura;
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(existente),
+      );
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(existente),
+      );
+      productoModelMock.find.mockReturnValue(productosMixtos());
+
+      await service.update('FAC-000001', {
+        impuesto: { tipo: 'ISV', porciento: 10 },
+      });
+
+      const set = comoRegistro(
+        comoRegistro(facturaModelMock.findOneAndUpdate.mock.calls[0][1]).$set,
+      );
+      expect(comoRegistro(set.impuesto).importe).toBe(10);
+      expect(set.total).toBe(210);
+    });
+  });
+
   describe('emisor always from EmpresaDatos (T8)', () => {
     beforeEach(() => {
       facturaContadorModelMock.findOneAndUpdate.mockReturnValue(

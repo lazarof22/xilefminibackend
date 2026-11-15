@@ -31,6 +31,11 @@ compra negativa.
 es **una** escritura condicional (`devuelta <= vendida - cantidad`), así dos
 devoluciones simultáneas no pueden devolver entre las dos más de lo vendido. Si
 la aplicación falla, el cupo se libera (solo quien marca el vale `fallida` lo libera).
+Si el vale ya se creó, el fallo de `registrar` lo pasa `pendiente -> fallida` con una
+escritura condicional y solo quien gana esa escritura libera el cupo (si no se pudo
+marcar, el vale queda `pendiente` y lo resuelve la recuperación, una sola vez). Si el
+vale nunca se creó, se libera directamente. La liberación nunca deja `devuelta` por
+debajo de 0.
 
 ## Aplicación exactamente una vez
 
@@ -65,6 +70,12 @@ Costuras que **no** se inventaron aquí:
   `formaDevolucionDinero = descuenta_deuda` y `montoDevuelto`; cuando fase 2/3 defina
   el saldo del cliente, debe consumir las devoluciones `registrada` con esa forma.
 - **Nota de crédito.** Se persiste `nota_credito` + monto; no se emite el documento.
+- **Impuesto del reembolso.** Una venta del checkout guarda el impuesto por línea
+  (`subtotal`, `descuentoMonto`, `impuesto`, `total`): el reembolso de una cantidad es la
+  parte proporcional del `total` de esa línea, así un producto exento reembolsa su
+  precio sin impuesto y uno gravado el suyo con impuesto (devolver todo = `total` de la
+  venta, ±0,01). Las ventas anteriores (sin `impuesto` por línea) y las facturas sin
+  el indicador `exento` por ítem usan el factor medio del documento.
 - **Precio de una venta POS.** `Venta` no guarda el precio unitario: se usa
   `Producto.precio_venta` actual menos el descuento de la línea, más el impuesto de
   la venta repartido proporcional. Si el precio cambió después de la venta, el

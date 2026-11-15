@@ -153,6 +153,9 @@ export class DevolucionService {
     const reservas = await this.reservar(origen, lineas);
 
     let creada: { _id: Types.ObjectId };
+    // Set as soon as the vale is persisted: the failure path needs to know
+    // whether the vale (and not just the reserved cupo) exists.
+    let valeId: Types.ObjectId | undefined;
     try {
       const numeroConsecutivo = await this.consecutivo.siguiente(
         CLAVE_CONSECUTIVO,
@@ -199,28 +202,63 @@ export class DevolucionService {
         registradoPor: { userId: usuario.userId, nombre: usuario.nombre },
         ...(turnoCaja ? { turnoCaja } : {}),
       });
+      valeId = creada._id;
       if (!(await this.origenService.sigueVigente(origen))) {
-        await this.devolucionModel
-          .updateOne(
-            { _id: creada._id, estado: EstadoDevolucion.PENDIENTE },
-            {
-              $set: {
-                estado: EstadoDevolucion.FALLIDA,
-                errorAplicacion: 'El origen dejó de estar vigente',
-              },
-            },
-          )
-          .exec();
         throw new ConflictException(
           'La factura de origen se está cancelando o ya no está confirmada; no se registró la devolución',
         );
       }
     } catch (error) {
-      await this.liberar(origen, reservas);
+      await this.abortarRegistro(origen, reservas, valeId, error);
       throw error;
     }
 
     return this.aplicar(String(creada._id));
+  }
+
+  /**
+   * Failure path of `registrar` before `aplicar` ran. If the vale was never
+   * created only the reserved cupo exists, so it is released directly. If the
+   * vale exists it is the vale that owns the cupo: it is marked `fallida`
+   * with a conditional update from `pendiente` and only the caller that wins
+   * that update releases the cupo, so `liberarPendientesAbandonados` can never
+   * release it a second time.
+   */
+  private async abortarRegistro(
+    origen: OrigenResuelto,
+    reservas: Reserva[],
+    valeId: Types.ObjectId | undefined,
+    error: unknown,
+  ): Promise<void> {
+    if (!valeId) {
+      await this.liberar(origen, reservas);
+      return;
+    }
+    try {
+      const marcado = await this.devolucionModel
+        .findOneAndUpdate(
+          { _id: valeId, estado: EstadoDevolucion.PENDIENTE },
+          {
+            $set: {
+              estado: EstadoDevolucion.FALLIDA,
+              errorAplicacion:
+                error instanceof ConflictException
+                  ? 'El origen dejó de estar vigente'
+                  : error instanceof Error
+                    ? error.message
+                    : String(error),
+            },
+          },
+        )
+        .exec();
+      if (marcado) await this.liberar(origen, reservas);
+    } catch (e) {
+      // The vale stays `pendiente` holding its cupo: the recovery job marks it
+      // `fallida` and releases the cupo exactly once.
+      this.logger.error(
+        `No se pudo marcar fallida la devolución ${String(valeId)}; la recuperación liberará su cupo: ${String(e)}`,
+      );
+    }
   }
 
   /**
@@ -523,7 +561,9 @@ export class DevolucionService {
         cantidadEntregada: redondear(l.cantidadEntregada),
         precioUnitario: deOrigen.precioUnitario,
         importe: redondear2(
-          deOrigen.precioUnitario * l.cantidadEntregada * origen.factorImpuesto,
+          deOrigen.precioUnitario *
+            l.cantidadEntregada *
+            (deOrigen.factorImpuesto ?? origen.factorImpuesto),
         ),
       };
     });
@@ -649,11 +689,25 @@ export class DevolucionService {
     reservas: Reserva[],
   ): Promise<void> {
     for (const r of reservas) {
+      const clave = this.claveAcumulado(origen, r.productoId);
+      // `devuelta` never goes below 0: subtract only when there is enough,
+      // otherwise clamp to 0 (a second release must not mint extra cupo).
       await this.acumuladoModel
-        .updateOne(this.claveAcumulado(origen, r.productoId), {
-          $inc: { devuelta: -r.cantidad },
-        })
+        .updateOne(
+          { ...clave, devuelta: { $gte: r.cantidad } },
+          { $inc: { devuelta: -r.cantidad } },
+        )
         .exec()
+        .then((res) =>
+          res.matchedCount > 0
+            ? undefined
+            : this.acumuladoModel
+                .updateOne(
+                  { ...clave, devuelta: { $gt: 0 } },
+                  { $set: { devuelta: 0 } },
+                )
+                .exec(),
+        )
         .catch((e: unknown) =>
           this.logger.error(
             `No se pudo liberar el cupo devuelto (${r.productoId}, ${r.cantidad}), corregir a mano: ${String(e)}`,

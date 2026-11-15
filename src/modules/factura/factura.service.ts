@@ -171,13 +171,22 @@ export class FacturaService implements OnModuleInit {
     const telefono = this.limpiarCampoTexto(createFacturaDto.telefono);
     const email = this.limpiarCampoTexto(createFacturaDto.email);
 
+    // One product read feeds both the tax-exempt flags and the almacén check.
+    const productos = await this.cargarProductos(createFacturaDto.items);
     const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
-      calcularTotales(createFacturaDto.items, createFacturaDto.impuesto);
+      calcularTotales(
+        this.marcarExentos(createFacturaDto.items, productos),
+        createFacturaDto.impuesto,
+      );
 
     // Both fallible (404/422/400) and run before siguienteNumero() (T9):
     // an invalid almacén or item never burns an invoice number.
     const almacen = await this.obtenerAlmacenValido(createFacturaDto.almacenId);
-    await this.validarProductosDelAlmacen(items, createFacturaDto.almacenId);
+    await this.validarProductosDelAlmacen(
+      items,
+      createFacturaDto.almacenId,
+      productos,
+    );
     const facturadoPor = await this.obtenerFacturadorPor(userId);
 
     const emisor = await this.obtenerEmisor();
@@ -364,6 +373,54 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
+   * Loads, in a single `$in` query, the productos referenced by `items`
+   * (deduplicated), keyed by the canonical (lowercase) hex form of their
+   * `_id` so a `productoId` sent in another case resolves to the same
+   * producto. Ids that are not valid ObjectIds are skipped (they match no
+   * producto) instead of failing the query.
+   */
+  private async cargarProductos(
+    items: { productoId: string }[],
+  ): Promise<Map<string, ProductoDocument>> {
+    const productoIds = [
+      ...new Set(
+        items
+          .map((item) => item.productoId)
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const productos = await this.productoModel
+      .find({ _id: { $in: productoIds } })
+      .exec();
+    return new Map<string, ProductoDocument>(
+      productos.map((producto) => [producto._id.toString(), producto]),
+    );
+  }
+
+  /**
+   * Sets `exento: true` on the items whose producto is `gravado: 'exento'`
+   * so `calcularTotales` leaves them out of the taxable base. The flag is
+   * always derived from the producto, never from the request: any
+   * client-sent `exento` is dropped. Items whose producto is missing or
+   * whose id is invalid stay taxable and carry no flag.
+   */
+  private marcarExentos<T extends { productoId: string }>(
+    items: T[],
+    productosPorId: Map<string, ProductoDocument>,
+  ): (T & { exento?: boolean })[] {
+    return items.map((item) => {
+      const sinBandera: T & { exento?: boolean } = { ...item };
+      delete sinBandera.exento;
+      const producto = Types.ObjectId.isValid(item.productoId)
+        ? productosPorId.get(new Types.ObjectId(item.productoId).toHexString())
+        : undefined;
+      return producto?.gravado === 'exento'
+        ? { ...sinBandera, exento: true }
+        : sinBandera;
+    });
+  }
+
+  /**
    * Loads every producto referenced by the items in a single `$in` query
    * (never N queries) and checks, for each item, that the productoId
    * exists and — when that producto has an assigned almacen — that it
@@ -378,17 +435,10 @@ export class FacturaService implements OnModuleInit {
   private async validarProductosDelAlmacen(
     items: { productoId: string }[],
     almacenId: string,
+    productosPorId?: Map<string, ProductoDocument>,
   ): Promise<void> {
     const productoIds = [...new Set(items.map((item) => item.productoId))];
-    const productos = await this.productoModel
-      .find({ _id: { $in: productoIds } })
-      .exec();
-    // Keyed by the canonical (lowercase) hex form so that a productoId sent
-    // in a different case (e.g. uppercase hex, still a valid @IsMongoId)
-    // resolves to the same producto instead of being reported as missing.
-    const productosPorId = new Map<string, ProductoDocument>(
-      productos.map((producto) => [producto._id.toString(), producto]),
-    );
+    productosPorId ??= await this.cargarProductos(items);
 
     for (const productoId of productoIds) {
       const productoIdCanonico = new Types.ObjectId(productoId).toHexString();
@@ -767,12 +817,19 @@ export class FacturaService implements OnModuleInit {
   ): Promise<void> {
     const itemsCambiaron = presentes.has('items');
     const impuestoCambio = presentes.has('impuesto');
+    let productos: Map<string, ProductoDocument> | undefined;
 
     if (itemsCambiaron || impuestoCambio) {
       const itemsEntrada = itemsCambiaron ? dto.items! : actual.items;
       const impuestoEntrada = impuestoCambio ? dto.impuesto : actual.impuesto;
+      // Exempt flags always come from the productos, also when only the tax
+      // changes: the stored items are re-flagged, not trusted.
+      productos = await this.cargarProductos(itemsEntrada);
       const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
-        calcularTotales(itemsEntrada, impuestoEntrada);
+        calcularTotales(
+          this.marcarExentos(itemsEntrada, productos),
+          impuestoEntrada,
+        );
       set.items = items;
       set.subtotal = subtotal;
       set.descuentoTotal = descuentoTotal;
@@ -797,7 +854,11 @@ export class FacturaService implements OnModuleInit {
     const itemsParaValidar =
       (set.items as { productoId: string }[] | undefined) ?? actual.items;
     const almacen = await this.obtenerAlmacenValido(almacenId);
-    await this.validarProductosDelAlmacen(itemsParaValidar, almacenId);
+    await this.validarProductosDelAlmacen(
+      itemsParaValidar,
+      almacenId,
+      productos,
+    );
     set.almacenId = almacen._id;
     set.almacenCodigo = almacen.codigoAlmacen;
   }

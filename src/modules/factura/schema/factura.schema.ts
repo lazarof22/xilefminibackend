@@ -43,6 +43,10 @@ class ItemFactura {
 
   @Prop({ required: true })
   total!: number;
+
+  /** Set by the server from `Producto.gravado`; exempt items carry no sales tax. */
+  @Prop()
+  exento?: boolean;
 }
 
 @Schema({ _id: false })
