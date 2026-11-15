@@ -74,7 +74,10 @@ export class ProductoController {
 
     const actual = await this.productoService.findOne(id);
 
-    if (Math.abs(Number(actual.precio_venta) - Number(dto.precio_venta)) > 1e-9) {
+    // `!(… <= tolerancia)` so a NaN price is refused instead of slipping through.
+    if (
+      !(Math.abs(Number(actual.precio_venta) - Number(dto.precio_venta)) <= 1e-9)
+    ) {
       throw new ForbiddenException(
         'Solo el administrador o el gerente pueden cambiar el precio de venta',
       );

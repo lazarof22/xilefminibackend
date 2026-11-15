@@ -110,4 +110,17 @@ describe('ProductoController.update — cambio de precio (§6.9)', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(servicio.update).not.toHaveBeenCalled();
   });
+
+  it('un precio que no es un número válido no pasa la guarda: un cajero recibe 403', async () => {
+    const { controlador, peticion, servicio } = escenario(100);
+
+    await expect(
+      controlador.update(
+        ID,
+        { precio_venta: Number.NaN } as unknown as UpdateProductoDto,
+        peticion('cajero'),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(servicio.update).not.toHaveBeenCalled();
+  });
 });
