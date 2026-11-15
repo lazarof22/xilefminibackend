@@ -278,7 +278,7 @@ export class CuadreCajaService {
     }
     return this.cuadreCajaModel
       .find(filter)
-      .populate({ path: 'empleado', select: 'nombre_empleado ci_empleado' })
+      .populate({ path: 'empleado', select: 'nombre' })
       .sort({ createdAt: -1 })
       .exec();
   }
@@ -286,7 +286,7 @@ export class CuadreCajaService {
   async findOne(id: string): Promise<CuadreCaja> {
     const cuadre = await this.cuadreCajaModel
       .findById(id)
-      .populate({ path: 'empleado', select: 'nombre_empleado ci_empleado' })
+      .populate({ path: 'empleado', select: 'nombre' })
       .exec();
 
     if (!cuadre) {
@@ -360,7 +360,7 @@ export class CuadreCajaService {
 
     const updateCuadre = await this.cuadreCajaModel
       .findByIdAndUpdate(id, updateData, { new: true })
-      .populate({ path: 'empleado', select: 'nombre_empleado ci_empleado' })
+      .populate({ path: 'empleado', select: 'nombre' })
       .exec();
 
     if (!updateCuadre) {

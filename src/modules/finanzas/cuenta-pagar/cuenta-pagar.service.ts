@@ -8,10 +8,7 @@ import { Model, isValidObjectId } from 'mongoose';
 import { CreateCuentaPagarDto } from './dto/create-cuenta-pagar.dto';
 import { UpdateCuentaPagarDto } from './dto/update-cuenta-pagar.dto';
 import { CuentaPagar, CuentaPagarDocument } from './schema/cuenta-pagar.schema';
-import {
-  EstadoCxP,
-  EnvejecimientoCxP,
-} from './types/cuenta-pagar.types';
+import { EstadoCxP, EnvejecimientoCxP } from './types/cuenta-pagar.types';
 
 interface AbonoInput {
   monto: number;
@@ -51,6 +48,13 @@ export class CuentaPagarService {
   ) {}
 
   async create(createDto: CreateCuentaPagarDto): Promise<CuentaPagar> {
+    if (
+      new Date(createDto.fechaVencimiento) < new Date(createDto.fechaEmision)
+    ) {
+      throw new BadRequestException(
+        'La fecha de vencimiento no puede ser anterior a la de emisión',
+      );
+    }
     const existente = await this.cxpModel
       .findOne({ codigo: createDto.codigo })
       .exec();

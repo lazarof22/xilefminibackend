@@ -20,7 +20,20 @@ export function formatearFecha(fecha: Date): string {
  */
 export function normalizarFecha(fecha?: string): string {
   if (!fecha) return fechaHoy();
-  if (FORMATO_FECHA.test(fecha)) return fecha;
+  const partes = FORMATO_FECHA.exec(fecha);
+  if (partes) {
+    // 2026-13-45 tiene el formato, pero no existe: el calendario lo "rodaría" al mes siguiente.
+    const [y, m, d] = [Number(partes[1]), Number(partes[2]), Number(partes[3])];
+    const real = new Date(y, m - 1, d);
+    if (
+      real.getFullYear() !== y ||
+      real.getMonth() !== m - 1 ||
+      real.getDate() !== d
+    ) {
+      throw new BadRequestException('La fecha no es válida (use AAAA-MM-DD)');
+    }
+    return fecha;
+  }
   const parsed = new Date(fecha);
   if (Number.isNaN(parsed.getTime())) {
     throw new BadRequestException('La fecha no es válida (use AAAA-MM-DD)');

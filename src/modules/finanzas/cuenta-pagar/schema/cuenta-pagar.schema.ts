@@ -9,10 +9,10 @@ export class CuentaPagar {
   @Prop({ required: true, unique: true })
   codigo!: string;
 
-  @Prop({ required: true, type: Types.ObjectId, ref: 'Empresa', index: true })
+  @Prop({ required: true, type: Types.ObjectId, ref: 'Proveedor', index: true })
   proveedor!: Types.ObjectId;
 
-  @Prop({ required: false, type: Types.ObjectId, ref: 'Concepto' })
+  @Prop({ required: false, type: Types.ObjectId, ref: 'ElementoGasto' })
   concepto?: Types.ObjectId;
 
   @Prop({ required: true })

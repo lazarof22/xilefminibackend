@@ -112,6 +112,24 @@ describe('CuentaPagarService', () => {
     });
   });
 
+  describe('create — fechas', () => {
+    it('rejects a due date earlier than the issue date without touching the database', async () => {
+      await expect(
+        service.create({
+          codigo: 'CXP-009',
+          proveedor: new Types.ObjectId().toHexString(),
+          concepto: new Types.ObjectId().toHexString(),
+          montoOriginal: 10,
+          fechaEmision: '2024-04-01',
+          fechaVencimiento: '2024-03-01',
+        }),
+      ).rejects.toThrow(/anterior a la de emisión/);
+
+      expect(mockCxpModel.findOne).not.toHaveBeenCalled();
+      expect(mockSave).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findAll', () => {
     it('should return all cuentas por pagar populated and sorted', async () => {
       mockQueryBuilder.exec.mockResolvedValue([mockDocument]);

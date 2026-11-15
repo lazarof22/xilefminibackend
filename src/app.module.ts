@@ -12,6 +12,7 @@ import { PagoModule } from './modules/inventario/pago/pago.module';
 import { CuadreCajaModule } from './modules/inventario/cuadre_caja/cuadre_caja.module';
 import { ExistenciaModule } from './modules/inventario/exitencia/existencia.module';
 import { ExtraccionModule } from './modules/inventario/extraccion/extraccion.module';
+import { ReporteInventarioModule } from './modules/inventario/reporte-inventario/reporte-inventario.module';
 import { ReportePlusModule } from './modules/inventario/reporte_plus/reporte_plus.module';
 import { KardexModule } from './modules/inventario/kardex/kardex.module';
 import { ProductoModule } from './modules/inventario/producto/producto.module';
@@ -80,6 +81,7 @@ import { FichasNormativasModule } from './modules/configuracion/fichas-normativa
     CuadreCajaModule,
     ExistenciaModule,
     ExtraccionModule,
+    ReporteInventarioModule,
     ReportePlusModule,
     KardexModule,
     ProductoModule,

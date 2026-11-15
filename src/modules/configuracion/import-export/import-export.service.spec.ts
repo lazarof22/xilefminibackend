@@ -182,3 +182,18 @@ describe('ImportExportService.importFromJson', () => {
     );
   });
 });
+
+describe('ImportExportService CSV imports', () => {
+  it.each(['importProductsFromCsv', 'importCuentasFromCsv'] as const)(
+    '%s answers 400 (not 500) when the csv field is missing or not text',
+    async (metodo) => {
+      const { servicio } = crearServicio({});
+
+      for (const csv of [undefined, null, 42, {}]) {
+        await expect(
+          servicio[metodo](csv as unknown as string),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      }
+    },
+  );
+});

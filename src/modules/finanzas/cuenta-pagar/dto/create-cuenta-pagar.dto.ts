@@ -15,12 +15,12 @@ export class CreateCuentaPagarDto {
   @IsNotEmpty()
   codigo!: string;
 
-  @ApiProperty({ description: 'ID del proveedor (Empresa)' })
+  @ApiProperty({ description: 'ID del proveedor' })
   @IsMongoId()
   @IsNotEmpty()
   proveedor!: string;
 
-  @ApiProperty({ description: 'ID del concepto contable' })
+  @ApiProperty({ description: 'ID del elemento de gasto' })
   @IsMongoId()
   @IsNotEmpty()
   concepto!: string;
@@ -28,7 +28,7 @@ export class CreateCuentaPagarDto {
   @ApiProperty({ description: 'Monto original de la deuda' })
   @IsNumber()
   @IsNotEmpty()
-  @Min(0)
+  @Min(0.01)
   montoOriginal!: number;
 
   @ApiProperty({ description: 'Fecha de emisión' })

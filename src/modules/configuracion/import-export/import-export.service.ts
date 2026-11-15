@@ -94,6 +94,9 @@ export class ImportExportService {
   ) {}
 
   private parseCsv(csv: string): CsvRow[] {
+    if (typeof csv !== 'string') {
+      throw new BadRequestException('Falta el contenido CSV (campo "csv")');
+    }
     const lines = csv
       .split('\n')
       .map((l) => l.trim())
@@ -232,6 +235,9 @@ export class ImportExportService {
    * - Si el código ya existe, la fila se rechaza (no se hace upsert).
    */
   async importCuentasFromCsv(csv: string): Promise<ImportResult> {
+    if (typeof csv !== 'string') {
+      throw new BadRequestException('Falta el contenido CSV (campo "csv")');
+    }
     const lines = csv
       .split('\n')
       .map((l) => l.trim())
