@@ -1,3 +1,5 @@
+import { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FacturaController } from './factura.controller';
 import { FacturaService } from './factura.service';
@@ -86,12 +88,42 @@ describe('FacturaController', () => {
       'terminar',
       'volverAEdicion',
       'confirmar',
-      'cancelar',
-      'anular',
-      'remove',
     ])('%s carries the expected @Roles metadata', (nombre) => {
       expect(rolesDe(nombre)).toEqual(rolesEsperados);
     });
+  });
+
+  describe('cancelar/anular/remove are restricted to administrador and gerente (doc 6.9)', () => {
+    const contexto = (rol: string, nombre: string) =>
+      ({
+        getHandler: () => handlers[nombre],
+        getClass: () => FacturaController,
+        switchToHttp: () => ({ getRequest: () => ({ user: { rol } }) }),
+      }) as unknown as ExecutionContext;
+
+    it.each(['cancelar', 'anular', 'remove'])(
+      '%s carries exactly [ADMIN, GERENTE]',
+      (nombre) => {
+        expect(rolesDe(nombre)).toEqual([UsuarioRol.ADMIN, UsuarioRol.GERENTE]);
+      },
+    );
+
+    it.each(['cancelar', 'anular', 'remove'])(
+      '%s: RolesGuard refuses facturador and cajero, allows admin and gerente',
+      (nombre) => {
+        const guard = new RolesGuard(new Reflector());
+        expect(guard.canActivate(contexto(UsuarioRol.FACTURADOR, nombre))).toBe(
+          false,
+        );
+        expect(guard.canActivate(contexto(UsuarioRol.CAJERO, nombre))).toBe(
+          false,
+        );
+        expect(guard.canActivate(contexto(UsuarioRol.ADMIN, nombre))).toBe(true);
+        expect(guard.canActivate(contexto(UsuarioRol.GERENTE, nombre))).toBe(
+          true,
+        );
+      },
+    );
   });
 
   describe('read endpoints stay open to any authenticated user', () => {

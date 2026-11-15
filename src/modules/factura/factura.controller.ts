@@ -39,6 +39,13 @@ const ROLES_ESCRITURA = [
   UsuarioRol.FACTURADOR,
 ];
 
+/**
+ * Cancelling/voiding an invoice is restricted to administrador and gerente
+ * (doc 6.9, "Anular factura / venta"). `DELETE :id` (soft delete) keeps
+ * `ROLES_ESCRITURA` as before.
+ */
+const ROLES_ANULACION = [UsuarioRol.ADMIN, UsuarioRol.GERENTE];
+
 @ApiTags('Facturas')
 @ApiBearerAuth()
 @Controller('facturas')
@@ -172,7 +179,7 @@ export class FacturaController {
   }
 
   @Patch(':id/cancelar')
-  @Roles(...ROLES_ESCRITURA)
+  @Roles(...ROLES_ANULACION)
   @ApiOperation({
     summary: 'Cancelar una factura confirmada (reversa)',
   })
@@ -181,7 +188,7 @@ export class FacturaController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
-    description: 'Rol sin permiso para cancelar',
+    description: 'Solo administrador o gerente pueden cancelar una factura',
   })
   @ApiResponse({ status: 404, description: 'No encontrada' })
   @ApiResponse({
@@ -193,7 +200,7 @@ export class FacturaController {
   }
 
   @Patch(':id/anular')
-  @Roles(...ROLES_ESCRITURA)
+  @Roles(...ROLES_ANULACION)
   @ApiOperation({
     summary: 'Anular una factura (conserva el registro por obligacion legal)',
   })
@@ -202,7 +209,7 @@ export class FacturaController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
-    description: 'Rol sin permiso para anular',
+    description: 'Solo administrador o gerente pueden anular una factura',
   })
   @ApiResponse({ status: 404, description: 'No encontrada' })
   @ApiResponse({ status: 409, description: 'La factura ya esta anulada' })
@@ -211,7 +218,7 @@ export class FacturaController {
   }
 
   @Delete(':id')
-  @Roles(...ROLES_ESCRITURA)
+  @Roles(...ROLES_ANULACION)
   @ApiOperation({
     summary: 'Anular una factura (baja blanda, conserva el registro)',
   })

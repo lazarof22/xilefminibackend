@@ -53,6 +53,7 @@ import { DenominacionMonedaModule } from './modules/nomencladores/denominacion-m
 import { BancoModule } from './modules/nomencladores/banco/banco.module';
 import { CanalPagoModule } from './modules/nomencladores/canal-pago/canal-pago.module';
 import { ConfiguracionPagosModule } from './modules/configuracion-pagos/configuracion-pagos.module';
+import { FichasNormativasModule } from './modules/configuracion/fichas-normativas/fichas-normativas.module';
 
 
 @Module({
@@ -120,6 +121,7 @@ import { ConfiguracionPagosModule } from './modules/configuracion-pagos/configur
     BancoModule,
     CanalPagoModule,
     ConfiguracionPagosModule,
+    FichasNormativasModule,
   ],
   controllers: [AppController],
   providers: [AppService],
