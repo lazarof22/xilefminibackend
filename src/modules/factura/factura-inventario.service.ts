@@ -9,6 +9,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types } from 'mongoose';
 import { Producto } from '../inventario/producto/schemas/producto.schema';
 import { Kardex, KardexTipo } from '../inventario/kardex/schema/kardex.schema';
+import { valuarMovimiento } from '../inventario/kardex/costo-promedio.util';
+import { costoDeSalida } from '../inventario/kardex/valuacion-salida';
 import { Estado } from '../nomencladores/estado/schema/estado.schema';
 import { ExistenciaService } from '../inventario/exitencia/existencia.service';
 import { StockInsuficienteException } from '../inventario/exitencia/stock-insuficiente.exception';
@@ -628,14 +630,28 @@ export class FacturaInventarioService {
       return;
     }
     const accion = tipo === KardexTipo.VENTA ? 'confirmada' : 'cancelada';
-    const entradas = aplicados.map((linea) => ({
-      productoId: new Types.ObjectId(linea.productoId),
-      tipo,
-      cantidad: linea.cantidad,
-      stock: linea.stockResultante,
-      motivo: `Factura ${factura.id} ${accion}`,
-      referencia: factura.id,
-    }));
+    // SC-2-13: the sale and its reversal are valued at the product's current
+    // average cost; the average itself does not change. A failed cost read
+    // never blocks the movement: that entry is written unvalued.
+    const entradas = await Promise.all(
+      aplicados.map(async (linea) => ({
+        productoId: new Types.ObjectId(linea.productoId),
+        tipo,
+        cantidad: linea.cantidad,
+        stock: linea.stockResultante,
+        motivo: `Factura ${factura.id} ${accion}`,
+        referencia: factura.id,
+        ...valuarMovimiento(
+          linea.cantidad,
+          await costoDeSalida(
+            this.kardexModel,
+            this.productoModel,
+            linea.productoId,
+            this.logger,
+          ),
+        ),
+      })),
+    );
     try {
       // Unordered: an invalid row is skipped and the valid ones still land.
       // `throwOnValidationError` reports the skipped rows instead of

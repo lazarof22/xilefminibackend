@@ -20,6 +20,7 @@ import {
   DepositoBancarioSchema,
 } from '../deposito-bancario/schema/deposito-bancario.schema';
 import { Kardex, KardexSchema } from '../kardex/schema/kardex.schema';
+import { Producto, ProductoSchema } from '../producto/schemas/producto.schema';
 import {
   Extraccion,
   ExtraccionSchema,
@@ -36,6 +37,7 @@ import {
       { name: ReportePlus.name, schema: ReportePlusSchema },
       { name: TurnoReportePlus.name, schema: TurnoReportePlusSchema },
       { name: Kardex.name, schema: KardexSchema },
+      { name: Producto.name, schema: ProductoSchema },
       { name: Extraccion.name, schema: ExtraccionSchema },
       { name: TurnoCaja.name, schema: TurnoCajaSchema },
       { name: DepositoBancario.name, schema: DepositoBancarioSchema },

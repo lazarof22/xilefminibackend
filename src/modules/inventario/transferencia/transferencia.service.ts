@@ -41,6 +41,10 @@ import {
     KardexTipo,
 } from '../kardex/schema/kardex.schema';
 
+import { valuarMovimiento } from '../kardex/costo-promedio.util';
+
+import { costoDeSalida } from '../kardex/valuacion-salida';
+
 import {
     Existencia,
 } from '../exitencia/schema/existencia.schema';
@@ -386,6 +390,21 @@ export class TransferenciaService {
              */
             const referencia = transferenciaGuardada._id.toString();
 
+            /**
+             * SC-2-13: ambos movimientos se valúan al costo promedio vigente
+             * (el promedio no cambia: la mercancía solo cambia de ubicación).
+             * Si la lectura del costo falla, los asientos quedan sin valuar.
+             */
+            const valuacion = valuarMovimiento(
+                cantidad,
+                await costoDeSalida(
+                    this.kardexModel,
+                    this.productoModel,
+                    productoExist._id,
+                    this.logger,
+                ),
+            );
+
             await this.kardexModel.create(
                 [
                     {
@@ -395,6 +414,7 @@ export class TransferenciaService {
                         stock: existenciaOrigen.cantidad,
                         motivo: `Transferencia desde ${almacenOrigen.nombreAlmacen}`,
                         referencia,
+                        ...valuacion,
                     },
                     {
                         productoId: productoExist._id,
@@ -403,6 +423,7 @@ export class TransferenciaService {
                         stock: existenciaDestino.cantidad,
                         motivo: `Transferencia hacia ${almacenDestino.nombreAlmacen}`,
                         referencia,
+                        ...valuacion,
                     },
                 ],
                 { session, ordered: true },

@@ -18,6 +18,7 @@ import { TurnoCaja } from '../turno-caja/schema/turno-caja.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
 import { LineaTurnoArchivada } from './schema/linea-turno-archivada.schema';
 import { Devolucion } from '../devolucion/schema/devolucion.schema';
+import { Producto } from '../producto/schemas/producto.schema';
 
 const chain = <T>(valor: T) => {
   const c: Record<string, jest.Mock> = {};
@@ -48,6 +49,7 @@ describe('ReportePlusService', () => {
   let deposito: Record<string, jest.Mock>;
   let devolucion: Record<string, jest.Mock>;
   let archivadas: Record<string, jest.Mock>;
+  let producto: Record<string, jest.Mock>;
   let filas: ReturnType<typeof fila>[];
 
   beforeEach(async () => {
@@ -78,6 +80,8 @@ describe('ReportePlusService', () => {
       deleteMany: jest.fn().mockResolvedValue({}),
     };
 
+    producto = { findById: jest.fn(() => chain(null)) };
+
     const mod = await Test.createTestingModule({
       providers: [
         ReportePlusService,
@@ -92,6 +96,7 @@ describe('ReportePlusService', () => {
           useValue: archivadas,
         },
         { provide: getModelToken(Devolucion.name), useValue: devolucion },
+        { provide: getModelToken(Producto.name), useValue: producto },
       ],
     }).compile();
     service = mod.get(ReportePlusService);
@@ -331,6 +336,59 @@ describe('ReportePlusService', () => {
       const r = await service.resumen();
       expect(r.desde).toEqual(cierre);
       expect(extraccion.find.mock.calls[0][0].fecha.$gte).toEqual(cierre);
+    });
+  });
+
+  describe('cerrarTurno — valuación del Kardex (SC-2-13)', () => {
+    beforeEach(() => {
+      reporte.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      reporte.deleteMany.mockResolvedValue({ deletedCount: 1 });
+    });
+
+    it('values the legacy rows at the latest Kardex average cost', async () => {
+      filas = [fila({ cantidadVendida: 3 })];
+      kardex.findOne = jest.fn(() => chain({ costoPromedio: 6.5 }));
+      producto.findById.mockReturnValue(chain({ precio_compra: 4 }));
+
+      await service.cerrarTurno();
+
+      const entradas = kardex.insertMany.mock.calls[0][0];
+      expect(entradas[0]).toMatchObject({
+        tipo: KardexTipo.VENTA,
+        cantidad: 3,
+        costoPromedio: 6.5,
+        importeCUP: 19.5,
+      });
+    });
+
+    it('falls back to Producto.precio_compra when the Kardex has no average', async () => {
+      filas = [fila({ cantidadVendida: 3 })];
+      kardex.findOne = jest.fn(() => chain(null));
+      producto.findById.mockReturnValue(chain({ precio_compra: 4 }));
+
+      await service.cerrarTurno();
+
+      const entradas = kardex.insertMany.mock.calls[0][0];
+      expect(entradas[0]).toMatchObject({ costoPromedio: 4, importeCUP: 12 });
+    });
+
+    it('a failing cost read still closes the shift with the rows unvalued', async () => {
+      filas = [fila()];
+      const errorLectura = new Error('db caído');
+      kardex.findOne = jest.fn(() => {
+        const c = chain(null);
+        c.exec.mockRejectedValue(errorLectura);
+        return c;
+      });
+
+      const r = await service.cerrarTurno();
+
+      expect(r).toMatchObject({ movimientosKardex: 1 });
+      const entradas = kardex.insertMany.mock.calls[0][0];
+      expect(entradas).toHaveLength(1);
+      expect(entradas[0]).toMatchObject({ tipo: KardexTipo.VENTA, stock: 9 });
+      expect(entradas[0]).not.toHaveProperty('costoPromedio');
+      expect(entradas[0]).not.toHaveProperty('importeCUP');
     });
   });
 

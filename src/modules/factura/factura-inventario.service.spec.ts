@@ -48,6 +48,18 @@ function crearQueryMock<T>(resultado: T): QueryMock<T> {
   return { exec: jest.fn<Promise<T>, []>().mockResolvedValue(resultado) };
 }
 
+/** Chainable query for `select/sort/lean/exec`, as the valuation reads use. */
+function crearQueryEncadenada<T>(resultado: T | Error) {
+  const q: Record<string, jest.Mock> = {};
+  for (const m of ['select', 'sort', 'lean']) q[m] = jest.fn(() => q);
+  q.exec = jest.fn(() =>
+    resultado instanceof Error
+      ? Promise.reject(resultado)
+      : Promise.resolve(resultado),
+  );
+  return q;
+}
+
 function crearQueryFallida<T>(error: Error): QueryMock<T> {
   return { exec: jest.fn<Promise<T>, []>().mockRejectedValue(error) };
 }
@@ -61,6 +73,8 @@ type ProductoModelMock = {
 type KardexModelMock = {
   insertMany: jest.Mock<Promise<unknown[]>, unknown[]>;
   create: jest.Mock;
+  /** Only the SC-2-13 valuation tests set it (latest average cost lookup). */
+  findOne?: jest.Mock;
 };
 
 type ExistenciaServiceMock = {
@@ -642,6 +656,128 @@ describe('FacturaInventarioService', () => {
       await expect(promesa).rejects.toThrow(
         `el stock del producto "Tornillo" (${PRODUCTO_A}) cambió durante la confirmación (disponible ahora 9, solicitado 2); reintente`,
       );
+    });
+  });
+
+  describe('valuación del Kardex (SC-2-13)', () => {
+    it('values the sale entry at the latest Kardex average cost', async () => {
+      decrementosDevuelven(
+        producto(PRODUCTO_A, { stock_inicial: 8 }),
+        producto(PRODUCTO_B, { stock_inicial: 0 }),
+      );
+      kardexModelMock.findOne = jest
+        .fn()
+        .mockReturnValue(crearQueryEncadenada({ costoPromedio: 6.5 }));
+      productoModelMock.findById.mockReturnValue(
+        crearQueryEncadenada({ precio_compra: 4 }) as never,
+      );
+
+      await service.rebajarStock(facturaBase());
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            productoId: new Types.ObjectId(PRODUCTO_A),
+            tipo: KardexTipo.VENTA,
+            cantidad: 2,
+            costoPromedio: 6.5,
+            importeCUP: 13,
+          }),
+          expect.objectContaining({
+            productoId: new Types.ObjectId(PRODUCTO_B),
+            tipo: KardexTipo.VENTA,
+            cantidad: 3,
+            costoPromedio: 6.5,
+            importeCUP: 19.5,
+          }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('falls back to Producto.precio_compra when the Kardex has no average', async () => {
+      decrementosDevuelven(
+        producto(PRODUCTO_A, { stock_inicial: 8 }),
+        producto(PRODUCTO_B, { stock_inicial: 0 }),
+      );
+      kardexModelMock.findOne = jest
+        .fn()
+        .mockReturnValue(crearQueryEncadenada(null));
+      productoModelMock.findById.mockReturnValue(
+        crearQueryEncadenada({ precio_compra: 4 }) as never,
+      );
+
+      await service.rebajarStock(facturaBase());
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({ costoPromedio: 4, importeCUP: 8 }),
+          expect.objectContaining({ costoPromedio: 4, importeCUP: 12 }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('values the cancellation (devolucion) entry the same way', async () => {
+      decrementosDevuelven(
+        producto(PRODUCTO_A, { stock_inicial: 10 }),
+        producto(PRODUCTO_B, { stock_inicial: 3 }),
+      );
+      kardexModelMock.findOne = jest
+        .fn()
+        .mockReturnValue(crearQueryEncadenada({ costoPromedio: 5 }));
+      productoModelMock.findById.mockReturnValue(
+        crearQueryEncadenada({ precio_compra: 4 }) as never,
+      );
+
+      await service.restaurarStock(facturaBase());
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            tipo: KardexTipo.DEVOLUCION,
+            cantidad: 2,
+            costoPromedio: 5,
+            importeCUP: 10,
+          }),
+          expect.objectContaining({
+            tipo: KardexTipo.DEVOLUCION,
+            cantidad: 3,
+            costoPromedio: 5,
+            importeCUP: 15,
+          }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('a failing cost read still writes the entries unvalued and only warns', async () => {
+      decrementosDevuelven(
+        producto(PRODUCTO_A, { stock_inicial: 8 }),
+        producto(PRODUCTO_B, { stock_inicial: 0 }),
+      );
+      kardexModelMock.findOne = jest
+        .fn()
+        .mockReturnValue(crearQueryEncadenada(new Error('db caído')));
+      productoModelMock.findById.mockReturnValue(
+        crearQueryEncadenada({ precio_compra: 4 }) as never,
+      );
+
+      await service.rebajarStock(facturaBase());
+
+      const filas = kardexModelMock.insertMany.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >[];
+      expect(filas).toHaveLength(2);
+      for (const fila of filas) {
+        expect(fila).not.toHaveProperty('costoPromedio');
+        expect(fila).not.toHaveProperty('importeCUP');
+      }
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('No se pudo valuar la salida del producto'),
+      );
+      expect(errorSpy).not.toHaveBeenCalled();
     });
   });
 

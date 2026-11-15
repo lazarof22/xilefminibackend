@@ -3,10 +3,14 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Kardex, KardexTipo } from '../kardex/schema/kardex.schema';
+import { Producto } from '../producto/schemas/producto.schema';
+import { valuarMovimiento } from '../kardex/costo-promedio.util';
+import { costoDeSalida } from '../kardex/valuacion-salida';
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import {
   EstadoTurnoCaja,
@@ -88,6 +92,13 @@ export class ReportePlusService {
     private archivadaModel: Model<LineaTurnoArchivada>,
     @InjectModel(Devolucion.name)
     private devolucionModel: Model<Devolucion>,
+    /**
+     * Only the `precio_compra` fallback of the valuation (SC-2-13) needs it;
+     * without it the legacy rows are still valued at the Kardex average.
+     */
+    @Optional()
+    @InjectModel(Producto.name)
+    private productoModel?: Model<Producto>,
   ) {}
 
   /** Filas abiertas (las que aún no reclamó ningún cierre). */
@@ -208,6 +219,23 @@ export class ReportePlusService {
       // 1) Kardex primero (las facturas ya lo escribieron al confirmarse).
       const pendientes = filas.filter((f) => !f.enKardex);
       if (pendientes.length > 0) {
+        // SC-2-13: valued at the product's current average cost, read once
+        // per product. A failed read never blocks the close: row unvalued.
+        const costos = new Map<string, number | undefined>();
+        for (const f of pendientes) {
+          const clave = String(f.productoId);
+          if (!costos.has(clave)) {
+            costos.set(
+              clave,
+              await costoDeSalida(
+                this.kardexModel,
+                this.productoModel,
+                clave,
+                this.logger,
+              ),
+            );
+          }
+        }
         await this.kardexModel.insertMany(
           pendientes.map((f) => ({
             fecha: f.fecha,
@@ -217,6 +245,10 @@ export class ReportePlusService {
             stock: f.stockFinal,
             motivo: `Venta (${f.metodoPago}) - cierre de turno`,
             referencia,
+            ...valuarMovimiento(
+              f.cantidadVendida,
+              costos.get(String(f.productoId)),
+            ),
           })),
           { ordered: true, throwOnValidationError: true },
         );
