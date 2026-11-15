@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { CreateKardexDto } from './dto/create-kardex.dto';
 import { UpdateKardexDto } from './dto/update-kardex.dto';
 import { Kardex, KardexTipo } from './schema/kardex.schema';
@@ -332,6 +332,14 @@ export class KardexService {
   //Eliminar un kardex
 
   async remove(id: string): Promise<KardexResultadoMensaje> {
+    // Igual que en update: en el modo unificado el kardex es la evidencia del
+    // saldo repartido por ubicación y un movimiento no se borra.
+    if (await this.existenciaService.estaUnificado()) {
+      throw new ConflictException(
+        'En el modo unificado los movimientos de kardex no se eliminan; registre un ajuste de inventario',
+      );
+    }
+
     const deletekar = await this.kardexModel.findByIdAndDelete(id);
 
     if (!deletekar) {

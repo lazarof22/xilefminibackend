@@ -8,6 +8,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import { PagoService } from './pago.service';
 import {
   CreatePagoCreditoDto,
@@ -16,8 +19,11 @@ import {
 } from './dto/create-pago.dto';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 
+/** Registrar pagos: el checkout del POS los registra en el servidor; ninguna pantalla llama a estas rutas. */
+export const ROLES_ESCRIBIR_PAGOS = [UsuarioRol.ADMIN, UsuarioRol.GERENTE];
+
 @ApiTags('Pago')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('pago')
 export class PagoController {
   constructor(private readonly pagoService: PagoService) {}
@@ -29,6 +35,7 @@ export class PagoController {
   })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Post('/pagoEfectivo')
+  @Roles(...ROLES_ESCRIBIR_PAGOS)
   createPagoE(@Body() createPagoEfectivoDto: CreatePagoEfectivoDto) {
     return this.pagoService.createPagoE(createPagoEfectivoDto);
   }
@@ -40,6 +47,7 @@ export class PagoController {
   })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Post('/pagoTransferencia')
+  @Roles(...ROLES_ESCRIBIR_PAGOS)
   createPagoT(@Body() createPagoTransferenciaDto: CreatePagoTransferenciaDto) {
     return this.pagoService.createPagoT(createPagoTransferenciaDto);
   }
@@ -51,6 +59,7 @@ export class PagoController {
   })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Post('/pagoCredito')
+  @Roles(...ROLES_ESCRIBIR_PAGOS)
   createPagoC(@Body() createPagoCreditoDto: CreatePagoCreditoDto) {
     return this.pagoService.createPagoC(createPagoCreditoDto);
   }

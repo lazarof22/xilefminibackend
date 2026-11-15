@@ -16,6 +16,42 @@ import {
 import { NomencladorHelper } from '../nomenclador-helper/nomenclador-helper.service';
 import { ExistenciaService } from '../../inventario/exitencia/existencia.service';
 
+/**
+ * Colecciones que NUNCA se exportan ni se importan en el respaldo JSON:
+ * usuarios (hashes de contraseña), licencias y su auditoría, y las
+ * operaciones idempotentes. Se comparan por prefijo, sin distinguir mayúsculas.
+ */
+export const COLECCIONES_PROTEGIDAS_PREFIJOS: readonly string[] = [
+  'usuarios',
+  'licencias',
+  'auditoria_licencias',
+  'operaciones_idempotentes',
+];
+
+/** Clave aditiva del respaldo con las colecciones que se omitieron. */
+export const CLAVE_OMITIDAS = '__omitidas';
+
+function esColeccionProtegida(nombre: string): boolean {
+  const n = nombre.toLowerCase();
+  return (
+    n.startsWith('system.') ||
+    COLECCIONES_PROTEGIDAS_PREFIJOS.some((prefijo) => n.startsWith(prefijo))
+  );
+}
+
+/** Devuelve por qué un documento no se puede insertar tal cual, o null. */
+function motivoDocumentoInvalido(doc: unknown): string | null {
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+    return 'el documento debe ser un objeto';
+  }
+  const clave = Object.keys(doc).find(
+    (k) => k.startsWith('$') || k.includes('.'),
+  );
+  return clave
+    ? `campo no permitido "${clave}" (no puede empezar por $ ni contener .)`
+    : null;
+}
+
 interface CsvRow {
   codigo: string;
   nombre: string;
@@ -319,21 +355,22 @@ export class ImportExportService {
   async exportAllToJson(): Promise<Record<string, unknown[]>> {
     const collections = await this.connection.db!.listCollections().toArray();
     const result: Record<string, unknown[]> = {};
-
-    const excludeCollections = new Set([
-      'system.views', 'system.users', 'system.keys',
-      'system.buckets', 'system.profile', 'system.js',
-    ]);
+    const omitidas: string[] = [];
 
     for (const col of collections) {
       const name = col.name;
-      if (name.startsWith('system.') || excludeCollections.has(name)) continue;
+      if (name.startsWith('system.')) continue;
+      if (esColeccionProtegida(name)) {
+        omitidas.push(name);
+        continue;
+      }
       const docs = await this.connection.db!.collection(name).find().toArray();
       result[name] = docs.map((doc) => {
         const { _id, __v, ...rest } = doc as Record<string, unknown>;
         return rest;
       });
     }
+    if (omitidas.length > 0) result[CLAVE_OMITIDAS] = omitidas;
     return result;
   }
 
@@ -343,11 +380,23 @@ export class ImportExportService {
     const errors: string[] = [];
     let imported = 0;
 
+    const prohibidas = Object.keys(data).filter(esColeccionProtegida);
+    if (prohibidas.length > 0) {
+      throw new BadRequestException(
+        `No se pueden importar estas colecciones: ${prohibidas.join(', ')}`,
+      );
+    }
+
     for (const [collectionName, docs] of Object.entries(data)) {
-      if (!Array.isArray(docs)) continue;
+      if (collectionName === CLAVE_OMITIDAS || !Array.isArray(docs)) continue;
       try {
         const collection = this.connection.db!.collection(collectionName);
         for (const doc of docs) {
+          const motivo = motivoDocumentoInvalido(doc);
+          if (motivo) {
+            errors.push(`${collectionName}: ${motivo}`);
+            continue;
+          }
           try {
             await collection.insertOne(doc as Record<string, unknown>);
             imported++;

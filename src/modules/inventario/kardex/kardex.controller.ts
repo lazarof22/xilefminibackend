@@ -6,10 +6,16 @@ import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
+
+/** Crear, modificar y eliminar movimientos de kardex. */
+export const ROLES_ESCRIBIR_KARDEX = [UsuarioRol.ADMIN, UsuarioRol.ECONOMICO];
 
 @ApiTags()
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('kardex')
 export class KardexController {
   constructor(private readonly kardexService: KardexService) { }
@@ -18,6 +24,7 @@ export class KardexController {
   @ApiResponse({ status: 201, description: 'Kardex registrado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Post()
+  @Roles(...ROLES_ESCRIBIR_KARDEX)
   create(@Body() createKardexDto: CreateKardexDto) {
     return this.kardexService.create(createKardexDto);
   }
@@ -53,6 +60,7 @@ export class KardexController {
   @ApiResponse({ status: 201, description: 'Kardex modificado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Patch(':id')
+  @Roles(...ROLES_ESCRIBIR_KARDEX)
   update(@Param('id') id: string, @Body() updateKardexDto: UpdateKardexDto) {
     return this.kardexService.update(id, updateKardexDto);
   }
@@ -61,6 +69,7 @@ export class KardexController {
   @ApiResponse({ status: 201, description: 'Kardex eliminado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Delete(':id')
+  @Roles(...ROLES_ESCRIBIR_KARDEX)
   remove(@Param('id') id: string) {
     return this.kardexService.remove(id);
   }

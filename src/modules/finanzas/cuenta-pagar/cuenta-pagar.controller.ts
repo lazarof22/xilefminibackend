@@ -15,15 +15,26 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
+
+/** Registrar, modificar, abonar y eliminar cuentas por pagar. */
+export const ROLES_ESCRIBIR_CXP = [
+  UsuarioRol.ADMIN,
+  UsuarioRol.ECONOMICO,
+  UsuarioRol.GERENTE,
+];
 
 @ApiTags('Cuentas por Pagar')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('cuenta-pagar')
 export class CuentaPagarController {
   constructor(private readonly cxpService: CuentaPagarService) {}
 
   @Post()
+  @Roles(...ROLES_ESCRIBIR_CXP)
   @ApiOperation({ summary: 'Registrar cuenta por pagar' })
   @ApiResponse({
     status: 201,
@@ -86,6 +97,7 @@ export class CuentaPagarController {
   }
 
   @Patch(':id')
+  @Roles(...ROLES_ESCRIBIR_CXP)
   @ApiOperation({ summary: 'Actualizar cuenta por pagar' })
   @ApiParam({ name: 'id', description: 'ID de la cuenta por pagar' })
   @ApiResponse({ status: 200, description: 'Cuenta por pagar actualizada' })
@@ -95,6 +107,7 @@ export class CuentaPagarController {
   }
 
   @Post(':id/abonar')
+  @Roles(...ROLES_ESCRIBIR_CXP)
   @ApiOperation({ summary: 'Registrar pago a cuenta por pagar' })
   @ApiParam({ name: 'id', description: 'ID de la cuenta por pagar' })
   @ApiResponse({ status: 200, description: 'Pago registrado exitosamente' })
@@ -105,6 +118,7 @@ export class CuentaPagarController {
   }
 
   @Delete(':id')
+  @Roles(...ROLES_ESCRIBIR_CXP)
   @ApiOperation({ summary: 'Eliminar cuenta por pagar' })
   @ApiParam({ name: 'id', description: 'ID de la cuenta por pagar' })
   @ApiResponse({ status: 200, description: 'Cuenta por pagar eliminada' })

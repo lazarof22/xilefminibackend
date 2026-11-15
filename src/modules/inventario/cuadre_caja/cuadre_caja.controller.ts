@@ -15,10 +15,28 @@ import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
+
+/** Crear el cuadre operativo: el cajero lo registra al cerrar. */
+export const ROLES_CREAR_CUADRE = [
+  UsuarioRol.CAJERO,
+  UsuarioRol.ADMIN,
+  UsuarioRol.GERENTE,
+  UsuarioRol.ECONOMICO,
+];
+
+/** Corregir o eliminar un cuadre ya registrado. */
+export const ROLES_MODIFICAR_CUADRE = [
+  UsuarioRol.ADMIN,
+  UsuarioRol.ECONOMICO,
+  UsuarioRol.GERENTE,
+];
 
 @ApiTags('Cuadre Caja')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('cuadre-caja')
 export class CuadreCajaController {
   constructor(private readonly cuadreCajaService: CuadreCajaService) {}
@@ -33,6 +51,7 @@ export class CuadreCajaController {
   })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Post()
+  @Roles(...ROLES_CREAR_CUADRE)
   create(@Body() createCuadreCajaDto: CreateCuadreCajaDto) {
     return this.cuadreCajaService.create(createCuadreCajaDto);
   }
@@ -105,6 +124,7 @@ export class CuadreCajaController {
   @ApiResponse({ status: 201, description: 'Cuadre modificado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Patch(':id')
+  @Roles(...ROLES_MODIFICAR_CUADRE)
   update(
     @Param('id') id: string,
     @Body() updateCuadreCajaDto: UpdateCuadreCajaDto,
@@ -116,6 +136,7 @@ export class CuadreCajaController {
   @ApiResponse({ status: 201, description: 'Cuadre eliminado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @Delete(':id')
+  @Roles(...ROLES_MODIFICAR_CUADRE)
   remove(@Param('id') id: string) {
     return this.cuadreCajaService.remove(id);
   }

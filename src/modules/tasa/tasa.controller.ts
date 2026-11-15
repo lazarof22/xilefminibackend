@@ -11,6 +11,16 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/decorator/roles.decorator";
+import { UsuarioRol } from "../auth/schemas/usuarios.schema";
+
+/** Crear, actualizar y eliminar tasas (el checkout y el POS solo las leen). */
+export const ROLES_ESCRIBIR_TASAS = [
+  UsuarioRol.ADMIN,
+  UsuarioRol.GERENTE,
+  UsuarioRol.ECONOMICO,
+];
 import {
   ApiBody,
   ApiOperation,
@@ -24,7 +34,7 @@ import { CreateTasaDto } from "./dto/create-tasa.dto";
 import { UpdateTasaDto } from "./dto/update-tasa.dto";
 
 @ApiTags("Tasas")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("tasas")
 export class TasaController {
   constructor(
@@ -32,6 +42,7 @@ export class TasaController {
   ) {}
 
   @Post()
+  @Roles(...ROLES_ESCRIBIR_TASAS)
   @ApiOperation({
     summary: "Crear una tasa de cambio",
     description:
@@ -95,6 +106,7 @@ export class TasaController {
   }
 
   @Patch("moneda/:moneda")
+  @Roles(...ROLES_ESCRIBIR_TASAS)
   @ApiOperation({
     summary: "Crear o actualizar una tasa por código de moneda",
     description:
@@ -150,6 +162,7 @@ export class TasaController {
   }
 
   @Patch(":id")
+  @Roles(...ROLES_ESCRIBIR_TASAS)
   @ApiOperation({
     summary: "Actualizar una tasa por identificador",
   })
@@ -176,6 +189,7 @@ export class TasaController {
   }
 
   @Delete(":id")
+  @Roles(...ROLES_ESCRIBIR_TASAS)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: "Eliminar una tasa por identificador",

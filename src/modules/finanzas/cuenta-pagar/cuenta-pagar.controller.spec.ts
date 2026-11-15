@@ -1,5 +1,13 @@
+import { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import { Test, TestingModule } from '@nestjs/testing';
-import { CuentaPagarController } from './cuenta-pagar.controller';
+import {
+  CuentaPagarController,
+  ROLES_ESCRIBIR_CXP,
+} from './cuenta-pagar.controller';
 import { CuentaPagarService } from './cuenta-pagar.service';
 import { EstadoCxP } from './types/cuenta-pagar.types';
 import { Types } from 'mongoose';
@@ -147,5 +155,69 @@ describe('CuentaPagarController', () => {
       expect(mockService.remove).toHaveBeenCalledWith(id);
       expect(result).toEqual({ deleted: true });
     });
+  });
+});
+
+const GUARDS_METADATA_KEY = '__guards__';
+const ROLES_METADATA_KEY = 'roles';
+
+const proto = CuentaPagarController.prototype as unknown as Record<
+  string,
+  (...a: never[]) => unknown
+>;
+
+const contexto = (rol: string, handler: (...a: never[]) => unknown) =>
+  ({
+    getHandler: () => handler,
+    getClass: () => CuentaPagarController,
+    switchToHttp: () => ({ getRequest: () => ({ user: { rol } }) }),
+  }) as unknown as ExecutionContext;
+
+const guard = new RolesGuard(new Reflector());
+
+describe('CuentaPagarController roles', () => {
+  it('requires JWT and roles guards on the whole controller', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA_KEY,
+      CuentaPagarController,
+    ) as unknown[];
+    expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
+  });
+
+  it('restricts every write (create, update, abonar, remove) to administrador, economico and gerente', () => {
+    for (const nombre of ['create', 'update', 'abonar', 'remove']) {
+      expect(Reflect.getMetadata(ROLES_METADATA_KEY, proto[nombre])).toEqual(
+        ROLES_ESCRIBIR_CXP,
+      );
+      for (const rol of [
+        UsuarioRol.CAJERO,
+        UsuarioRol.FACTURADOR,
+        UsuarioRol.EMPLEADO,
+        UsuarioRol.JEFE,
+      ]) {
+        expect(guard.canActivate(contexto(rol, proto[nombre]))).toBe(false);
+      }
+      for (const rol of ROLES_ESCRIBIR_CXP) {
+        expect(guard.canActivate(contexto(rol, proto[nombre]))).toBe(true);
+      }
+    }
+  });
+
+  it('leaves read handlers without @Roles (any authenticated role)', () => {
+    for (const nombre of [
+      'findAll',
+      'getVencidas',
+      'getEnvejecimiento',
+      'getEnvejecimientoPorProveedor',
+      'getResumen',
+      'findOne',
+    ]) {
+      expect(
+        Reflect.getMetadata(ROLES_METADATA_KEY, proto[nombre]),
+      ).toBeUndefined();
+      expect(
+        guard.canActivate(contexto(UsuarioRol.FACTURADOR, proto[nombre])),
+      ).toBe(true);
+    }
   });
 });
