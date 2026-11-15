@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { PassportStrategy } from '@nestjs/passport';
-import { Model } from 'mongoose';
+import { Model, isValidObjectId } from 'mongoose';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { obtenerJwtSecret } from '../constants/constants';
 import {
@@ -38,6 +38,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // Un token emitido para una acción acotada no es una sesión: si lo fuera, quien lo recibe
     // (el cajero) actuaría con el rol del supervisor que lo autorizó.
     if (payload.aud !== undefined) {
+      throw new UnauthorizedException('Token no válido como sesión');
+    }
+    // `sub` es el id del usuario: un objeto o un arreglo no es una sesión (y no debe llegar a la consulta).
+    if (typeof payload.sub !== 'string' || !isValidObjectId(payload.sub)) {
       throw new UnauthorizedException('Token no válido como sesión');
     }
     const user = await this.userModel.findById(payload.sub).lean().exec();
