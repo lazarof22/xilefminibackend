@@ -1240,13 +1240,43 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
       }
     });
 
-    it('parametros devuelve el impuesto vigente y el descuento máximo del rol', async () => {
+    it('parametros devuelve el impuesto vigente, el descuento máximo del rol y las monedas de cobro', async () => {
       const e = crearEntorno({ impuesto: 7.5 });
+
+      const parametros = await e.checkout.parametros(e.usuario('cajero'));
+
+      expect(parametros).toMatchObject({
+        impuestoPorciento: 7.5,
+        descuentoMaximoPct: 100,
+        tipoTasa: 'tasaMercadoInformal',
+      });
+      expect(parametros.monedas.map((m) => [m.codigo, m.cupPorUnidad])).toEqual(
+        [
+          ['CUP', 1],
+          ['USD', 400],
+          ['EUR', 450],
+        ],
+      );
+      expect(parametros.monedas[1].denominaciones).toEqual([
+        100, 50, 20, 10, 5, 1,
+      ]);
+    });
+
+    it('si la configuración de monedas está rota, parametros no impide vender: sin monedas (solo CUP)', async () => {
+      const e = crearEntorno({ impuesto: 7.5 });
+      e.modelos.configPagos.insertar({ clave: 'pagos', tipoTasa: 'rota' });
+      const error = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
 
       expect(await e.checkout.parametros(e.usuario('cajero'))).toEqual({
         impuestoPorciento: 7.5,
         descuentoMaximoPct: 100,
+        monedas: [],
       });
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('cobrará solo en CUP'),
+      );
     });
   });
 

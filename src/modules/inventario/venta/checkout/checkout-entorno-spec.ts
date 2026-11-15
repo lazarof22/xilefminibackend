@@ -18,9 +18,20 @@ import { Types } from 'mongoose';
 import { CLAVE_CONFIG_INVENTARIO } from '../../exitencia/schema/configuracion-inventario.schema';
 import { ExistenciaService } from '../../exitencia/existencia.service';
 import { Doc, FakeModel, Interruptor } from '../../exitencia/fake-mongo-spec';
+import { MonedaPagoService } from '../../pago/moneda-pago.service';
 import { PagoService } from '../../pago/pago.service';
 import { ReportePlusService } from '../../reporte_plus/reporte_plus.service';
+import { ConfiguracionPagosService } from '../../../configuracion-pagos/configuracion-pagos.service';
+import {
+  CLAVE_CONFIG_PAGOS,
+  type TipoTasa,
+} from '../../../configuracion-pagos/schema/configuracion-pagos.schema';
 import { ConfiguracionTributariaService } from '../../../configuracion/configuracion-tributaria/configuracion-tributaria.service';
+import { BancoService } from '../../../nomencladores/banco/banco.service';
+import { BANCOS_INICIALES } from '../../../nomencladores/banco/bancos-iniciales';
+import { DENOMINACIONES_INICIALES } from '../../../nomencladores/denominacion-moneda/denominaciones-iniciales';
+import { DenominacionMonedaService } from '../../../nomencladores/denominacion-moneda/denominacion-moneda.service';
+import { TasaService } from '../../../tasa/tasa.service';
 import { OperacionIdempotenteService } from '../../../operacion-idempotente/operacion-idempotente.service';
 import type { JwtUser } from '../../../auth/types/jwt-user.type';
 import type { CreateCheckoutDto } from '../dto/create-checkout.dto';
@@ -49,7 +60,40 @@ export interface OpcionesEntorno {
   productos?: ProductoSemilla[];
   /** Datos antiguos: ids de ubicación guardados como TEXTO en productos y existencias. */
   idsComoTexto?: boolean;
+  /** Tasas registradas (CUP por unidad). Por defecto USD y EUR. */
+  tasas?: TasaSemilla[];
+  /** Tasa configurada para cobrar; sin indicarla rige la del mercado informal. */
+  tipoTasa?: TipoTasa;
+  /** Bancos del nomenclador (por defecto los iniciales, sin prefijos de tarjeta). */
+  bancos?: BancoSemilla[];
 }
+
+export interface TasaSemilla {
+  moneda: string;
+  tasaBancoCentral: number;
+  tasaMercadoInformal: number;
+  activa?: boolean;
+  fechaActualizacion?: Date;
+}
+
+export interface BancoSemilla {
+  codigo: string;
+  nombre: string;
+  prefijosTarjeta?: string[];
+  activo?: boolean;
+}
+
+/** Tasas de las pruebas: USD a 400 y EUR a 450 CUP en el mercado informal. */
+export const TASAS_BASE: TasaSemilla[] = [
+  { moneda: 'USD', tasaBancoCentral: 120, tasaMercadoInformal: 400 },
+  { moneda: 'EUR', tasaBancoCentral: 130, tasaMercadoInformal: 450 },
+];
+
+/** CI válida (11 dígitos) del cliente de las pruebas. */
+export const CI_CLIENTE_BASE = '90010112345';
+
+/** Fecha de las tasas registradas por defecto. */
+export const FECHA_TASAS_BASE = new Date('2026-01-15T12:00:00Z');
 
 export const PRODUCTOS_BASE: ProductoSemilla[] = [
   { codigo: 'ARR-1', nombre: 'Arroz', precio: 100, stock: 10, stockMinimo: 2 },
@@ -144,11 +188,43 @@ export function crearEntorno(opciones: OpcionesEntorno = {}) {
   // ── Colecciones que escribe el checkout ──
   const clientes = nuevo([
     {
-      id_cliente: '1',
+      id_cliente: CI_CLIENTE_BASE,
       nombre_cliente: 'Juan Pérez',
       tipo_cliente: 'cliente_estandar',
+      tipoIdentidad: 'CI',
+      telefono_cliente: '53456789',
+      codigoPais: '+53',
     },
   ]);
+
+  // ── Monedas, tasas, billetes y bancos (Fase 3) ──
+  const monedasNomenclador = nuevo([
+    { nombre_moneda: 'Peso cubano', tipo_moneda: 'CUP' },
+    { nombre_moneda: 'Dólar estadounidense', tipo_moneda: 'USD' },
+    { nombre_moneda: 'Euro', tipo_moneda: 'EUR' },
+  ]);
+  const tasas = nuevo(
+    (opciones.tasas ?? TASAS_BASE).map((t) => ({
+      activa: true,
+      fechaActualizacion: FECHA_TASAS_BASE,
+      ...t,
+    })),
+  );
+  const denominaciones = nuevo(
+    DENOMINACIONES_INICIALES.map((d) => ({ ...d, activa: true })),
+  );
+  const configPagos = nuevo(
+    opciones.tipoTasa
+      ? [{ clave: CLAVE_CONFIG_PAGOS, tipoTasa: opciones.tipoTasa }]
+      : [],
+  );
+  const bancos = nuevo(
+    (opciones.bancos ?? BANCOS_INICIALES).map((b) => ({
+      prefijosTarjeta: [],
+      activo: true,
+      ...b,
+    })),
+  );
   const ventas = nuevo();
   const kardex = nuevo();
   const contadores = nuevo();
@@ -181,6 +257,11 @@ export function crearEntorno(opciones: OpcionesEntorno = {}) {
     pagoCredito,
     pagoTransferencia,
     operaciones,
+    monedasNomenclador,
+    tasas,
+    denominaciones,
+    configPagos,
+    bancos,
   };
 
   /** Servicios nuevos sobre la misma base (un "proceso" nuevo). */
@@ -192,6 +273,12 @@ export function crearEntorno(opciones: OpcionesEntorno = {}) {
       contenedores as never,
       config as never,
     );
+    const monedasPago = new MonedaPagoService(
+      new TasaService(tasas as never, monedasNomenclador as never),
+      monedasNomenclador as never,
+      new DenominacionMonedaService(denominaciones as never),
+      new ConfiguracionPagosService(configPagos as never),
+    );
     const pagos = new PagoService(
       pagoBase as never,
       pagoEfectivo as never,
@@ -199,6 +286,8 @@ export function crearEntorno(opciones: OpcionesEntorno = {}) {
       pagoTransferencia as never,
       clientes as never,
       ventas as never,
+      monedasPago,
+      new BancoService(bancos as never),
     );
     const reporte = new ReportePlusService(
       reportes as never,

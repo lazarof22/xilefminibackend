@@ -1,6 +1,10 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument } from 'mongoose';
 import { Pago } from './pago.schema';
+import {
+  TasaUsadaSnapshot,
+  TasaUsadaSnapshotSchema,
+} from './tasa-usada.schema';
 
 export type PagoEfectivoDocument = HydratedDocument<PagoEfectivo>;
 
@@ -61,6 +65,18 @@ export class DatosClienteDescuento {
   telefono!: string;
 }
 
+/** Cantidad de billetes o monedas de un valor (Fase 3: desglose por denominaciones de la moneda). */
+@Schema({ _id: false })
+export class LineaDesglose {
+  @Prop({ required: true, min: 0.01 })
+  valor!: number;
+
+  @Prop({ required: true, min: 1 })
+  cantidad!: number;
+}
+
+export const LineaDesgloseSchema = SchemaFactory.createForClass(LineaDesglose);
+
 @Schema()
 export class PagoEfectivo extends Pago {
   @Prop({ type: DesgloseBilletes, required: false })
@@ -85,8 +101,32 @@ export class PagoEfectivo extends Pago {
   @Prop()
   monto_pagado!: number;
 
-  @Prop({ type: Types.ObjectId, ref: 'Moneda', required: false })
-  moneda?: Types.ObjectId | string;
+  /**
+   * Código de la moneda en la que el cliente entregó el efectivo (CUP, USD,
+   * EUR...). Los pagos anteriores a la Fase 3 no la llevan y eran en CUP.
+   */
+  @Prop({ type: String, required: false })
+  moneda?: string;
+
+  /**
+   * Desglose por denominaciones de `moneda` (Fase 3), de mayor a menor valor.
+   * Es una lista y no un mapa porque Mongoose no admite claves con punto
+   * ("0.5") en un Map.
+   */
+  @Prop({ type: [LineaDesgloseSchema], default: undefined })
+  desgloseDenominaciones?: LineaDesglose[];
+
+  /** Moneda en la que se devolvió el cambio, si difiere de `moneda`. */
+  @Prop({ type: String, required: false })
+  monedaCambio?: string;
+
+  /** El cambio expresado en `monedaCambio` (`cambio` está en `moneda`). */
+  @Prop({ required: false, min: 0 })
+  cambioConvertido?: number;
+
+  /** Tasas usadas (solo si el pago o el cambio fue en una moneda distinta del CUP). */
+  @Prop({ type: TasaUsadaSnapshotSchema, required: false })
+  tasaUsada?: TasaUsadaSnapshot;
 
   // ✅ NUEVO: Datos del cliente cuando es "cliente-por-descuento"
   @Prop({ type: DatosClienteDescuento, required: false })

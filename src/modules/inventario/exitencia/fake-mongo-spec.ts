@@ -16,6 +16,8 @@
  * forzar un entrelazado concreto, `hooks.antesDeEscribir` se ejecuta justo
  * antes de cada escritura y puede tocar los datos como lo haría otro cajero.
  *
+ * Fase 3 añade `findByIdAndDelete` (para los nomencladores nuevos).
+ *
  * Fase 2 (checkout) lo amplía sin cambiar lo anterior: operadores `$push` y
  * `$unset`, `insertMany` (con `ordered: false`), `_id` único en toda inserción
  * (E11000), los ganchos `hooks.antes` / `hooks.despues` sobre CUALQUIER
@@ -495,6 +497,11 @@ export class FakeModel {
       this.despues('findOneAndDelete', { filtro });
       return borrado;
     });
+  }
+
+  /** Como Mongoose: borra por `_id` y devuelve el documento borrado (null si no hay). */
+  findByIdAndDelete(id: unknown): Consulta<Doc | null> {
+    return this.findOneAndDelete({ _id: id });
   }
 
   /** Como Mongoose: un update sin operadores se aplica como `$set`. */

@@ -1,7 +1,10 @@
 import { Types } from 'mongoose';
 import { aObjectId } from '../../exitencia/existencia.types';
 import type { UbicacionCantidad } from '../../exitencia/existencia.types';
+import type { TipoTasa } from '../../../configuracion-pagos/schema/configuracion-pagos.schema';
+import type { TasaUsada } from '../../pago/divisas';
 import type { PagoCheckoutPreparado } from '../../pago/pago.service';
+import type { MonedaCobro } from '../../pago/moneda-pago.service';
 import type { PasoOperacion } from '../../../operacion-idempotente/schema/operacion-idempotente.schema';
 import type { LineaCalculada, TotalesVenta } from './checkout-totales';
 
@@ -48,6 +51,16 @@ export interface PlanCheckout {
   advertencias: string[];
 }
 
+/** Lo que devuelve GET /venta/parametros. */
+export interface ParametrosCheckout {
+  impuestoPorciento: number;
+  descuentoMaximoPct: number;
+  /** Tasa con la que se convierten las monedas: la del Banco Central o la del mercado informal. */
+  tipoTasa?: TipoTasa;
+  /** Monedas con las que se puede cobrar efectivo, con su tasa y sus billetes. Vacío = solo CUP con los billetes de siempre. */
+  monedas: MonedaCobro[];
+}
+
 export interface ItemRespuesta {
   productoId: string;
   codigo: string;
@@ -82,17 +95,56 @@ export interface RespuestaCheckout {
   pago: {
     _id: string;
     tipo: string;
+    /** Efectivo recibido, en `moneda`. */
     montoRecibido: number;
+    /** Cambio, en `moneda`. */
     cambio: number;
     esCuentaCasa: boolean;
+    /** Moneda en la que pagó el cliente (CUP, USD...). */
+    moneda?: string;
+    /** Lo que había que cobrar, expresado en `moneda`. */
+    montoAPagarMoneda?: number;
+    /** Moneda en la que se devolvió el cambio. */
+    monedaCambio?: string;
+    /** El cambio expresado en `monedaCambio` (solo si difiere de `moneda`). */
+    cambioConvertido?: number;
+    /** Billetes y monedas recibidos, valor → cantidad. */
+    desgloseValidado?: Record<string, number>;
+    tasaUsada?: TasaUsada;
   };
+  /** Cambio, en la moneda del pago. */
   cambio: number;
+  /** El cambio en la moneda de devolución, si difiere de la del pago. */
+  cambioConvertido?: number;
+  tasaUsada?: TasaUsada;
   comprobante: string;
   advertencias: string[];
   idempotencia: {
     clave: string;
     estado: 'completada';
     repetida: boolean;
+  };
+}
+
+/** Lo que la respuesta cuenta del pago en otra moneda (nada si el pago fue en CUP de siempre). */
+export function detalleDivisas(
+  plan: PlanCheckout,
+): Partial<RespuestaCheckout['pago']> {
+  const { pago } = plan;
+
+  return {
+    ...(pago.moneda ? { moneda: pago.moneda } : {}),
+    ...(pago.montoAPagarMoneda !== undefined
+      ? { montoAPagarMoneda: pago.montoAPagarMoneda }
+      : {}),
+    ...(pago.monedaCambio ? { monedaCambio: pago.monedaCambio } : {}),
+    ...(pago.cambioConvertido !== undefined
+      ? { cambioConvertido: pago.cambioConvertido }
+      : {}),
+    ...(pago.desgloseValidado
+      ? { desgloseValidado: pago.desgloseValidado }
+      : {}),
+    ...(pago.tasaUsada ? { tasaUsada: pago.tasaUsada } : {}),
   };
 }
 
@@ -185,6 +237,12 @@ const aId = (valor: unknown): Types.ObjectId => {
 const aIdOpcional = (valor: unknown): Types.ObjectId | undefined =>
   valor === undefined || valor === null ? undefined : aId(valor);
 
+/** La fecha de la tasa vuelve a ser una Date, venga como venga de la base. */
+const leerTasaUsada = (tasa: TasaUsada): TasaUsada => ({
+  ...tasa,
+  ...(tasa.fecha ? { fecha: new Date(tasa.fecha) } : {}),
+});
+
 /**
  * El plan se guarda en la base como documento libre: al leerlo se vuelven a
  * dejar como ObjectId y Date los campos que lo necesitan, venga como venga.
@@ -209,10 +267,23 @@ export function leerPlan(bruto: unknown): PlanCheckout | undefined {
     })),
     pago: {
       ...plan.pago,
+      ...(plan.pago.tasaUsada
+        ? { tasaUsada: leerTasaUsada(plan.pago.tasaUsada) }
+        : {}),
       documento: {
         ...plan.pago.documento,
         ...(plan.pago.documento.clienteId
           ? { clienteId: aId(plan.pago.documento.clienteId) }
+          : {}),
+        ...(plan.pago.documento.bancoId
+          ? { bancoId: aId(plan.pago.documento.bancoId) }
+          : {}),
+        ...(plan.pago.documento.tasaUsada
+          ? {
+              tasaUsada: leerTasaUsada(
+                plan.pago.documento.tasaUsada as TasaUsada,
+              ),
+            }
           : {}),
       },
     },

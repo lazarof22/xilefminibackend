@@ -80,6 +80,13 @@ export class CuadreCaja {
   @Prop({ required: true, min: 0 })
   recargos!: number;
 
+  /**
+   * Corrección (en CUP) por las ventas en efectivo cobradas o devueltas en otra
+   * moneda: el total de esas ventas no entró en CUP. Puede ser negativa.
+   */
+  @Prop({ required: true, default: 0 })
+  ajuste_divisas!: number;
+
   @Prop({ required: true, min: 0 })
   descuentos!: number;
 
@@ -89,7 +96,13 @@ export class CuadreCaja {
   @Prop({ required: true, min: 0 })
   total_efectivo!: number;
 
-  @Prop({ required: true, min: 0, default: 0 })
+  /**
+   * Lo que debería haber en la caja de pesos según las ventas del día. Puede ser
+   * negativo: con ventas cobradas en otra moneda el cambio sale de la caja de
+   * pesos y puede ser mayor que lo que entró (hasta que el turno registre el
+   * fondo con el que se abrió la caja).
+   */
+  @Prop({ required: true, default: 0 })
   efectivo_esperado!: number;
 
   @Prop({ required: true, default: 0 })
