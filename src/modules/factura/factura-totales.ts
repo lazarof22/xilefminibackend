@@ -8,7 +8,8 @@
  *   item.total = max(0, gross - lineDiscount + recargo)
  *   subtotal = Σ gross; descuentoTotal = Σ lineDiscount; recargoTotal = Σ recargo
  *   base = Σ item.total
- *   impuesto.importe = base * porciento / 100 when porciento is set
+ *   taxable base = Σ item.total of the items that are not `exento`
+ *   impuesto.importe = taxable base * porciento / 100 when porciento is set
  *   total = base + importe
  */
 
@@ -23,6 +24,8 @@ export interface ItemFacturaEntrada {
   descuentoPct: number;
   descuentoMonto: number;
   recargo: number;
+  /** Exempt items add to the total but not to the taxable base. */
+  exento?: boolean;
 }
 
 export interface ItemFacturaCalculado extends ItemFacturaEntrada {
@@ -97,7 +100,14 @@ export function calcularTotales(
     itemsCalculados.reduce((acumulado, item) => acumulado + item.total, 0),
   );
 
-  const impuestoCalculado = calcularImpuesto(base, impuesto);
+  const baseImponible = redondear(
+    itemsCalculados.reduce(
+      (acumulado, item) => (item.exento ? acumulado : acumulado + item.total),
+      0,
+    ),
+  );
+
+  const impuestoCalculado = calcularImpuesto(baseImponible, impuesto);
   const total = redondear(base + (impuestoCalculado?.importe ?? 0));
 
   return {

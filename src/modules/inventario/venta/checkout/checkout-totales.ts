@@ -13,6 +13,8 @@ export interface ProductoParaVenta {
   nombre_producto: string;
   precio_venta: number;
   stock_minimo?: number;
+  /** Productos sin el campo (datos antiguos) se tratan como gravados. */
+  gravado?: 'gravado' | 'exento';
 }
 
 export interface EntradaLinea {
@@ -110,6 +112,7 @@ export function calcularVenta(
       descuentoPct: e.descuentoPct,
       descuentoMonto: 0,
       recargo: 0,
+      exento: e.producto.gravado === 'exento',
     };
   });
 
@@ -119,9 +122,10 @@ export function calcularVenta(
   });
 
   const impuestoTotal = calculado.impuesto?.importe ?? 0;
+  // Solo las líneas gravadas pesan en el reparto: las exentas no llevan impuesto.
   const impuestoPorLinea = repartirCentimos(
     impuestoTotal,
-    calculado.items.map((i) => i.total),
+    calculado.items.map((i) => (i.exento ? 0 : i.total)),
   );
 
   const lineas: LineaCalculada[] = calculado.items.map((item, i) => {

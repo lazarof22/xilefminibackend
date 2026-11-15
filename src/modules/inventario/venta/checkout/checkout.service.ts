@@ -29,11 +29,8 @@ import { EstadoOperacion } from '../../../operacion-idempotente/schema/operacion
 import { ExistenciaService } from '../../exitencia/existencia.service';
 import type { ResultadoMovimiento } from '../../exitencia/existencia.types';
 import { Kardex, KardexTipo } from '../../kardex/schema/kardex.schema';
-import {
-  costoVigente,
-  valuarMovimiento,
-} from '../../kardex/costo-promedio.util';
-import { ultimoCostoPromedio } from '../../kardex/costo-promedio.consulta';
+import { valuarMovimiento } from '../../kardex/costo-promedio.util';
+import { costoDeSalida } from '../../kardex/valuacion-salida';
 import { PagoService } from '../../pago/pago.service';
 import type { ClienteDelPago } from '../../pago/pago.service';
 import { Producto } from '../../producto/schemas/producto.schema';
@@ -375,6 +372,7 @@ export class CheckoutService {
           nombre_producto: producto.nombre_producto,
           precio_venta: producto.precio_venta,
           stock_minimo: producto.stock_minimo,
+          gravado: producto.gravado,
         },
         cantidad: item.cantidad,
         descuentoPct: item.descuentoPct ?? 0,
@@ -797,22 +795,12 @@ export class CheckoutService {
   private async costoDeSalida(
     productoId: Types.ObjectId,
   ): Promise<number | undefined> {
-    try {
-      const producto = await this.productoModel
-        .findById(productoId)
-        .select('precio_compra')
-        .lean()
-        .exec();
-      return costoVigente(
-        await ultimoCostoPromedio(this.kardexModel, productoId),
-        producto?.precio_compra,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `No se pudo valuar la salida del producto ${String(productoId)}; el asiento queda sin costo: ${String(error)}`,
-      );
-      return undefined;
-    }
+    return costoDeSalida(
+      this.kardexModel,
+      this.productoModel,
+      productoId,
+      this.logger,
+    );
   }
 
   // ───────────────────────────── Fallos y reversa ─────────────────────────────
