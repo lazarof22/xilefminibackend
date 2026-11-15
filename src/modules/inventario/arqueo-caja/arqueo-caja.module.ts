@@ -28,6 +28,8 @@ import {
   Devolucion,
   DevolucionSchema,
 } from '../devolucion/schema/devolucion.schema';
+import { Venta, VentaSchema } from '../venta/schema/venta.schema';
+import { Pago, PagoSchema } from '../pago/schema/pago.schema';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import {
       { name: Extraccion.name, schema: ExtraccionSchema },
       { name: DepositoBancario.name, schema: DepositoBancarioSchema },
       { name: Devolucion.name, schema: DevolucionSchema },
+      { name: Venta.name, schema: VentaSchema },
+      { name: Pago.name, schema: PagoSchema },
     ]),
   ],
   controllers: [ArqueoCajaController],

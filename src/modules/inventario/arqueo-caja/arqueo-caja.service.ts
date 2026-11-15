@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { HydratedDocument, Model, Types, isValidObjectId } from 'mongoose';
@@ -12,10 +13,13 @@ import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
 import { ReportePlus } from '../reporte_plus/schema/reporte_plus.schema';
 import { LineaTurnoArchivada } from '../reporte_plus/schema/linea-turno-archivada.schema';
+import { Venta } from '../venta/schema/venta.schema';
+import { Pago } from '../pago/schema/pago.schema';
 import {
-  FilaMoneda,
+  FilaVenta,
   MovimientoMoneda,
   redondear,
+  resolverFlujosFisicos,
   resumirPorMoneda,
   ResumenMonedas,
 } from '../reporte_plus/efectivo-turno.util';
@@ -55,6 +59,12 @@ export class ArqueoCajaService {
     private depositoModel: Model<DepositoBancario>,
     @InjectModel(Devolucion.name)
     private devolucionModel: Model<Devolucion>,
+    /**
+     * Venta and Pago let the expected cash follow the physical currencies of
+     * sales made with foreign currency; without them the rows are used as is.
+     */
+    @Optional() @InjectModel(Venta.name) private ventaModel?: Model<Venta>,
+    @Optional() @InjectModel(Pago.name) private pagoModel?: Model<Pago>,
   ) {}
 
   /** Efectivo esperado por moneda de un turno (para precargar el arqueo). */
@@ -197,18 +207,18 @@ export class ArqueoCajaService {
       $gte: turno.fechaApertura,
       $lte: turno.fechaCierre ?? new Date(),
     };
-    const columnas = 'fecha metodoPago total moneda';
+    const columnas = 'fecha metodoPago total moneda origen referencia';
 
     const abiertas = (await this.reporteModel
       .find({ turnoCierre: { $exists: false }, fecha })
       .select(columnas)
       .lean()
-      .exec()) as unknown as FilaMoneda[];
+      .exec()) as unknown as FilaVenta[];
     const archivadas = (await this.archivadaModel
       .find({ fecha })
       .select(columnas)
       .lean()
-      .exec()) as unknown as FilaMoneda[];
+      .exec()) as unknown as FilaVenta[];
     const extracciones = (await this.extraccionModel
       .find({ turnoCaja: turno._id })
       .select('monto moneda')
@@ -227,9 +237,22 @@ export class ArqueoCajaService {
       turno._id,
     );
 
+    // Las ventas con divisas se miden por lo que entró y salió de cada caja
+    // física (su pago), no por la fila del reporte, que siempre está en CUP.
+    const { filas, flujos } = await resolverFlujosFisicos(
+      [...abiertas, ...archivadas],
+      this.ventaModel,
+      this.pagoModel,
+      (error) =>
+        this.logger.warn(
+          `No se pudieron leer los pagos de las ventas del turno ${String(turno._id)}; se usan las filas del reporte: ${String(error)}`,
+        ),
+    );
+
     return resumirPorMoneda({
       fondoInicial: turno.fondoInicial ?? {},
-      filas: [...abiertas, ...archivadas],
+      filas,
+      flujosFisicos: flujos,
       extracciones,
       depositos,
       devolucionesEfectivo,

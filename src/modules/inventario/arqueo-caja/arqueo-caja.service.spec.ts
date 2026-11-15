@@ -14,6 +14,8 @@ import { LineaTurnoArchivada } from '../reporte_plus/schema/linea-turno-archivad
 import { Extraccion } from '../extraccion/schema/extraccion.schema';
 import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.schema';
 import { Devolucion } from '../devolucion/schema/devolucion.schema';
+import { Venta } from '../venta/schema/venta.schema';
+import { Pago } from '../pago/schema/pago.schema';
 
 const chain = <T>(valor: T) => {
   const c: Record<string, jest.Mock> = {};
@@ -303,6 +305,160 @@ describe('ArqueoCajaService', () => {
       await expect(service.crear(dtoBase(), usuario)).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+  });
+  describe('calcularEsperado - ventas en efectivo con divisas (doc §6.6)', () => {
+    const ventaId = new Types.ObjectId();
+    const pagoId = new Types.ObjectId();
+    let venta: Record<string, jest.Mock>;
+    let pago: Record<string, jest.Mock>;
+
+    const filaVenta = (extra: Record<string, unknown> = {}) => ({
+      fecha: new Date('2026-11-02T10:00:00'),
+      metodoPago: 'efectivo',
+      total: 1600,
+      origen: 'venta',
+      referencia: ventaId.toHexString(),
+      ...extra,
+    });
+
+    const crear = async () => {
+      const mod = await Test.createTestingModule({
+        providers: [
+          ArqueoCajaService,
+          { provide: getModelToken(ArqueoCaja.name), useValue: arqueo },
+          { provide: getModelToken(TurnoCaja.name), useValue: turno },
+          { provide: getModelToken(ReportePlus.name), useValue: reporte },
+          {
+            provide: getModelToken(LineaTurnoArchivada.name),
+            useValue: archivadas,
+          },
+          { provide: getModelToken(Extraccion.name), useValue: extraccion },
+          { provide: getModelToken(DepositoBancario.name), useValue: deposito },
+          { provide: getModelToken(Devolucion.name), useValue: devolucion },
+          { provide: getModelToken(Venta.name), useValue: venta },
+          { provide: getModelToken(Pago.name), useValue: pago },
+        ],
+      }).compile();
+      return mod.get(ArqueoCajaService);
+    };
+
+    beforeEach(() => {
+      extraccion.find.mockImplementation(() => chain([]));
+      deposito.find.mockImplementation(() => chain([]));
+      venta = {
+        find: jest.fn(() => chain([{ _id: ventaId, pago: pagoId }])),
+      };
+      pago = { find: jest.fn(() => chain([])) };
+    });
+
+    it('1600 CUP pagados con 5 USD y cambio en CUP mueven cada caja física, no +1600 CUP / +0 USD', async () => {
+      reporte.find.mockImplementation(() => chain([filaVenta()]));
+      pago.find.mockImplementation(() =>
+        chain([
+          {
+            _id: pagoId,
+            metodoPago: 'efectivo',
+            moneda: 'USD',
+            monto_pagado: 5,
+            monedaCambio: 'CUP',
+            cambioConvertido: 400,
+          },
+        ]),
+      );
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      // CUP: 1000 - 400 de cambio; USD: 50 + 5 recibidos
+      expect(r.efectivoEsperado).toEqual({ CUP: 600, USD: 55 });
+      expect(r.detalleEfectivo.CUP).toMatchObject({
+        efectivoRecibido: 0,
+        cambioEntregado: 400,
+      });
+      expect(r.detalleEfectivo.USD).toMatchObject({
+        efectivoRecibido: 5,
+        cambioEntregado: 0,
+      });
+      expect(venta.find.mock.calls[0][0]).toEqual({
+        _id: { $in: [ventaId.toHexString()] },
+      });
+    });
+
+    it('una venta en CUP de siempre da lo mismo que antes (se queda con la fila)', async () => {
+      reporte.find.mockImplementation(() => chain([filaVenta()]));
+      pago.find.mockImplementation(() =>
+        chain([
+          {
+            _id: pagoId,
+            metodoPago: 'efectivo',
+            monto_pagado: 2000,
+            cambio: 400,
+          },
+        ]),
+      );
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
+      expect(r.detalleEfectivo.CUP).toMatchObject({
+        efectivoRecibido: 1600,
+        cambioEntregado: 0,
+      });
+    });
+
+    it('una venta a crédito no suma efectivo ni consulta pagos', async () => {
+      reporte.find.mockImplementation(() =>
+        chain([filaVenta({ metodoPago: 'credito' })]),
+      );
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 1000, USD: 50 });
+      expect(r.cuentasPorCobrar.CUP).toBe(1600);
+      expect(venta.find).not.toHaveBeenCalled();
+      expect(pago.find).not.toHaveBeenCalled();
+    });
+
+    it('un pago de cuenta casa no suma efectivo aunque tenga moneda', async () => {
+      reporte.find.mockImplementation(() => chain([filaVenta({ total: 0 })]));
+      pago.find.mockImplementation(() =>
+        chain([
+          {
+            _id: pagoId,
+            metodoPago: 'efectivo',
+            esCuentaCasa: true,
+            moneda: 'USD',
+            monto_pagado: 0,
+          },
+        ]),
+      );
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 1000, USD: 50 });
+    });
+
+    it('sin el pago de la venta conserva el comportamiento por filas', async () => {
+      reporte.find.mockImplementation(() => chain([filaVenta()]));
+      pago.find.mockImplementation(() => chain([]));
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
+    });
+
+    it('sin la venta conserva el comportamiento por filas', async () => {
+      reporte.find.mockImplementation(() => chain([filaVenta()]));
+      venta.find.mockImplementation(() => chain([]));
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
+      expect(pago.find).not.toHaveBeenCalled();
+    });
+
+    it('una lectura de pagos que falla no lanza y usa las filas', async () => {
+      reporte.find.mockImplementation(() => chain([filaVenta()]));
+      venta.find.mockImplementation(() => {
+        throw new Error('mongo caído');
+      });
+      const r = await (await crear()).esperadoDelTurno(turnoId.toHexString());
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
     });
   });
 });

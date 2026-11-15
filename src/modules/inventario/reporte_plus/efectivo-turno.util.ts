@@ -1,4 +1,8 @@
-import { MetodoPagoReporte } from './schema/reporte_plus.schema';
+import { MetodoPagoReporte, OrigenReporte } from './schema/reporte_plus.schema';
+import {
+  flujoDeEfectivo,
+  PagoEfectivoLeido,
+} from '../cuadre_caja/cuadre-divisas';
 
 /** Moneda que se asume cuando el pago o el movimiento no informa ninguna. */
 export const MONEDA_POR_DEFECTO = 'CUP';
@@ -57,6 +61,138 @@ export interface FilaMoneda {
   moneda?: string;
 }
 
+/**
+ * Dinero físico que una venta movió en UNA moneda: lo recibido y el cambio
+ * entregado (doc §6.6). Una venta con divisas produce uno o dos de estos.
+ */
+export interface FlujoFisico {
+  moneda: string;
+  recibido: number;
+  cambio: number;
+}
+
+/** Fila de venta del Reporte Plus con lo necesario para localizar su pago. */
+export interface FilaVenta extends FilaMoneda {
+  origen?: OrigenReporte;
+  /** Id de la venta (POS) o número de factura. */
+  referencia?: string;
+}
+
+interface PagoLeido extends PagoEfectivoLeido {
+  _id: unknown;
+  metodoPago?: string;
+  esCuentaCasa?: boolean;
+}
+
+/** Cadena de lectura de Mongoose (`find().select().lean().exec()`) reducida a lo que se usa. */
+interface ConsultaLectura {
+  select(campos: string): ConsultaLectura;
+  lean(): ConsultaLectura;
+  exec(): Promise<unknown>;
+}
+
+/** Lo que `resolverFlujosFisicos` necesita de un modelo Mongoose. */
+interface ModeloLectura {
+  find(filtro: Record<string, unknown>): ConsultaLectura;
+}
+
+/**
+ * Corrige el efectivo de las ventas hechas con divisas. Las filas del Reporte
+ * Plus no saben en qué moneda entregó el dinero el cliente ni en cuál se
+ * devolvió el cambio (el checkout las escribe en CUP): una venta de 1600 CUP
+ * pagada con 5 USD figuraría como +1600 CUP y +0 USD. Aquí se lee el `Pago`
+ * de cada venta (fila de origen venta → `referencia` = id de la venta →
+ * `Venta.pago`) y se obtiene, por moneda física, lo recibido y el cambio
+ * entregado (`flujoDeEfectivo`).
+ *
+ * Devuelve las filas SIN las ventas corregidas y los flujos físicos que las
+ * sustituyen. Una venta en CUP de siempre, a crédito, por transferencia, de
+ * cuenta casa, o cuya venta/pago no se encuentra, conserva su comportamiento
+ * por filas. Nunca lanza: si la lectura falla se devuelven las filas tal cual.
+ */
+export async function resolverFlujosFisicos<F extends FilaVenta>(
+  filas: F[],
+  ventaModel?: ModeloLectura,
+  pagoModel?: ModeloLectura,
+  alFallar?: (error: unknown) => void,
+): Promise<{ filas: F[]; flujos: FlujoFisico[] }> {
+  const sinCambios = { filas, flujos: [] as FlujoFisico[] };
+  if (!ventaModel || !pagoModel) return sinCambios;
+
+  // Total cobrado en efectivo por venta (suma de sus líneas).
+  const totales = new Map<string, number>();
+  for (const f of filas) {
+    if (f.metodoPago !== MetodoPagoReporte.EFECTIVO) continue;
+    if (f.origen !== undefined && f.origen !== OrigenReporte.VENTA) continue;
+    if (!f.referencia || !ID_MONGO.test(f.referencia)) continue;
+    totales.set(f.referencia, (totales.get(f.referencia) ?? 0) + f.total);
+  }
+  if (totales.size === 0) return sinCambios;
+
+  try {
+    const ventas = (await ventaModel
+      .find({ _id: { $in: [...totales.keys()] } })
+      .select('pago')
+      .lean()
+      .exec()) as { _id: unknown; pago?: { toString(): string } }[];
+    const pagoDeVenta = new Map<string, string>();
+    for (const v of ventas ?? [])
+      if (v?.pago) pagoDeVenta.set(String(v._id), v.pago.toString());
+    if (pagoDeVenta.size === 0) return sinCambios;
+
+    const pagos = (await pagoModel
+      .find({ _id: { $in: [...new Set(pagoDeVenta.values())] } })
+      .lean()
+      .exec()) as PagoLeido[];
+    const pagoPorId = new Map<string, PagoLeido>();
+    for (const p of pagos ?? []) if (p) pagoPorId.set(String(p._id), p);
+
+    const flujos: FlujoFisico[] = [];
+    const reemplazadas = new Set<string>();
+    for (const [venta, total] of totales) {
+      const pago = pagoPorId.get(pagoDeVenta.get(venta) ?? '');
+      if (!pago) continue;
+      if (
+        pago.metodoPago === 'transferencia' ||
+        pago.metodoPago === 'credito' ||
+        pago.esCuentaCasa
+      )
+        continue;
+      const flujo = flujoDeEfectivo(pago, redondear(total));
+      // Venta en CUP de siempre: las filas ya son correctas.
+      if (!flujo.conDivisas) continue;
+      flujos.push({
+        moneda: flujo.moneda,
+        recibido: flujo.recibido,
+        cambio: 0,
+      });
+      flujos.push({
+        moneda: flujo.monedaCambio,
+        recibido: 0,
+        cambio: flujo.cambio,
+      });
+      reemplazadas.add(venta);
+    }
+    if (reemplazadas.size === 0) return sinCambios;
+
+    return {
+      filas: filas.filter(
+        (f) =>
+          !(
+            f.metodoPago === MetodoPagoReporte.EFECTIVO &&
+            (f.origen === undefined || f.origen === OrigenReporte.VENTA) &&
+            f.referencia !== undefined &&
+            reemplazadas.has(f.referencia)
+          ),
+      ),
+      flujos,
+    };
+  } catch (error) {
+    alFallar?.(error);
+    return sinCambios;
+  }
+}
+
 export interface EntradaEfectivoEsperado {
   fondoInicial: number;
   efectivoRecibido?: number;
@@ -112,6 +248,12 @@ export interface EntradaResumenMonedas {
   depositos: MovimientoMoneda[];
   devolucionesEfectivo?: MovimientoMoneda[];
   cobrosAplicados?: MovimientoMoneda[];
+  /**
+   * Efectivo físico de ventas con divisas (ver `resolverFlujosFisicos`):
+   * se suma al recibido y al cambio entregado de cada moneda, además de las
+   * filas de efectivo.
+   */
+  flujosFisicos?: FlujoFisico[];
 }
 
 const sumarPorMoneda = (
@@ -148,6 +290,13 @@ export function resumirPorMoneda(e: EntradaResumenMonedas): ResumenMonedas {
     acum[k] = (acum[k] ?? 0) + f.total;
   }
 
+  const cambioEntregado: Record<string, number> = {};
+  for (const fl of e.flujosFisicos ?? []) {
+    const k = fl.moneda || MONEDA_POR_DEFECTO;
+    efectivo[k] = (efectivo[k] ?? 0) + fl.recibido;
+    cambioEntregado[k] = (cambioEntregado[k] ?? 0) + fl.cambio;
+  }
+
   const extracciones = sumarPorMoneda(e.extracciones);
   const depositos = sumarPorMoneda(e.depositos);
   const devoluciones = sumarPorMoneda(e.devolucionesEfectivo);
@@ -157,6 +306,7 @@ export function resumirPorMoneda(e: EntradaResumenMonedas): ResumenMonedas {
     MONEDA_POR_DEFECTO,
     ...Object.keys(e.fondoInicial),
     ...Object.keys(efectivo),
+    ...Object.keys(cambioEntregado),
     ...Object.keys(credito),
     ...Object.keys(transferencia),
     ...Object.keys(facturado),
@@ -177,7 +327,7 @@ export function resumirPorMoneda(e: EntradaResumenMonedas): ResumenMonedas {
     const detalle: DetalleEfectivoMoneda = {
       fondoInicial: redondear(e.fondoInicial[k] ?? 0),
       efectivoRecibido: redondear(efectivo[k] ?? 0),
-      cambioEntregado: 0,
+      cambioEntregado: redondear(cambioEntregado[k] ?? 0),
       devolucionesEfectivo: redondear(devoluciones[k] ?? 0),
       extracciones: redondear(extracciones[k] ?? 0),
       depositosBancarios: redondear(depositos[k] ?? 0),

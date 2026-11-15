@@ -30,6 +30,8 @@ import {
   Devolucion,
   DevolucionSchema,
 } from '../devolucion/schema/devolucion.schema';
+import { Venta, VentaSchema } from '../venta/schema/venta.schema';
+import { Pago, PagoSchema } from '../pago/schema/pago.schema';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import {
       { name: DepositoBancario.name, schema: DepositoBancarioSchema },
       { name: LineaTurnoArchivada.name, schema: LineaTurnoArchivadaSchema },
       { name: Devolucion.name, schema: DevolucionSchema },
+      { name: Venta.name, schema: VentaSchema },
+      { name: Pago.name, schema: PagoSchema },
     ]),
   ],
   controllers: [ReportePlusController],

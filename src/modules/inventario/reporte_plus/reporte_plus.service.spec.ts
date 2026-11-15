@@ -19,6 +19,8 @@ import { DepositoBancario } from '../deposito-bancario/schema/deposito-bancario.
 import { LineaTurnoArchivada } from './schema/linea-turno-archivada.schema';
 import { Devolucion } from '../devolucion/schema/devolucion.schema';
 import { Producto } from '../producto/schemas/producto.schema';
+import { Venta } from '../venta/schema/venta.schema';
+import { Pago } from '../pago/schema/pago.schema';
 
 const chain = <T>(valor: T) => {
   const c: Record<string, jest.Mock> = {};
@@ -336,6 +338,134 @@ describe('ReportePlusService', () => {
       const r = await service.resumen();
       expect(r.desde).toEqual(cierre);
       expect(extraccion.find.mock.calls[0][0].fecha.$gte).toEqual(cierre);
+    });
+  });
+
+  describe('resumen - ventas en efectivo con divisas (doc §6.6)', () => {
+    const ventaId = new Types.ObjectId();
+    const pagoId = new Types.ObjectId();
+    let venta: Record<string, jest.Mock>;
+    let pago: Record<string, jest.Mock>;
+
+    const filaVenta = (extra: Record<string, unknown> = {}) =>
+      fila({
+        total: 1600,
+        origen: OrigenReporte.VENTA,
+        referencia: ventaId.toHexString(),
+        ...extra,
+      });
+
+    const crear = async () => {
+      const mod = await Test.createTestingModule({
+        providers: [
+          ReportePlusService,
+          { provide: getModelToken(ReportePlus.name), useValue: reporte },
+          { provide: getModelToken(TurnoReportePlus.name), useValue: turno },
+          { provide: getModelToken(Kardex.name), useValue: kardex },
+          { provide: getModelToken(Extraccion.name), useValue: extraccion },
+          { provide: getModelToken(TurnoCaja.name), useValue: turnoCaja },
+          { provide: getModelToken(DepositoBancario.name), useValue: deposito },
+          {
+            provide: getModelToken(LineaTurnoArchivada.name),
+            useValue: archivadas,
+          },
+          { provide: getModelToken(Devolucion.name), useValue: devolucion },
+          { provide: getModelToken(Producto.name), useValue: producto },
+          { provide: getModelToken(Venta.name), useValue: venta },
+          { provide: getModelToken(Pago.name), useValue: pago },
+        ],
+      }).compile();
+      return mod.get(ReportePlusService);
+    };
+
+    beforeEach(() => {
+      extraccion.find.mockImplementation(() => chain([]));
+      turnoCaja.find.mockImplementation(() =>
+        chain([{ fondoInicial: { CUP: 1000, USD: 50 } }]),
+      );
+      venta = {
+        find: jest.fn(() => chain([{ _id: ventaId, pago: pagoId }])),
+      };
+      pago = { find: jest.fn(() => chain([])) };
+    });
+
+    it('1600 CUP pagados con 5 USD y cambio en CUP mueven cada caja física, no +1600 CUP / +0 USD', async () => {
+      filas = [filaVenta()];
+      pago.find.mockImplementation(() =>
+        chain([
+          {
+            _id: pagoId,
+            metodoPago: 'efectivo',
+            moneda: 'USD',
+            monto_pagado: 5,
+            monedaCambio: 'CUP',
+            cambioConvertido: 400,
+          },
+        ]),
+      );
+      const r = await (await crear()).resumen();
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 600, USD: 55 });
+      expect(r.detalleEfectivo.CUP).toMatchObject({
+        efectivoRecibido: 0,
+        cambioEntregado: 400,
+      });
+      expect(r.detalleEfectivo.USD).toMatchObject({
+        efectivoRecibido: 5,
+        cambioEntregado: 0,
+      });
+      // los totales de venta siguen en CUP, tal cual las filas
+      expect(r.porMetodo.efectivo).toBe(1600);
+      expect(r.totalVentas).toBe(1600);
+    });
+
+    it('una venta en CUP de siempre da lo mismo que antes (se queda con la fila)', async () => {
+      filas = [filaVenta()];
+      pago.find.mockImplementation(() =>
+        chain([
+          {
+            _id: pagoId,
+            metodoPago: 'efectivo',
+            monto_pagado: 2000,
+            cambio: 400,
+          },
+        ]),
+      );
+      const r = await (await crear()).resumen();
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
+      expect(r.detalleEfectivo.CUP).toMatchObject({
+        efectivoRecibido: 1600,
+        cambioEntregado: 0,
+      });
+    });
+
+    it('una venta a crédito no suma efectivo ni consulta pagos', async () => {
+      filas = [filaVenta({ metodoPago: MetodoPagoReporte.CREDITO })];
+      const r = await (await crear()).resumen();
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 1000, USD: 50 });
+      expect(r.cuentasPorCobrar.CUP).toBe(1600);
+      expect(venta.find).not.toHaveBeenCalled();
+      expect(pago.find).not.toHaveBeenCalled();
+    });
+
+    it('sin el pago de la venta conserva el comportamiento por filas', async () => {
+      filas = [filaVenta()];
+      pago.find.mockImplementation(() => chain([]));
+      const r = await (await crear()).resumen();
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
+    });
+
+    it('una lectura de pagos que falla no lanza y usa las filas', async () => {
+      filas = [filaVenta()];
+      venta.find.mockImplementation(() => {
+        throw new Error('mongo caído');
+      });
+      const r = await (await crear()).resumen();
+
+      expect(r.efectivoEsperado).toEqual({ CUP: 2600, USD: 50 });
     });
   });
 

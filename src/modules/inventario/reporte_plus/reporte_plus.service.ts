@@ -24,10 +24,13 @@ import {
 } from './schema/reporte_plus.schema';
 import { TurnoReportePlus } from './schema/turno_reporte_plus.schema';
 import { LineaTurnoArchivada } from './schema/linea-turno-archivada.schema';
+import { Venta } from '../venta/schema/venta.schema';
+import { Pago } from '../pago/schema/pago.schema';
 import {
   MONEDA_POR_DEFECTO,
   MovimientoMoneda,
   redondear,
+  resolverFlujosFisicos,
   resumirPorMoneda,
   soloDeTurnosAbiertos,
 } from './efectivo-turno.util';
@@ -99,6 +102,12 @@ export class ReportePlusService {
     @Optional()
     @InjectModel(Producto.name)
     private productoModel?: Model<Producto>,
+    /**
+     * Venta and Pago let the per-currency cash follow the physical currencies
+     * of sales made with foreign currency; without them the rows are used.
+     */
+    @Optional() @InjectModel(Venta.name) private ventaModel?: Model<Venta>,
+    @Optional() @InjectModel(Pago.name) private pagoModel?: Model<Pago>,
   ) {}
 
   /** Filas abiertas (las que aún no reclamó ningún cierre). */
@@ -407,9 +416,21 @@ export class ReportePlusService {
       desde,
       hasta,
     );
+    // Las ventas con divisas se miden por lo que entró y salió de cada caja
+    // física (su pago), no por la fila del reporte, que siempre está en CUP.
+    const fisico = await resolverFlujosFisicos(
+      filas,
+      this.ventaModel,
+      this.pagoModel,
+      (error) =>
+        this.logger.warn(
+          `No se pudieron leer los pagos de las ventas; se usan las filas del reporte: ${String(error)}`,
+        ),
+    );
     const monedas = resumirPorMoneda({
       fondoInicial,
-      filas,
+      filas: fisico.filas,
+      flujosFisicos: fisico.flujos,
       // Efectivo esperado por turno ABIERTO: lo de un turno cerrado no cuenta.
       extracciones: soloDeTurnosAbiertos(
         extracciones,
