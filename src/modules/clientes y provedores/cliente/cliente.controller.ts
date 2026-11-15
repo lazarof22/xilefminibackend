@@ -1,4 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req, ForbiddenException } from '@nestjs/common';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { ClienteService } from './cliente.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
@@ -79,6 +81,8 @@ export class ClienteController {
   @ApiOperation({ summary: 'Eliminar un cliente' })
   @ApiResponse({ status: 201, description: 'Cliente eliminado con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
+  @UseGuards(RolesGuard)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.GERENTE)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.clienteService.remove(id);

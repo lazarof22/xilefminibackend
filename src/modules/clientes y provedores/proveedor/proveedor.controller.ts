@@ -11,6 +11,9 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CreateProveedorDto } from './dto/create-proveedor.dto';
 import { UpdateProveedorDto } from './dto/update-proveedor.dto';
 import { ProveedorService } from './proveedor.service';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -51,6 +54,8 @@ export class ProveedorController {
   }
 
   @ApiOperation({ summary: 'Eliminar un proveedor' })
+  @UseGuards(RolesGuard)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.GERENTE)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.proveedorService.remove(id);

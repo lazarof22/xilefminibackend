@@ -1,3 +1,4 @@
+import { ArqueoCajaService } from '../arqueo-caja/arqueo-caja.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -61,6 +62,7 @@ export class DepositoBancarioService {
     @InjectModel(ConfiguracionDeposito.name)
     private configModel: Model<ConfiguracionDeposito>,
     @InjectModel(TurnoCaja.name) private turnoModel: Model<TurnoCaja>,
+    private readonly arqueoService: ArqueoCajaService,
   ) {}
 
   /**
@@ -88,10 +90,23 @@ export class DepositoBancarioService {
         'Un cajero solo registra depósitos de su propio turno',
       );
 
+    // No se deposita más efectivo del que el turno tiene en esa moneda. Un depósito sobre un
+    // turno ya cerrado es válido (se deposita a más tardar el siguiente día hábil), pero el
+    // dinero tiene que seguir en la caja del turno.
+    const moneda = dto.moneda?.trim() || 'CUP';
+    const { efectivoEsperado } = await this.arqueoService.esperadoDelTurno(
+      dto.turnoCajaId,
+    );
+    const disponible = efectivoEsperado[moneda] ?? 0;
+    if (dto.monto > disponible + 0.005)
+      throw new BadRequestException(
+        `El turno solo tiene ${disponible.toFixed(2)} ${moneda} en efectivo: no se puede depositar ${dto.monto}`,
+      );
+
     const creado = await this.depositoModel.create({
       turnoCajaId: new Types.ObjectId(dto.turnoCajaId),
       monto: dto.monto,
-      moneda: dto.moneda?.trim() || 'CUP',
+      moneda,
       banco: dto.banco,
       referencia: dto.referencia,
       fecha: dto.fecha ? new Date(dto.fecha) : new Date(),

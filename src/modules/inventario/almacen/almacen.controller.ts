@@ -1,4 +1,7 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import { AlmacenService } from './almacen.service';
 import { CreateAlmacenDto } from './dto/create-almacen.dto';
 import { UpdateAlmacenDto } from './dto/update-almacen.dto';
@@ -49,6 +52,8 @@ export class AlmacenController {
     @ApiOperation({ summary: 'Eliminar un almacén' })
     @ApiResponse({ status: 201, description: 'Almacén eliminado con exito' })
     @ApiResponse({ status: 400, description: 'Bad request' })
+    @UseGuards(RolesGuard)
+    @Roles(UsuarioRol.ADMIN, UsuarioRol.GERENTE)
     @Delete(':id')
     remove(@Param('id') id: string) {
         return this.almacenService.remove(id);

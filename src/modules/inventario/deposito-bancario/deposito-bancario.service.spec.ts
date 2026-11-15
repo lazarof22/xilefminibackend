@@ -1,3 +1,4 @@
+import { ArqueoCajaService } from '../arqueo-caja/arqueo-caja.service';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import {
@@ -25,6 +26,7 @@ describe('DepositoBancarioService', () => {
   let deposito: Record<string, jest.Mock>;
   let config: Record<string, jest.Mock>;
   let turno: Record<string, jest.Mock>;
+  let arqueo: { esperadoDelTurno: jest.Mock };
   const turnoId = new Types.ObjectId();
   const usuario = new Types.ObjectId().toHexString();
 
@@ -43,6 +45,11 @@ describe('DepositoBancarioService', () => {
       findById: jest.fn(() => chain({ _id: turnoId })),
       find: jest.fn(() => chain([])),
     };
+    arqueo = {
+      esperadoDelTurno: jest.fn().mockResolvedValue({
+        efectivoEsperado: { CUP: 1_000_000, USD: 1_000_000 },
+      }),
+    };
     const mod = await Test.createTestingModule({
       providers: [
         DepositoBancarioService,
@@ -52,6 +59,7 @@ describe('DepositoBancarioService', () => {
           useValue: config,
         },
         { provide: getModelToken(TurnoCaja.name), useValue: turno },
+        { provide: ArqueoCajaService, useValue: arqueo },
       ],
     }).compile();
     service = mod.get(DepositoBancarioService);
@@ -96,6 +104,46 @@ describe('DepositoBancarioService', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(deposito.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tope: no se deposita más efectivo del que tiene el turno', () => {
+    const dep = (monto: number, moneda?: string) => ({
+      turnoCajaId: turnoId.toHexString(),
+      monto,
+      banco: 'BPA',
+      ...(moneda ? { moneda } : {}),
+    });
+    beforeEach(() => {
+      arqueo.esperadoDelTurno.mockResolvedValue({
+        efectivoEsperado: { CUP: 700, USD: 20 },
+      });
+    });
+
+    it('un monto mayor al efectivo esperado de la moneda se rechaza con 400 y no se guarda', async () => {
+      await expect(service.registrar(dep(700.01), usuario)).rejects.toThrow(
+        /solo tiene 700\.00 CUP/,
+      );
+      await expect(
+        service.registrar(dep(21, 'USD'), usuario),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(deposito.create).not.toHaveBeenCalled();
+    });
+
+    it('una moneda sin efectivo en el turno se rechaza', async () => {
+      await expect(
+        service.registrar(dep(1, 'JPY'), usuario),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(deposito.create).not.toHaveBeenCalled();
+    });
+
+    it('depositar todo el efectivo esperado, o menos, se acepta', async () => {
+      await service.registrar(dep(700), usuario);
+      await service.registrar(dep(20, 'USD'), usuario);
+      expect(deposito.create).toHaveBeenCalledTimes(2);
+      expect(arqueo.esperadoDelTurno).toHaveBeenCalledWith(
+        turnoId.toHexString(),
+      );
     });
   });
 

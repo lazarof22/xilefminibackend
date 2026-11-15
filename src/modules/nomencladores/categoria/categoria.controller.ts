@@ -1,4 +1,7 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorator/roles.decorator';
+import { UsuarioRol } from '../../auth/schemas/usuarios.schema';
 import { CategoriaService } from './categoria.service';
 import { CreateCategoriaDto } from './dto/create-categoria.dto';
 import { UpdateCategoriaDto } from './dto/update-categoria.dto';
@@ -51,6 +54,8 @@ export class CategoriaController {
   @ApiOperation({ summary: 'Eliminar una categoria' })
   @ApiResponse({ status: 201, description: 'Categoria eliminada con exito' })
   @ApiResponse({ status: 400, description: 'Bad request' })
+  @UseGuards(RolesGuard)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.GERENTE)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.categoriaService.remove(id);

@@ -404,6 +404,17 @@ export class CheckoutService {
       );
     }
 
+    // Entregar sin cobrar es una condición del cliente (§6.1), no una opción del cajero.
+    if (
+      dto.pago.tipo === 'efectivo' &&
+      dto.pago.tipoCliente === 'cliente-cuenta-casa' &&
+      !cliente?.esCuentaCasa
+    ) {
+      throw new BadRequestException(
+        'La entrega sin cobro (cuenta casa) exige un cliente de tipo cuenta casa',
+      );
+    }
+
     const pago = await this.pagos.prepararPagoCheckout(
       dto.pago,
       totales.total,
@@ -455,10 +466,12 @@ export class CheckoutService {
     };
   }
 
-  private async buscarCliente(
-    clienteId: string,
-  ): Promise<
-    ClienteDelPago & { nombre_cliente?: string; descuentoClientePct?: number }
+  private async buscarCliente(clienteId: string): Promise<
+    ClienteDelPago & {
+      nombre_cliente?: string;
+      descuentoClientePct?: number;
+      esCuentaCasa: boolean;
+    }
   > {
     const cliente = await this.clienteModel
       .findById(new Types.ObjectId(clienteId))
@@ -492,6 +505,7 @@ export class CheckoutService {
       telefono_cliente: datos.telefono_cliente,
       codigoPais: datos.codigoPais,
       descuentoClientePct,
+      esCuentaCasa: datos.tipo_cliente === TipoCliente.CUENTA_CASA,
     };
   }
 

@@ -710,12 +710,23 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
 
     it('cuenta casa: entrega la mercancía sin cobrar (el reporte suma 0)', async () => {
       const e = crearEntorno();
+      // La cuenta casa es una condición del cliente: la entrega exige uno de ese tipo.
+      const casa = e.modelos.clientes.insertar({
+        id_cliente: '12345678901',
+        nombre_cliente: 'Casa',
+        tipo_cliente: 'cliente_cuenta_casa',
+        tipoIdentidad: 'CI',
+        telefono_cliente: '5300000',
+        codigoPais: '+53',
+      });
 
       const { respuesta } = await e.checkout.ejecutar(
-        dtoCheckout(e, [{ i: 0, cantidad: 1 }], {
-          tipo: 'efectivo',
-          tipoCliente: 'cliente-cuenta-casa',
-        }),
+        dtoCheckout(
+          e,
+          [{ i: 0, cantidad: 1 }],
+          { tipo: 'efectivo', tipoCliente: 'cliente-cuenta-casa' },
+          { clienteId: String(casa._id) },
+        ),
         claveNueva(),
         e.usuario(),
       );

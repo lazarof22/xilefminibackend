@@ -1,3 +1,4 @@
+import { ArqueoCajaModule } from '../arqueo-caja/arqueo-caja.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DepositoBancarioController } from './deposito-bancario.controller';
@@ -17,6 +18,7 @@ import {
 
 @Module({
   imports: [
+    ArqueoCajaModule,
     MongooseModule.forFeature([
       { name: DepositoBancario.name, schema: DepositoBancarioSchema },
       { name: ConfiguracionDeposito.name, schema: ConfiguracionDepositoSchema },
