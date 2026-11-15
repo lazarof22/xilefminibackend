@@ -8,6 +8,9 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types } from 'mongoose';
 import { Producto } from '../inventario/producto/schemas/producto.schema';
+import { Almacen } from '../inventario/almacen/schema/almacen.schema';
+import { Contenedor } from '../inventario/contenedor/schema/contenedor.schema';
+import { ubicacionFisicaDe } from '../inventario/kardex/ubicacion-fisica.util';
 import { Kardex, KardexTipo } from '../inventario/kardex/schema/kardex.schema';
 import { valuarMovimiento } from '../inventario/kardex/costo-promedio.util';
 import { costoDeSalida } from '../inventario/kardex/valuacion-salida';
@@ -61,7 +64,11 @@ export interface LineaInventario {
 interface MovimientoAplicado extends LineaInventario {
   stockResultante: number;
   /** Modo unificado: de qué ubicaciones salió. */
-  ubicaciones?: { almacen: Types.ObjectId; contenedor: Types.ObjectId; cantidad: number }[];
+  ubicaciones?: {
+    almacen: Types.ObjectId;
+    contenedor: Types.ObjectId;
+    cantidad: number;
+  }[];
 }
 
 /**
@@ -162,6 +169,13 @@ export class FacturaInventarioService {
     private readonly existenciaService: ExistenciaService,
     // Opcional: sin el módulo Reporte Plus la factura funciona igual.
     @Optional() private readonly reportePlus?: ReportePlusService,
+    // Opcionales: sin estos modelos el Kardex se escribe sin ubicación física.
+    @Optional()
+    @InjectModel(Almacen.name)
+    private readonly almacenModel?: Model<Almacen>,
+    @Optional()
+    @InjectModel(Contenedor.name)
+    private readonly contenedorModel?: Model<Contenedor>,
   ) {}
 
   /**
@@ -504,6 +518,7 @@ export class FacturaInventarioService {
         aplicados.push({
           ...linea,
           stockResultante: movimiento.stockTotal,
+          ubicaciones: movimiento.ubicaciones,
         });
       } catch (error) {
         if (error instanceof NotFoundException) {
@@ -634,23 +649,27 @@ export class FacturaInventarioService {
     // average cost; the average itself does not change. A failed cost read
     // never blocks the movement: that entry is written unvalued.
     const entradas = await Promise.all(
-      aplicados.map(async (linea) => ({
-        productoId: new Types.ObjectId(linea.productoId),
-        tipo,
-        cantidad: linea.cantidad,
-        stock: linea.stockResultante,
-        motivo: `Factura ${factura.id} ${accion}`,
-        referencia: factura.id,
-        ...valuarMovimiento(
-          linea.cantidad,
-          await costoDeSalida(
-            this.kardexModel,
-            this.productoModel,
-            linea.productoId,
-            this.logger,
+      aplicados.map(async (linea) => {
+        const ubicacionFisica = await this.ubicacionFisica(linea);
+        return {
+          productoId: new Types.ObjectId(linea.productoId),
+          tipo,
+          cantidad: linea.cantidad,
+          stock: linea.stockResultante,
+          motivo: `Factura ${factura.id} ${accion}`,
+          referencia: factura.id,
+          ...valuarMovimiento(
+            linea.cantidad,
+            await costoDeSalida(
+              this.kardexModel,
+              this.productoModel,
+              linea.productoId,
+              this.logger,
+            ),
           ),
-        ),
-      })),
+          ...(ubicacionFisica ? { ubicacionFisica } : {}),
+        };
+      }),
     );
     try {
       // Unordered: an invalid row is skipped and the valid ones still land.
@@ -666,6 +685,57 @@ export class FacturaInventarioService {
       this.logger.error(
         `No se pudo registrar el Kardex ${tipo} de la factura ${factura.id} (${fallidas.length} de ${entradas.length} filas); el stock ya se aplicó, registrar a mano: ${JSON.stringify(fallidas.map((i) => entradas[i]))}: ${String(error)}${detalleErroresKardex(error)}`,
       );
+    }
+  }
+
+  /**
+   * Submayor SC-2-13: texto de la ubicación física de un movimiento (varias
+   * ubicaciones separadas por `; `). En modo unificado salen de las
+   * ubicaciones usadas; antes de unificar se usa la ubicación por defecto del
+   * producto. Nunca bloquea el movimiento: si no se puede calcular (modelos
+   * no inyectados, dato ausente o error de lectura) devuelve `undefined`.
+   */
+  private async ubicacionFisica(
+    linea: MovimientoAplicado,
+  ): Promise<string | undefined> {
+    const { almacenModel, contenedorModel } = this;
+    if (!almacenModel || !contenedorModel) {
+      return undefined;
+    }
+    try {
+      let destinos: { almacen?: unknown; contenedor?: unknown }[] =
+        linea.ubicaciones ?? [];
+      if (destinos.length === 0) {
+        const producto = Types.ObjectId.isValid(linea.productoId)
+          ? await this.productoModel
+              .findById(linea.productoId)
+              .select('almacen contenedor')
+              .lean()
+              .exec()
+          : null;
+        destinos = [
+          { almacen: producto?.almacen, contenedor: producto?.contenedor },
+        ];
+      }
+
+      const textos: string[] = [];
+      for (const destino of destinos) {
+        const texto = await ubicacionFisicaDe(
+          almacenModel,
+          contenedorModel,
+          destino.almacen as Types.ObjectId | string | undefined,
+          destino.contenedor as Types.ObjectId | string | undefined,
+        );
+        if (texto && !textos.includes(texto)) {
+          textos.push(texto);
+        }
+      }
+      return textos.length > 0 ? textos.join('; ') : undefined;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo calcular la ubicación física del Kardex (producto ${linea.productoId}); se registra sin ella: ${String(error)}`,
+      );
+      return undefined;
     }
   }
 

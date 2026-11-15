@@ -15,12 +15,14 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { FacturaService } from './factura.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
 import { UpdateFacturaDto } from './dto/update-factura.dto';
 import { ListarFacturasQueryDto } from './dto/listar-facturas-query.dto';
+import { AnularFacturaDto } from './dto/anular-factura.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorator/roles.decorator';
@@ -46,6 +48,12 @@ const ROLES_ESCRITURA = [
  */
 const ROLES_ANULACION = [UsuarioRol.ADMIN, UsuarioRol.GERENTE];
 
+/** The authenticated user who authorizes a cancellation/annulment. */
+const actorDe = (req: RequestWithUser) => ({
+  userId: req.user.userId,
+  nombre: req.user.nombre,
+});
+
 @ApiTags('Facturas')
 @ApiBearerAuth()
 @Controller('facturas')
@@ -61,13 +69,18 @@ export class FacturaController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
-    description: 'Rol sin permiso para facturar',
+    description:
+      'Rol sin permiso para facturar, o precio/descuento reservado a administrador y gerente',
   })
   create(
     @Body() createFacturaDto: CreateFacturaDto,
     @Req() req: RequestWithUser,
   ) {
-    return this.facturaService.create(createFacturaDto, req.user.userId);
+    return this.facturaService.create(
+      createFacturaDto,
+      req.user.userId,
+      req.user.rol,
+    );
   }
 
   @Get()
@@ -88,6 +101,18 @@ export class FacturaController {
     return this.facturaService.findOne(id);
   }
 
+  @Get(':id/exportar')
+  @ApiOperation({
+    summary: 'Exportar una factura como documento digital (JSON)',
+  })
+  @ApiParam({ name: 'id', description: 'ID de la factura' })
+  @ApiResponse({ status: 200, description: 'Factura digital generada' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 404, description: 'No encontrada' })
+  exportar(@Param('id') id: string) {
+    return this.facturaService.exportar(id);
+  }
+
   @Patch(':id')
   @Roles(...ROLES_ESCRITURA)
   @ApiOperation({
@@ -100,7 +125,8 @@ export class FacturaController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
-    description: 'Rol sin permiso para modificar',
+    description:
+      'Rol sin permiso para modificar, o precio/descuento reservado a administrador y gerente',
   })
   @ApiResponse({ status: 404, description: 'No encontrada' })
   @ApiResponse({
@@ -108,8 +134,12 @@ export class FacturaController {
     description:
       'Se envio un campo que el estado actual de la factura no permite modificar',
   })
-  update(@Param('id') id: string, @Body() updateFacturaDto: UpdateFacturaDto) {
-    return this.facturaService.update(id, updateFacturaDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateFacturaDto: UpdateFacturaDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.facturaService.update(id, updateFacturaDto, req.user.rol);
   }
 
   @Patch(':id/terminar')
@@ -181,10 +211,12 @@ export class FacturaController {
   @Patch(':id/cancelar')
   @Roles(...ROLES_ANULACION)
   @ApiOperation({
-    summary: 'Cancelar una factura confirmada (reversa)',
+    summary:
+      'Cancelar una factura confirmada (reversa); exige motivo y registra quien la autoriza',
   })
   @ApiParam({ name: 'id', description: 'ID de la factura' })
   @ApiResponse({ status: 200, description: 'Factura cancelada con exito' })
+  @ApiResponse({ status: 400, description: 'Motivo ausente o invalido' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
@@ -195,17 +227,23 @@ export class FacturaController {
     status: 409,
     description: 'La factura no esta confirmada',
   })
-  cancelar(@Param('id') id: string) {
-    return this.facturaService.cancelar(id);
+  cancelar(
+    @Param('id') id: string,
+    @Body() dto: AnularFacturaDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.facturaService.cancelar(id, dto.motivo, actorDe(req));
   }
 
   @Patch(':id/anular')
   @Roles(...ROLES_ANULACION)
   @ApiOperation({
-    summary: 'Anular una factura (conserva el registro por obligacion legal)',
+    summary:
+      'Anular una factura (conserva el registro por obligacion legal); exige motivo y registra quien la autoriza',
   })
   @ApiParam({ name: 'id', description: 'ID de la factura' })
   @ApiResponse({ status: 200, description: 'Factura anulada con exito' })
+  @ApiResponse({ status: 400, description: 'Motivo ausente o invalido' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
@@ -213,17 +251,27 @@ export class FacturaController {
   })
   @ApiResponse({ status: 404, description: 'No encontrada' })
   @ApiResponse({ status: 409, description: 'La factura ya esta anulada' })
-  anular(@Param('id') id: string) {
-    return this.facturaService.anular(id);
+  anular(
+    @Param('id') id: string,
+    @Body() dto: AnularFacturaDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.facturaService.anular(id, dto.motivo, actorDe(req));
   }
 
   @Delete(':id')
   @Roles(...ROLES_ANULACION)
   @ApiOperation({
-    summary: 'Anular una factura (baja blanda, conserva el registro)',
+    summary:
+      'Anular una factura (baja blanda, conserva el registro); el motivo va en ?motivo=',
   })
   @ApiParam({ name: 'id', description: 'ID de la factura' })
+  @ApiQuery({
+    name: 'motivo',
+    description: 'Motivo de la anulacion (obligatorio, 5 a 300 caracteres)',
+  })
   @ApiResponse({ status: 200, description: 'Factura anulada con exito' })
+  @ApiResponse({ status: 400, description: 'Motivo ausente o invalido' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({
     status: 403,
@@ -231,7 +279,11 @@ export class FacturaController {
   })
   @ApiResponse({ status: 404, description: 'No encontrada' })
   @ApiResponse({ status: 409, description: 'La factura ya esta anulada' })
-  remove(@Param('id') id: string) {
-    return this.facturaService.remove(id);
+  remove(
+    @Param('id') id: string,
+    @Query() query: AnularFacturaDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.facturaService.remove(id, query.motivo, actorDe(req));
   }
 }

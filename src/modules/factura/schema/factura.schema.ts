@@ -141,6 +141,19 @@ class FacturadorFactura {
 }
 
 /**
+ * Who authorized a cancellation/annulment (doc 6.3 / 7.2): snapshot of the
+ * authenticated administrador/gerente (`req.user`) who performed it.
+ */
+@Schema({ _id: false })
+class AnuladaPorFactura {
+  @Prop({ required: true })
+  userId!: string;
+
+  @Prop({ required: true })
+  nombre!: string;
+}
+
+/**
  * Ubicación de la que salió parte de un producto al confirmar (Fase 1,
  * modo unificado). La cancelación devuelve exactamente esas cantidades.
  */
@@ -270,6 +283,18 @@ export class Factura {
   // FacturaService.create.
   @Prop({ type: FacturadorFactura, _id: false })
   facturadoPor?: FacturadorFactura;
+
+  // Annulment audit trail (doc 6.3 / 7.2), written in the same conditional
+  // update that moves the invoice to `cancelada` or `anulada`. Absent on
+  // invoices voided before these fields existed and on every other state.
+  @Prop({ type: String })
+  motivoAnulacion?: string;
+
+  @Prop({ type: AnuladaPorFactura, _id: false })
+  anuladaPor?: AnuladaPorFactura;
+
+  @Prop({ type: Date })
+  fechaAnulacion?: Date;
 
   // Preserves the pre-migration value (T6b, carried over from a T6a
   // review finding): FacturaService.migrarEstadoAjustada normalizes a

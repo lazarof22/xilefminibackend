@@ -16,6 +16,8 @@ import {
   Estado,
   EstadoDocument,
 } from '../nomencladores/estado/schema/estado.schema';
+import { Almacen } from '../inventario/almacen/schema/almacen.schema';
+import { Contenedor } from '../inventario/contenedor/schema/contenedor.schema';
 import { ExistenciaService } from '../inventario/exitencia/existencia.service';
 import { StockInsuficienteException } from '../inventario/exitencia/stock-insuficiente.exception';
 
@@ -1072,6 +1074,200 @@ describe('FacturaInventarioService', () => {
 
       expect(existenciaMock.reponerProducto).toHaveBeenCalledTimes(1);
       expect(productoModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+  });
+  describe('ubicación física del Kardex (Submayor SC-2-13, #13)', () => {
+    const ALM = new Types.ObjectId(ALMACEN_ID);
+    const CONT_1 = new Types.ObjectId('507f1f77bcf86cd799439021');
+    const CONT_2 = new Types.ObjectId('507f1f77bcf86cd799439022');
+    let almacenModelMock: { findById: jest.Mock };
+    let contenedorModelMock: { findById: jest.Mock };
+
+    const NOMBRES_CONTENEDOR: Record<string, unknown> = {
+      [String(CONT_1)]: {
+        nombreContenedor: 'Cont A',
+        almacen: ALM,
+        seccion: 'S1',
+        estante: 'E2',
+        casilla: 'C3',
+      },
+      [String(CONT_2)]: { nombreContenedor: 'Cont B', almacen: ALM },
+    };
+
+    /** Rebuilds the service with the optional almacén/contenedor models injected. */
+    async function conModelosDeUbicacion(): Promise<void> {
+      almacenModelMock = {
+        findById: jest.fn(() =>
+          crearQueryEncadenada({ nombreAlmacen: 'Central' }),
+        ),
+      };
+      contenedorModelMock = {
+        findById: jest.fn((id: unknown) =>
+          crearQueryEncadenada(NOMBRES_CONTENEDOR[String(id)] ?? null),
+        ),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          FacturaInventarioService,
+          {
+            provide: getModelToken(Producto.name),
+            useValue: productoModelMock,
+          },
+          { provide: getModelToken(Kardex.name), useValue: kardexModelMock },
+          { provide: getModelToken(Estado.name), useValue: estadoModelMock },
+          { provide: ExistenciaService, useValue: existenciaMock },
+          { provide: getModelToken(Almacen.name), useValue: almacenModelMock },
+          {
+            provide: getModelToken(Contenedor.name),
+            useValue: contenedorModelMock,
+          },
+        ],
+      }).compile();
+      service = module.get(FacturaInventarioService);
+    }
+
+    beforeEach(() => {
+      existenciaMock.estaUnificado.mockResolvedValue(true);
+      productoModelMock.findById.mockImplementation((id: unknown) =>
+        crearQueryMock(producto(String(id))),
+      );
+    });
+
+    it('writes the locations used by the sale (unified mode), joined with "; "', async () => {
+      await conModelosDeUbicacion();
+      existenciaMock.descontarProducto
+        .mockResolvedValueOnce({
+          ubicaciones: [{ almacen: ALM, contenedor: CONT_1, cantidad: 2 }],
+          stockTotal: 8,
+        })
+        .mockResolvedValueOnce({
+          ubicaciones: [
+            { almacen: ALM, contenedor: CONT_1, cantidad: 1 },
+            { almacen: ALM, contenedor: CONT_2, cantidad: 2 },
+          ],
+          stockTotal: 0,
+        });
+
+      await service.rebajarStock(facturaBase());
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            tipo: KardexTipo.VENTA,
+            ubicacionFisica:
+              'Central / Cont A / sección S1 · estante E2 · casilla C3',
+          }),
+          expect.objectContaining({
+            tipo: KardexTipo.VENTA,
+            ubicacionFisica:
+              'Central / Cont A / sección S1 · estante E2 · casilla C3; Central / Cont B',
+          }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('writes the stored locations on the cancellation (devolucion) rows', async () => {
+      await conModelosDeUbicacion();
+      existenciaMock.reponerProducto.mockImplementation(
+        (opts: { ubicaciones?: unknown[] }) =>
+          Promise.resolve({ ubicaciones: opts.ubicaciones, stockTotal: 5 }),
+      );
+
+      await service.restaurarStock(
+        facturaBase({
+          items: [{ productoId: PRODUCTO_A, cantidad: 2 }],
+          inventarioUbicaciones: [
+            {
+              productoId: PRODUCTO_A,
+              almacen: ALM,
+              contenedor: CONT_2,
+              cantidad: 2,
+            },
+          ],
+        }),
+      );
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            tipo: KardexTipo.DEVOLUCION,
+            ubicacionFisica: 'Central / Cont B',
+          }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it("falls back to the product's default location before unification (legacy mode)", async () => {
+      await conModelosDeUbicacion();
+      existenciaMock.estaUnificado.mockResolvedValue(false);
+      kardexModelMock.findOne = jest
+        .fn()
+        .mockReturnValue(crearQueryEncadenada(null));
+      productoModelMock.findById.mockReturnValue(
+        crearQueryEncadenada({
+          precio_compra: 4,
+          almacen: ALM,
+          contenedor: CONT_2,
+        }) as never,
+      );
+      decrementosDevuelven(
+        producto(PRODUCTO_A, { stock_inicial: 8 }),
+        producto(PRODUCTO_B, { stock_inicial: 0 }),
+      );
+
+      await service.rebajarStock(facturaBase());
+
+      expect(kardexModelMock.insertMany).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({ ubicacionFisica: 'Central / Cont B' }),
+          expect.objectContaining({ ubicacionFisica: 'Central / Cont B' }),
+        ],
+        OPCIONES_KARDEX,
+      );
+    });
+
+    it('never blocks the movement when the location cannot be computed: the row is written without it', async () => {
+      await conModelosDeUbicacion();
+      almacenModelMock.findById.mockImplementation(() => {
+        throw new Error('db caida');
+      });
+      existenciaMock.descontarProducto.mockResolvedValue({
+        ubicaciones: [{ almacen: ALM, contenedor: CONT_1, cantidad: 1 }],
+        stockTotal: 4,
+      });
+
+      await expect(
+        service.rebajarStock(
+          facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 1 }] }),
+        ),
+      ).resolves.toBeDefined();
+
+      const [filas] = kardexModelMock.insertMany.mock.calls[0] as [
+        Record<string, unknown>[],
+      ];
+      expect(filas).toHaveLength(1);
+      expect(filas[0]).not.toHaveProperty('ubicacionFisica');
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('ubicación física'),
+      );
+    });
+
+    it('omits the location when the models are not injected (optional parameters)', async () => {
+      existenciaMock.descontarProducto.mockResolvedValue({
+        ubicaciones: [{ almacen: ALM, contenedor: CONT_1, cantidad: 1 }],
+        stockTotal: 4,
+      });
+
+      await service.rebajarStock(
+        facturaBase({ items: [{ productoId: PRODUCTO_A, cantidad: 1 }] }),
+      );
+
+      const [filas] = kardexModelMock.insertMany.mock.calls[0] as [
+        Record<string, unknown>[],
+      ];
+      expect(filas[0]).not.toHaveProperty('ubicacionFisica');
     });
   });
 });

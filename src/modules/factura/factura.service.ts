@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -28,7 +29,7 @@ import {
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais } from '../nomencladores/pais/schema/pais.schema';
-import { Usuarios } from '../auth/schemas/usuarios.schema';
+import { UsuarioRol, Usuarios } from '../auth/schemas/usuarios.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { FacturaInventarioService } from './factura-inventario.service';
 import {
@@ -49,7 +50,12 @@ import {
   FACTURA_LISTADO_PAGINA_DEFECTO,
   FACTURA_TIMEZONE,
 } from './factura.constants';
-import { calcularTotales } from './factura-totales';
+import { exportarFactura, FacturaDigital } from './dto/exportar-factura';
+import {
+  MOTIVO_ANULACION_MAX,
+  MOTIVO_ANULACION_MIN,
+} from './dto/anular-factura.dto';
+import { calcularTotales, redondear } from './factura-totales';
 import { obtenerFechaEnZona, validarZonaHoraria } from './factura-fecha';
 import { isDuplicateKeyError } from './factura-mongo-errors';
 import { mismoId } from './factura-ids';
@@ -61,6 +67,12 @@ import {
   mensajeTransicionInvalida,
   origenesPermitidos,
 } from './factura-estado';
+
+/** The authenticated user who authorizes a cancellation/annulment (`req.user`). */
+export interface ActorAnulacion {
+  userId: string;
+  nombre: string;
+}
 
 @Injectable()
 export class FacturaService implements OnModuleInit {
@@ -155,10 +167,16 @@ export class FacturaService implements OnModuleInit {
    * `userId` is the authenticated JWT user id (T4, `FacturaController`),
    * never taken from the request body: it is resolved into `facturadoPor`
    * (name, CI, date) via `obtenerFacturadorPor`.
+   *
+   * `rol` is the authenticated user's role (doc 6.9): unless it is
+   * administrador/gerente, every item must be sold at the product's current
+   * `precio_venta` with no discount (`validarPreciosYDescuentos`). A missing
+   * `rol` is treated as not privileged.
    */
   async create(
     createFacturaDto: CreateFacturaDto,
     userId: string,
+    rol?: string,
   ): Promise<Factura> {
     const fecha =
       createFacturaDto.fecha ?? obtenerFechaEnZona(FACTURA_TIMEZONE);
@@ -173,6 +191,7 @@ export class FacturaService implements OnModuleInit {
 
     // One product read feeds both the tax-exempt flags and the almacén check.
     const productos = await this.cargarProductos(createFacturaDto.items);
+    this.validarPreciosYDescuentos(createFacturaDto.items, productos, rol);
     const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
       calcularTotales(
         this.marcarExentos(createFacturaDto.items, productos),
@@ -411,13 +430,65 @@ export class FacturaService implements OnModuleInit {
     return items.map((item) => {
       const sinBandera: T & { exento?: boolean } = { ...item };
       delete sinBandera.exento;
-      const producto = Types.ObjectId.isValid(item.productoId)
-        ? productosPorId.get(new Types.ObjectId(item.productoId).toHexString())
-        : undefined;
+      const producto = this.productoDelItem(item.productoId, productosPorId);
       return producto?.gravado === 'exento'
         ? { ...sinBandera, exento: true }
         : sinBandera;
     });
+  }
+
+  /**
+   * Doc 6.9 "Descuento manual / cambio de precio": only administrador and
+   * gerente may sell below/above the product's price or apply a discount.
+   * For any other role (or none) each item must carry the product's current
+   * `precio_venta` and zero `descuentoPct`/`descuentoMonto` (`recargo` is not
+   * restricted, as before). Items whose product cannot be found are skipped
+   * here (they are rejected later by `validarProductosDelAlmacen`). Throws
+   * 403 naming the product; runs before any number allocation or write.
+   */
+  private validarPreciosYDescuentos(
+    items: {
+      productoId: string;
+      productoNombre?: string;
+      precio: number;
+      descuentoPct?: number;
+      descuentoMonto?: number;
+    }[],
+    productosPorId: Map<string, ProductoDocument>,
+    rol?: string,
+  ): void {
+    if (rol === UsuarioRol.ADMIN || rol === UsuarioRol.GERENTE) {
+      return;
+    }
+    for (const item of items) {
+      const producto = this.productoDelItem(item.productoId, productosPorId);
+      if (!producto) {
+        continue;
+      }
+      const precioVenta = Number(producto.precio_venta);
+      const precioDistinto =
+        Number.isFinite(precioVenta) &&
+        redondear(item.precio) !== redondear(precioVenta);
+      const conDescuento =
+        (item.descuentoPct ?? 0) !== 0 || (item.descuentoMonto ?? 0) !== 0;
+      if (precioDistinto || conDescuento) {
+        const nombre =
+          producto.nombre_producto || item.productoNombre || item.productoId;
+        throw new ForbiddenException(
+          `Solo administrador o gerente pueden cambiar el precio o aplicar descuentos; el producto "${nombre}" debe venderse a su precio de venta sin descuento`,
+        );
+      }
+    }
+  }
+
+  /** Looks an item's producto up in the map built by `cargarProductos`. */
+  private productoDelItem(
+    productoId: string,
+    productosPorId: Map<string, ProductoDocument>,
+  ): ProductoDocument | undefined {
+    return Types.ObjectId.isValid(productoId)
+      ? productosPorId.get(new Types.ObjectId(productoId).toHexString())
+      : undefined;
   }
 
   /**
@@ -647,6 +718,14 @@ export class FacturaService implements OnModuleInit {
   }
 
   /**
+   * GET /facturas/:id/exportar: digital export document built only from the
+   * stored invoice (`exportarFactura`). 404 when it does not exist.
+   */
+  async exportar(id: string): Promise<FacturaDigital> {
+    return exportarFactura(await this.findOne(id));
+  }
+
+  /**
    * PATCH /facturas/:id (T6b): which fields may be set depends on the
    * invoice's current `estado` (`factura-estado.ts` —
    * `camposEditablesPorEstado`/`camposNoPermitidos`): `edicion` accepts
@@ -677,10 +756,15 @@ export class FacturaService implements OnModuleInit {
    * `plainToInstance`, never count) is a no-op: nothing is rejected
    * (there is nothing to check) and nothing is written, so the invoice is
    * returned unchanged instead of issuing an empty `$set`.
+   *
+   * `rol` (doc 6.9) restricts price/discount changes to administrador and
+   * gerente when `items` are sent (`validarPreciosYDescuentos`); a missing
+   * `rol` is treated as not privileged.
    */
   async update(
     id: string,
     updateFacturaDto: UpdateFacturaDto,
+    rol?: string,
   ): Promise<Factura> {
     const factura = await this.facturaModel.findOne({ id }).exec();
     if (!factura) {
@@ -703,6 +787,7 @@ export class FacturaService implements OnModuleInit {
       estado,
       updateFacturaDto,
       factura,
+      rol,
     );
 
     const revision = factura.revision;
@@ -775,6 +860,7 @@ export class FacturaService implements OnModuleInit {
     estado: EstadoFactura,
     dto: UpdateFacturaDto,
     actual: Factura,
+    rol?: string,
   ): Promise<Record<string, unknown>> {
     const set: Record<string, unknown> = {};
     const presentes = new Set(camposPresentes(dto));
@@ -791,7 +877,7 @@ export class FacturaService implements OnModuleInit {
       return set;
     }
 
-    await this.aplicarCambiosDeItemsYAlmacen(dto, actual, set, presentes);
+    await this.aplicarCambiosDeItemsYAlmacen(dto, actual, set, presentes, rol);
     await this.aplicarCambiosDeCliente(dto, actual, set, presentes);
 
     return set;
@@ -814,6 +900,7 @@ export class FacturaService implements OnModuleInit {
     actual: Factura,
     set: Record<string, unknown>,
     presentes: Set<string>,
+    rol?: string,
   ): Promise<void> {
     const itemsCambiaron = presentes.has('items');
     const impuestoCambio = presentes.has('impuesto');
@@ -825,6 +912,11 @@ export class FacturaService implements OnModuleInit {
       // Exempt flags always come from the productos, also when only the tax
       // changes: the stored items are re-flagged, not trusted.
       productos = await this.cargarProductos(itemsEntrada);
+      // Only client-sent items are price-checked: the stored ones were
+      // already accepted when they were written.
+      if (itemsCambiaron) {
+        this.validarPreciosYDescuentos(itemsEntrada, productos, rol);
+      }
       const { items, subtotal, descuentoTotal, recargoTotal, impuesto, total } =
         calcularTotales(
           this.marcarExentos(itemsEntrada, productos),
@@ -1019,11 +1111,20 @@ export class FacturaService implements OnModuleInit {
    * `confirmada` and `cancelada` is terminal, so the restore runs at most
    * once; the final write clears the marker (and records
    * `inventarioRevertido` when stock was restored).
+   *
+   * The mandatory `motivo` and the authorizing user (`actor`) are validated
+   * before anything is read or written and stored by the same conditional
+   * write that claims the state (`datosAnulacion`).
    */
-  async cancelar(id: string): Promise<Factura> {
+  async cancelar(
+    id: string,
+    motivo: string,
+    actor: ActorAnulacion,
+  ): Promise<Factura> {
+    const anulacion = this.datosAnulacion(motivo, actor);
     await this.rechazarSiTieneDevoluciones(id);
     const reclamada = await this.transicionar(id, EstadoFactura.CANCELADA, {
-      camposExtra: { inventarioEnProceso: true },
+      camposExtra: { inventarioEnProceso: true, ...anulacion },
       filtroExtra: { inventarioEnProceso: { $ne: true } },
     });
     // A vale can be registered between the first check and the claim. The
@@ -1103,7 +1204,13 @@ export class FacturaService implements OnModuleInit {
             },
             {
               $set: { estado: EstadoFactura.CONFIRMADA },
-              $unset: { inventarioEnProceso: 1 },
+              // The cancellation did not happen: drop its audit fields too.
+              $unset: {
+                inventarioEnProceso: 1,
+                motivoAnulacion: 1,
+                anuladaPor: 1,
+                fechaAnulacion: 1,
+              },
               $inc: { revision: 1 },
             },
             { new: true },
@@ -1155,8 +1262,56 @@ export class FacturaService implements OnModuleInit {
     }
   }
 
-  async anular(id: string): Promise<Factura> {
-    return this.transicionar(id, EstadoFactura.ANULADA);
+  /**
+   * Voids the invoice. Like `cancelar`, `motivo` (5-300 chars after trim) and
+   * the authorizing `actor` are required and stored in the same conditional
+   * write that moves the state; an invalid `motivo` is a 400 and nothing is
+   * read or written.
+   */
+  async anular(
+    id: string,
+    motivo: string,
+    actor: ActorAnulacion,
+  ): Promise<Factura> {
+    return this.transicionar(id, EstadoFactura.ANULADA, {
+      camposExtra: this.datosAnulacion(motivo, actor),
+    });
+  }
+
+  /**
+   * Validates the annulment reason and builds the audit fields shared by
+   * `anular` and `cancelar`: `motivoAnulacion` (trimmed), `anuladaPor` (the
+   * authenticated administrador/gerente) and `fechaAnulacion`.
+   */
+  private datosAnulacion(
+    motivo: string,
+    actor: ActorAnulacion,
+  ): Required<
+    Pick<Factura, 'motivoAnulacion' | 'anuladaPor' | 'fechaAnulacion'>
+  > {
+    const texto = typeof motivo === 'string' ? motivo.trim() : '';
+    if (texto.length < MOTIVO_ANULACION_MIN) {
+      throw new BadRequestException(
+        texto.length === 0
+          ? 'El motivo de la anulación es obligatorio'
+          : `El motivo de la anulación debe tener al menos ${MOTIVO_ANULACION_MIN} caracteres`,
+      );
+    }
+    if (texto.length > MOTIVO_ANULACION_MAX) {
+      throw new BadRequestException(
+        `El motivo de la anulación no puede superar ${MOTIVO_ANULACION_MAX} caracteres`,
+      );
+    }
+    if (!actor?.userId) {
+      throw new UnauthorizedException(
+        'No se pudo identificar al usuario que autoriza la anulación',
+      );
+    }
+    return {
+      motivoAnulacion: texto,
+      anuladaPor: { userId: String(actor.userId), nombre: actor.nombre },
+      fechaAnulacion: new Date(),
+    };
   }
 
   /**
@@ -1181,7 +1336,14 @@ export class FacturaService implements OnModuleInit {
       filtroExtra = {},
     }: {
       camposExtra?: Partial<
-        Pick<Factura, 'inventarioAplicado' | 'inventarioEnProceso'>
+        Pick<
+          Factura,
+          | 'inventarioAplicado'
+          | 'inventarioEnProceso'
+          | 'motivoAnulacion'
+          | 'anuladaPor'
+          | 'fechaAnulacion'
+        >
       >;
       filtroExtra?: { inventarioEnProceso?: { $ne: true } };
     } = {},
@@ -1228,8 +1390,11 @@ export class FacturaService implements OnModuleInit {
   }
 
   /** DELETE /facturas/:id (T4): alias of `anular`, never a hard delete. */
-  async remove(id: string): Promise<Factura> {
-    const factura = await this.anular(id);
-    return factura;
+  async remove(
+    id: string,
+    motivo: string,
+    actor: ActorAnulacion,
+  ): Promise<Factura> {
+    return this.anular(id, motivo, actor);
   }
 }

@@ -13,6 +13,10 @@ import {
   ClienteSchema,
 } from '../clientes y provedores/cliente/schemas/cliente.schema';
 import {
+  Contenedor,
+  ContenedorSchema,
+} from '../inventario/contenedor/schema/contenedor.schema';
+import {
   Almacen,
   AlmacenSchema,
 } from '../inventario/almacen/schema/almacen.schema';
@@ -45,6 +49,7 @@ import { ExistenciaModule } from '../inventario/exitencia/existencia.module';
       { name: FacturaContador.name, schema: FacturaContadorSchema },
       { name: Cliente.name, schema: ClienteSchema },
       { name: Almacen.name, schema: AlmacenSchema },
+      { name: Contenedor.name, schema: ContenedorSchema },
       { name: Producto.name, schema: ProductoSchema },
       { name: Pais.name, schema: PaisSchema },
       { name: Usuarios.name, schema: UsuariosSchema },

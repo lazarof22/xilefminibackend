@@ -59,13 +59,14 @@ Cada paso devuelve el objeto [`Factura`](#el-objeto-factura-lo-que-devuelve-el-s
 | `POST`   | `/facturas`               | Emitir una factura (nace en `edicion`)                                         | `administrador`, `gerente`, `facturador` | `201` | `400`, `401`, `403`, `404`, `422` |
 | `GET`    | `/facturas`               | Listar facturas (paginado)                                                     | cualquier usuario autenticado            | `200` | `400`, `401`                      |
 | `GET`    | `/facturas/:id`           | Ver una factura                                                                | cualquier usuario autenticado            | `200` | `401`, `404`                      |
+| `GET`    | `/facturas/:id/exportar`  | Exportar la factura como documento digital JSON                                | cualquier usuario autenticado            | `200` | `401`, `404`                      |
 | `PATCH`  | `/facturas/:id`           | Editar la factura (**qué campos acepta depende del estado actual**, ver abajo) | `administrador`, `gerente`, `facturador` | `200` | `400`, `401`, `403`, `404`, `409` |
 | `PATCH`  | `/facturas/:id/terminar`  | `edicion` → `terminada`                                                        | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409`        |
 | `PATCH`  | `/facturas/:id/editar`    | `terminada` → `edicion`                                                        | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409`        |
 | `PATCH`  | `/facturas/:id/confirmar` | `terminada` → `confirmada`                                                     | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409`        |
-| `PATCH`  | `/facturas/:id/cancelar`  | `confirmada` → `cancelada`                                                     | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409`        |
-| `PATCH`  | `/facturas/:id/anular`    | `edicion`/`terminada` → `anulada`                                              | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409`        |
-| `DELETE` | `/facturas/:id`           | Anular (alias del anterior, **no borra**)                                      | `administrador`, `gerente`, `facturador` | `200` | `401`, `403`, `404`, `409`        |
+| `PATCH`  | `/facturas/:id/cancelar`  | `confirmada` → `cancelada` (body `{ motivo }`)                                 | `administrador`, `gerente`               | `200` | `400`, `401`, `403`, `404`, `409` |
+| `PATCH`  | `/facturas/:id/anular`    | `edicion`/`terminada` → `anulada` (body `{ motivo }`)                          | `administrador`, `gerente`               | `200` | `400`, `401`, `403`, `404`, `409` |
+| `DELETE` | `/facturas/:id`           | Anular (alias del anterior, **no borra**; query `?motivo=`)                    | `administrador`, `gerente`               | `200` | `400`, `401`, `403`, `404`, `409` |
 
 - `:id` es el identificador legible de la factura (por ejemplo `FAC-000005`), **no** el `_id` de Mongo.
 - Todas las peticiones con cuerpo usan `Content-Type: application/json`.
@@ -76,12 +77,16 @@ Todas las rutas de `/facturas` requieren un JWT válido (`Authorization: Bearer 
 
 Además, las rutas que **escriben** (`POST`, `PATCH`, `DELETE`) exigen que el usuario autenticado tenga uno de estos roles: `administrador`, `gerente` o `facturador`. Un usuario autenticado con otro rol (por ejemplo `cajero` o `economico`) recibe `403` al intentar usarlas.
 
-Las rutas de **lectura** (`GET /facturas`, `GET /facturas/:id`) solo requieren estar autenticado: cualquier rol vale.
+`cancelar`, `anular` y `DELETE` son más estrictas: solo `administrador` y `gerente` (doc §6.9). El usuario que las ejecuta queda registrado como autorizante (ver [Anulación: motivo y autorizante](#anulación-motivo-y-autorizante)).
 
-| Error | Cuándo                                                                                                                      |
-| ----- | --------------------------------------------------------------------------------------------------------------------------- |
-| `401` | No se envió token, el token es inválido/expiró, o el usuario del token ya no existe (ver [`facturadoPor`](#facturado-por)). |
-| `403` | El usuario autenticado no tiene un rol permitido para esa ruta.                                                             |
+Las rutas de **lectura** (`GET /facturas`, `GET /facturas/:id`, `GET /facturas/:id/exportar`) solo requieren estar autenticado: cualquier rol vale.
+
+**Precio y descuentos (doc §6.9).** Aunque el `facturador` puede crear y editar facturas, solo `administrador` y `gerente` pueden vender a un precio distinto del `precio_venta` actual del producto o aplicar descuentos. Para cualquier otro rol, cada item del `POST` (y del `PATCH` cuando envía `items`) debe llevar `precio` igual al `precio_venta` del producto y `descuentoPct` y `descuentoMonto` en `0`; si no, el servidor responde `403` con un mensaje en español que nombra el producto y no escribe nada ni consume número de factura. `recargo` no está restringido. Los items cuyo producto no existe no se comprueban aquí (los rechaza la validación de productos con `400`).
+
+| Error | Cuándo                                                                                                                                 |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `401` | No se envió token, el token es inválido/expiró, o el usuario del token ya no existe (ver [`facturadoPor`](#facturado-por)).            |
+| `403` | El usuario autenticado no tiene un rol permitido para esa ruta, o (rol sin permiso de precio) envió un precio distinto o un descuento. |
 
 ---
 
@@ -111,13 +116,13 @@ anulada    -> (terminal, sin salida)
 
 Cada transición es una única petición `PATCH` sin cuerpo:
 
-| Transición                        | Endpoint                                                       |
-| --------------------------------- | -------------------------------------------------------------- |
-| `edicion` → `terminada`           | `PATCH /facturas/:id/terminar`                                 |
-| `terminada` → `edicion`           | `PATCH /facturas/:id/editar`                                   |
-| `terminada` → `confirmada`        | `PATCH /facturas/:id/confirmar`                                |
-| `confirmada` → `cancelada`        | `PATCH /facturas/:id/cancelar`                                 |
-| `edicion`/`terminada` → `anulada` | `PATCH /facturas/:id/anular` (o `DELETE /facturas/:id`, alias) |
+| Transición                        | Endpoint                                                                     |
+| --------------------------------- | ---------------------------------------------------------------------------- |
+| `edicion` → `terminada`           | `PATCH /facturas/:id/terminar`                                               |
+| `terminada` → `edicion`           | `PATCH /facturas/:id/editar`                                                 |
+| `terminada` → `confirmada`        | `PATCH /facturas/:id/confirmar`                                              |
+| `confirmada` → `cancelada`        | `PATCH /facturas/:id/cancelar` (con `motivo`)                                |
+| `edicion`/`terminada` → `anulada` | `PATCH /facturas/:id/anular` (o `DELETE /facturas/:id`, alias), con `motivo` |
 
 ---
 
@@ -160,31 +165,55 @@ Authorization: Bearer <token>
 
 ## `PATCH /facturas/:id/cancelar` — Cancelar (reversa el inventario)
 
-- **Roles:** `administrador`, `gerente`, `facturador`.
+- **Roles:** `administrador`, `gerente`.
+- **Cuerpo:** `{ "motivo": string }` (obligatorio, ver [Anulación: motivo y autorizante](#anulación-motivo-y-autorizante)).
 - **Origen permitido:** `confirmada`.
-- **Efecto:** pasa a `cancelada`. Si la factura tiene `inventarioAplicado: true`, devuelve el stock y registra Kardex (ver abajo).
+- **Efecto:** pasa a `cancelada` y guarda `motivoAnulacion`, `anuladaPor` y `fechaAnulacion` en la misma escritura condicional. Si la factura tiene `inventarioAplicado: true`, devuelve el stock y registra Kardex (ver abajo).
 - **Éxito `200`:** la `Factura` con `estado: "cancelada"`, `inventarioRevertido: true` (si había stock que devolver).
-- **Errores:** `401`, `403`, `404`, `409` (no estaba en `confirmada`, o hay una confirmación en curso sobre la misma factura — ver [Notas operativas](#notas-operativas-backend)).
+- **Errores:** `400` (motivo ausente o fuera de 5–300 caracteres; no cambia nada), `401`, `403`, `404`, `409` (no estaba en `confirmada`, hay una confirmación en curso sobre la misma factura — ver [Notas operativas](#notas-operativas-backend) —, o la factura tiene vales de devolución).
 
 ## `PATCH /facturas/:id/anular` — Anular
 
-Sin cuerpo. Solo desde `edicion` o `terminada`. La factura **no se borra**: queda con `estado: "anulada"` para conservar el registro, y su `numero`/`id` no se vuelve a usar nunca.
+Solo desde `edicion` o `terminada`. La factura **no se borra**: queda con `estado: "anulada"` para conservar el registro, y su `numero`/`id` no se vuelve a usar nunca.
 
-- **Roles:** `administrador`, `gerente`, `facturador`.
+- **Roles:** `administrador`, `gerente`.
+- **Cuerpo:** `{ "motivo": string }` (obligatorio, ver [Anulación: motivo y autorizante](#anulación-motivo-y-autorizante)).
 - **Origen permitido:** `edicion`, `terminada`.
-- **Efecto:** pasa a `anulada`. No toca inventario.
+- **Efecto:** pasa a `anulada` y guarda `motivoAnulacion`, `anuladaPor` y `fechaAnulacion` en la misma escritura condicional. No toca inventario.
 
 ```http
 PATCH /facturas/FAC-000005/anular
 Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "motivo": "Factura emitida al cliente equivocado" }
 ```
 
 - **Éxito `200`:** la `Factura` con `estado: "anulada"`.
-- **Errores:** `401`, `403`, `404` (no existe), `409` (ya está `confirmada`, `cancelada` o `anulada`).
+- **Errores:** `400` (motivo ausente o fuera de 5–300 caracteres; no cambia nada), `401`, `403`, `404` (no existe), `409` (ya está `confirmada`, `cancelada` o `anulada`).
 
 ## `DELETE /facturas/:id` — Alias de anular
 
-Hace **exactamente lo mismo** que `PATCH /facturas/:id/anular`: anula la factura sin borrarla. Mismos roles, respuestas y errores.
+Hace **exactamente lo mismo** que `PATCH /facturas/:id/anular`: anula la factura sin borrarla. Mismos roles, respuestas y errores. Un `DELETE` no lleva cuerpo, así que el motivo va como query param:
+
+```http
+DELETE /facturas/FAC-000005?motivo=Factura%20emitida%20al%20cliente%20equivocado
+```
+
+### Anulación: motivo y autorizante
+
+`cancelar`, `anular` y `DELETE` exigen un `motivo` (doc §6.3 / §7.2):
+
+- Texto de **5 a 300 caracteres** tras recortar espacios al inicio y al final. Ausente, vacío, de menos de 5 o de más de 300 caracteres: `400` con mensaje en español, y la factura no cambia.
+- El servidor guarda, en la misma escritura condicional que cambia el estado (no hay una ventana en la que la factura esté anulada sin sus datos de auditoría):
+
+| Campo             | Tipo     | Descripción                                                                                        |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `motivoAnulacion` | `string` | El `motivo` recortado.                                                                             |
+| `anuladaPor`      | `object` | `{ userId, nombre }` del `administrador`/`gerente` autenticado que ejecutó la operación (del JWT). |
+| `fechaAnulacion`  | `Date`   | Momento en que se ejecutó.                                                                         |
+
+- Las facturas anuladas o canceladas antes de existir estos campos no los tienen. Si una cancelación se revierte porque aparece un vale de devolución, estos campos se eliminan junto con el estado.
 
 ---
 
@@ -194,6 +223,8 @@ Hace **exactamente lo mismo** que `PATCH /facturas/:id/anular`: anula la factura
 
 - **`confirmar`**: descuenta de `Producto.stock_inicial` (el stock vivo, el mismo que usa Ventas) la cantidad de cada producto de la factura (si un producto aparece en varios items, se suman) y registra un movimiento Kardex `venta` por producto, con `motivo: "Factura FAC-000012 confirmada"`, `referencia: "FAC-000012"` y el stock resultante. La factura queda con `inventarioAplicado: true`.
 - **`cancelar`**: si la factura tiene `inventarioAplicado: true`, devuelve esas cantidades al stock, registra un Kardex `devolucion` por producto (`motivo: "Factura FAC-000012 cancelada"`) y marca `inventarioRevertido: true`. Un producto que ya no existe se omite (queda en el log del servidor) y se sigue con el resto.
+
+Cada fila del Kardex lleva `ubicacionFisica` (Submayor SC-2-13) cuando se puede calcular: las ubicaciones realmente usadas en modo unificado (varias separadas por `; `) o la ubicación por defecto del producto antes de unificar, con el formato `almacén / contenedor / sección S · estante E · casilla C`. Si no se puede calcular, la fila se escribe sin ese campo: nunca bloquea ni hace fallar el movimiento.
 
 Si algún producto no puede descontarse (stock insuficiente, no existe, está inactivo o pertenece a otro almacén que el de la factura), se revierten los descuentos ya hechos, la factura vuelve a `terminada` y la respuesta es `409`. El mensaje dice si el producto no existe, si está inactivo, si ya no pertenece al almacén de la factura (se movió), o el stock disponible frente al solicitado; si el stock ya alcanza al releerlo (otro proceso lo cambió), dice que el stock cambió durante la confirmación y pide reintentar:
 
@@ -323,6 +354,7 @@ Todos los endpoints que devuelven una factura usan esta forma:
 | `inventarioAplicado`                                  | `boolean` | **Server-controlado:** `true` solo si al confirmar esta factura se descontó el stock.                                                                                                                                              |
 | `inventarioRevertido`                                 | `boolean` | **Server-controlado:** `true` cuando al cancelar se devolvió ese stock.                                                                                                                                                            |
 | `inventarioEnProceso`                                 | `boolean` | **Server-controlado:** `true` solo mientras `confirmar`/`cancelar` mueven stock. Si queda puesto sin una petición en curso, ver [Notas operativas](#notas-operativas-backend).                                                     |
+| `motivoAnulacion`, `anuladaPor`, `fechaAnulacion`     | varios    | **Server-controlados:** solo en facturas `cancelada`/`anulada` por la API actual. Ver [Anulación: motivo y autorizante](#anulación-motivo-y-autorizante).                                                                          |
 | `talonario`                                           | `string`  | **Opcional:** referencia libre al talonario/recibo asociado. Hasta 50 caracteres.                                                                                                                                                  |
 | `tipo`                                                | `string`  | `"factura_normal"` (por defecto) o `"ajuste"`.                                                                                                                                                                                     |
 | `impreso`                                             | `boolean` | `false` por defecto.                                                                                                                                                                                                               |
@@ -523,6 +555,56 @@ GET /facturas/FAC-000005
 
 ---
 
+## `GET /facturas/:id/exportar` — Factura digital (JSON)
+
+Devuelve un documento JSON construido **solo con datos ya guardados en la factura** (mismo acceso que `GET /facturas/:id`: cualquier usuario autenticado; `404` si no existe). No expone costos, ids de producto ni datos de inventario.
+
+```json
+{
+  "formato": "factura-digital/1",
+  "numero": 7,
+  "estado": "confirmada",
+  "fecha": "2026-10-01",
+  "emisor": { "nombre": "Mi Empresa", "nit": "999", "ciudad": "La Habana" },
+  "cliente": {
+    "nombre": "Cliente SA",
+    "nit": "123",
+    "direccion": "Calle 1",
+    "telefono": "555",
+    "email": "a@b.cu"
+  },
+  "items": [
+    {
+      "producto": "Arroz",
+      "cantidad": 2,
+      "precio": 100,
+      "descuento": 25,
+      "recargo": 3,
+      "total": 178
+    }
+  ],
+  "totales": {
+    "subtotal": 200,
+    "descuentoTotal": 25,
+    "recargoTotal": 3,
+    "impuesto": 17.8,
+    "total": 195.8
+  },
+  "facturadoPor": "Ana",
+  "anulacion": {
+    "motivo": "...",
+    "anuladaPor": { "userId": "...", "nombre": "..." },
+    "fecha": "2026-10-02T10:00:00.000Z"
+  }
+}
+```
+
+- `emisor` es la copia guardada al emitir la factura; `items[].descuento` es el descuento de la línea (monto fijo + porcentaje sobre el bruto); `impuesto` es el importe (`0` si no hay).
+- `facturadoPor` y `anulacion` solo aparecen si la factura los tiene (`anulacion`: facturas `cancelada`/`anulada` con motivo guardado).
+- `formato` es un identificador interno de este diseño. **No** afirma conformidad con ningún formato oficial de factura electrónica (p. ej. SC-2-12 / Res. 55/2021): ese anexo todavía no se ha revisado.
+
+---
+
 ## `PATCH /facturas/:id` — Editar una factura
 
 Qué campos acepta un `PATCH` depende del **estado actual** de la factura (ver [Estados y transiciones](#estados-y-transiciones-de-una-factura)); enviar un campo que el estado actual no permite devuelve `409` (no `400`: la petición es válida, lo que no es válido es aplicarla ahora). Un `PATCH` sin ningún campo no es error: la factura se devuelve sin cambios.
@@ -710,12 +792,15 @@ Si no se envía ninguno de los tres, la factura queda sin `clienteId` (venta al 
 - [ ] Mostrar e imprimir los datos **de la respuesta** del `POST` (número, totales, emisor, `almacenCodigo`, `facturadoPor`).
 - [ ] Enviar `descuentoPct`, `descuentoMonto` y `recargo` en cada item, con `0` si no aplican.
 - [ ] Paginar el listado con `page` y `limit` (máximo 500).
-- [ ] Manejar el `401` (sin sesión / sesión expirada) y el `403` (rol sin permiso: solo `administrador`, `gerente` y `facturador` pueden crear, editar o anular).
+- [ ] Manejar el `401` (sin sesión / sesión expirada) y el `403` (rol sin permiso: solo `administrador`, `gerente` y `facturador` pueden crear o editar; solo `administrador` y `gerente` pueden anular o cancelar).
 - [ ] Manejar el `404`/`422` si el almacén elegido no existe o no tiene código, y el `400` si un producto no pertenece a ese almacén.
 - [ ] Antes de armar el formulario de edición, consultar la [matriz de edición por estado](#matriz-de-edición-por-estado): mostrar solo los campos editables en el `estado` actual de la factura.
 - [ ] Manejar el `409` al editar (el estado actual no permite alguno de los campos enviados, o la factura cambió mientras se editaba — ver [Concurrencia al editar](#concurrencia-al-editar-revision)) o al pedir una transición de estado (`terminar`/`editar`/`confirmar`/`cancelar`/`anular`) que no aplica desde el estado actual.
 - [ ] Al confirmar, manejar el `409` de stock insuficiente / producto inactivo / de otro almacén (la factura sigue en `terminada`, ver [Movimientos de inventario](#movimientos-de-inventario-al-confirmar--cancelar)).
 - [ ] Ante el `409` de concurrencia (incluido el `409` "se está confirmando; reintente" al cancelar), volver a pedir `GET /facturas/:id` y reintentar, en vez de reintentar a ciegas con el cuerpo original.
+- [ ] `cancelar`/`anular` envían `{ "motivo": "<5–300 caracteres>" }` en el cuerpo y `DELETE` envía `?motivo=`; manejar el `400` si falta o es corto. Esas tres acciones solo se muestran a `administrador` y `gerente`.
+- [ ] Para roles distintos de `administrador`/`gerente`, enviar cada item con el `precio_venta` actual del producto y descuentos en `0`; manejar el `403` de precio/descuento.
+- [ ] Para descargar la factura digital, usar `GET /facturas/:id/exportar`.
 - [ ] Después de imprimir, marcarla con `PATCH { "impreso": true }` (funciona en cualquier estado salvo `anulada`).
 
 ---

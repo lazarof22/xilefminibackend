@@ -5,6 +5,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Devolucion } from '../inventario/devolucion/schema/devolucion.schema';
 import {
   ConflictException,
+  ForbiddenException,
   Logger,
   NotFoundException,
   UnauthorizedException,
@@ -29,7 +30,11 @@ import {
   ProductoDocument,
 } from '../inventario/producto/schemas/producto.schema';
 import { Pais, PaisDocument } from '../nomencladores/pais/schema/pais.schema';
-import { Usuarios, UsuariosDocument } from '../auth/schemas/usuarios.schema';
+import {
+  Usuarios,
+  UsuariosDocument,
+  UsuarioRol,
+} from '../auth/schemas/usuarios.schema';
 import { EmpresaDatosService } from '../configuracion/empresa-datos/empresa-datos.service';
 import { FacturaInventarioService } from './factura-inventario.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
@@ -48,6 +53,8 @@ import { obtenerFechaEnZona } from './factura-fecha';
 const ALMACEN_ID = '507f1f77bcf86cd799439011';
 const PRODUCTO_ID = '507f1f77bcf86cd799439012';
 const USER_ID = '507f1f77bcf86cd799439013';
+const MOTIVO = 'Error de precio en la venta';
+const ACTOR = { userId: USER_ID, nombre: 'Jefa Gerente' };
 
 /**
  * Minimal chainable Mongoose query mock. Every method returns the same
@@ -1053,6 +1060,179 @@ describe('FacturaService', () => {
     });
   });
 
+  describe('price/discount only by administrador and gerente (doc 6.9)', () => {
+    const PRECIO_VENTA = 100;
+
+    beforeEach(() => {
+      facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 1 }),
+      );
+      productoModelMock.find.mockReturnValue(
+        crearQueryMock<ProductoDocument[]>([
+          {
+            _id: PRODUCTO_ID,
+            almacen: undefined,
+            nombre_producto: 'Arroz',
+            precio_venta: PRECIO_VENTA,
+          } as unknown as ProductoDocument,
+        ]),
+      );
+    });
+
+    const dtoCon = (extra: Record<string, unknown>): CreateFacturaDto => ({
+      ...baseDto(),
+      items: [{ ...itemBase, precio: PRECIO_VENTA, ...extra }],
+    });
+
+    describe('create', () => {
+      it.each([
+        ['a different precio', { precio: 80 }],
+        ['a descuentoPct', { descuentoPct: 5 }],
+        ['a descuentoMonto', { descuentoMonto: 10 }],
+      ])(
+        'refuses a facturador sending %s with 403 naming the product, before allocating a number',
+        async (_etiqueta, extra) => {
+          const promesa = service.create(
+            dtoCon(extra),
+            USER_ID,
+            UsuarioRol.FACTURADOR,
+          );
+
+          await expect(promesa).rejects.toBeInstanceOf(ForbiddenException);
+          await expect(promesa).rejects.toThrow('Arroz');
+          expect(
+            facturaContadorModelMock.findOneAndUpdate,
+          ).not.toHaveBeenCalled();
+          expect(savedFactura.save).not.toHaveBeenCalled();
+        },
+      );
+
+      it('accepts a facturador when the precio equals precio_venta and there are no discounts', async () => {
+        await service.create(dtoCon({}), USER_ID, UsuarioRol.FACTURADOR);
+
+        expect(savedFactura.save).toHaveBeenCalled();
+      });
+
+      it.each([UsuarioRol.ADMIN, UsuarioRol.GERENTE])(
+        'lets %s change the precio and apply discounts',
+        async (rol) => {
+          await service.create(
+            dtoCon({ precio: 80, descuentoPct: 5, descuentoMonto: 10 }),
+            USER_ID,
+            rol,
+          );
+
+          expect(savedFactura.save).toHaveBeenCalled();
+        },
+      );
+
+      it('treats a missing role as not privileged (fail closed)', async () => {
+        await expect(
+          service.create(dtoCon({ precio: 80 }), USER_ID),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('does not price-check an item whose product cannot be found', async () => {
+        productoModelMock.find.mockReturnValue(
+          crearQueryMock<ProductoDocument[]>([]),
+        );
+        // Existing behaviour: the missing product is rejected by the almacén
+        // validation (400), never by the price rule (403).
+        await expect(
+          service.create(
+            dtoCon({ precio: 80 }),
+            USER_ID,
+            UsuarioRol.FACTURADOR,
+          ),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+    });
+
+    describe('update (items in edicion)', () => {
+      const guardada = (): Factura =>
+        ({
+          id: 'FAC-000001',
+          estado: EstadoFactura.EDICION,
+          items: [{ ...itemBase, total: 200 }],
+          subtotal: 200,
+          descuentoTotal: 0,
+          recargoTotal: 0,
+          total: 200,
+          almacenId: ALMACEN_ID,
+          almacenCodigo: 'ALM-001',
+        }) as unknown as Factura;
+
+      beforeEach(() => {
+        facturaModelMock.findOne.mockReturnValue(
+          crearQueryMock<Factura | null>(guardada()),
+        );
+        facturaModelMock.findOneAndUpdate.mockReturnValue(
+          crearQueryMock<Factura | null>(guardada()),
+        );
+      });
+
+      it.each([
+        ['a different precio', { precio: 80 }],
+        ['a descuentoPct', { descuentoPct: 5 }],
+        ['a descuentoMonto', { descuentoMonto: 10 }],
+      ])(
+        'refuses a facturador sending %s with 403 naming the product and writes nothing',
+        async (_etiqueta, extra) => {
+          const promesa = service.update(
+            'FAC-000001',
+            { items: [{ ...itemBase, precio: PRECIO_VENTA, ...extra }] },
+            UsuarioRol.FACTURADOR,
+          );
+
+          await expect(promesa).rejects.toBeInstanceOf(ForbiddenException);
+          await expect(promesa).rejects.toThrow('Arroz');
+          expect(facturaModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+        },
+      );
+
+      it('accepts a facturador resending items at precio_venta without discounts', async () => {
+        await service.update(
+          'FAC-000001',
+          { items: [{ ...itemBase, precio: PRECIO_VENTA }] },
+          UsuarioRol.FACTURADOR,
+        );
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalled();
+      });
+
+      it.each([UsuarioRol.ADMIN, UsuarioRol.GERENTE])(
+        'lets %s change the precio and apply discounts',
+        async (rol) => {
+          await service.update(
+            'FAC-000001',
+            { items: [{ ...itemBase, precio: 80, descuentoPct: 5 }] },
+            rol,
+          );
+
+          expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalled();
+        },
+      );
+
+      it('treats a missing role as not privileged (fail closed)', async () => {
+        await expect(
+          service.update('FAC-000001', {
+            items: [{ ...itemBase, precio: 80 }],
+          }),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('does not price-check a PATCH that sends no items', async () => {
+        await service.update(
+          'FAC-000001',
+          { concepto: 'x' },
+          UsuarioRol.FACTURADOR,
+        );
+
+        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('facturadoPor: authenticated user snapshot (T4)', () => {
     beforeEach(() => {
       facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
@@ -1603,61 +1783,97 @@ describe('FacturaService', () => {
         destino: EstadoFactura.CANCELADA,
         setExtra: { inventarioEnProceso: true },
         filtroExtra: { inventarioEnProceso: { $ne: true } },
+        anulacion: true,
       },
       {
         metodo: 'anular' as const,
         destino: EstadoFactura.ANULADA,
+        anulacion: true,
       },
-    ])('$metodo', ({ metodo, destino, setExtra = {}, filtroExtra = {} }) => {
-      it(`claims the transition to ${destino} with a single conditional findOneAndUpdate`, async () => {
-        const actualizada = { id: 'FAC-000001', estado: destino } as Factura;
-        facturaModelMock.findOneAndUpdate.mockReturnValue(
-          crearQueryMock<Factura | null>(actualizada),
-        );
+    ])(
+      '$metodo',
+      ({
+        metodo,
+        destino,
+        setExtra = {},
+        filtroExtra = {},
+        anulacion = false,
+      }) => {
+        /** `cancelar`/`anular` take the motivo and the authorizing user. */
+        const invocar = (id: string): Promise<Factura> => {
+          switch (metodo) {
+            case 'cancelar':
+              return service.cancelar(id, MOTIVO, ACTOR);
+            case 'anular':
+              return service.anular(id, MOTIVO, ACTOR);
+            default:
+              return service[metodo](id);
+          }
+        };
 
-        const resultado = await service[metodo]('FAC-000001');
+        it(`claims the transition to ${destino} with a single conditional findOneAndUpdate`, async () => {
+          const actualizada = { id: 'FAC-000001', estado: destino } as Factura;
+          facturaModelMock.findOneAndUpdate.mockReturnValue(
+            crearQueryMock<Factura | null>(actualizada),
+          );
 
-        expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
-          {
-            id: 'FAC-000001',
-            estado: { $in: origenesPermitidos(destino) },
-            ...filtroExtra,
-          },
-          { $set: { estado: destino, ...setExtra }, $inc: { revision: 1 } },
-          { new: true, runValidators: true },
-        );
-        expect(resultado).toBe(actualizada);
-      });
+          const resultado = await invocar('FAC-000001');
 
-      it('throws NotFoundException when the invoice does not exist', async () => {
-        facturaModelMock.findOneAndUpdate.mockReturnValue(
-          crearQueryMock<Factura | null>(null),
-        );
-        facturaModelMock.findOne.mockReturnValue(
-          crearQueryMock<Factura | null>(null),
-        );
+          expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
+            {
+              id: 'FAC-000001',
+              estado: { $in: origenesPermitidos(destino) },
+              ...filtroExtra,
+            },
+            {
+              $set: {
+                estado: destino,
+                ...setExtra,
+                ...(anulacion
+                  ? {
+                      motivoAnulacion: MOTIVO,
+                      anuladaPor: { userId: USER_ID, nombre: 'Jefa Gerente' },
+                      fechaAnulacion: expect.any(Date) as unknown,
+                    }
+                  : {}),
+              },
+              $inc: { revision: 1 },
+            },
+            { new: true, runValidators: true },
+          );
+          expect(resultado).toBe(actualizada);
+        });
 
-        await expect(service[metodo]('FAC-999999')).rejects.toBeInstanceOf(
-          NotFoundException,
-        );
-      });
+        it('throws NotFoundException when the invoice does not exist', async () => {
+          facturaModelMock.findOneAndUpdate.mockReturnValue(
+            crearQueryMock<Factura | null>(null),
+          );
+          facturaModelMock.findOne.mockReturnValue(
+            crearQueryMock<Factura | null>(null),
+          );
 
-      it('throws ConflictException naming the current state when the invoice is not in an allowed origin state', async () => {
-        facturaModelMock.findOneAndUpdate.mockReturnValue(
-          crearQueryMock<Factura | null>(null),
-        );
-        facturaModelMock.findOne.mockReturnValue(
-          crearQueryMock<Factura | null>({
-            id: 'FAC-000001',
-            estado: EstadoFactura.CANCELADA,
-          } as Factura),
-        );
+          await expect(invocar('FAC-999999')).rejects.toBeInstanceOf(
+            NotFoundException,
+          );
+        });
 
-        await expect(service[metodo]('FAC-000001')).rejects.toBeInstanceOf(
-          ConflictException,
-        );
-      });
-    });
+        it('throws ConflictException naming the current state when the invoice is not in an allowed origin state', async () => {
+          facturaModelMock.findOneAndUpdate.mockReturnValue(
+            crearQueryMock<Factura | null>(null),
+          );
+          facturaModelMock.findOne.mockReturnValue(
+            crearQueryMock<Factura | null>({
+              id: 'FAC-000001',
+              estado: EstadoFactura.CANCELADA,
+            } as Factura),
+          );
+
+          await expect(invocar('FAC-000001')).rejects.toBeInstanceOf(
+            ConflictException,
+          );
+        });
+      },
+    );
 
     it('remove (DELETE alias) anula the invoice the same way anular does', async () => {
       const anulada = {
@@ -1668,17 +1884,161 @@ describe('FacturaService', () => {
         crearQueryMock<Factura | null>(anulada),
       );
 
-      const resultado = await service.remove('FAC-000001');
+      const resultado = await service.remove('FAC-000001', MOTIVO, ACTOR);
 
       expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledWith(
         {
           id: 'FAC-000001',
           estado: { $in: origenesPermitidos(EstadoFactura.ANULADA) },
         },
-        { $set: { estado: EstadoFactura.ANULADA }, $inc: { revision: 1 } },
+        {
+          $set: {
+            estado: EstadoFactura.ANULADA,
+            motivoAnulacion: MOTIVO,
+            anuladaPor: { userId: USER_ID, nombre: 'Jefa Gerente' },
+            fechaAnulacion: expect.any(Date) as unknown,
+          },
+          $inc: { revision: 1 },
+        },
         { new: true, runValidators: true },
       );
       expect(resultado).toBe(anulada);
+    });
+  });
+
+  describe('annulment reason and authorizer (doc 6.3 / 7.2)', () => {
+    const anulada = (): Factura =>
+      ({ id: 'FAC-000001', estado: EstadoFactura.ANULADA }) as Factura;
+
+    beforeEach(() => {
+      facturaModelMock.findOneAndUpdate.mockReturnValue(
+        crearQueryMock<Factura | null>(anulada()),
+      );
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>({ _id: 'oid' } as unknown as Factura),
+      );
+    });
+
+    const llamadas = {
+      anular: (motivo: string) => service.anular('FAC-000001', motivo, ACTOR),
+      cancelar: (motivo: string) =>
+        service.cancelar('FAC-000001', motivo, ACTOR),
+      remove: (motivo: string) => service.remove('FAC-000001', motivo, ACTOR),
+    };
+
+    describe.each(['anular', 'cancelar', 'remove'] as const)('%s', (metodo) => {
+      it.each([
+        ['missing', undefined],
+        ['empty', ''],
+        ['blank', '      '],
+        ['too short (4 chars)', ' abcd '],
+        ['too long (301 chars)', 'a'.repeat(301)],
+      ])(
+        'answers 400 for a %s motivo and neither reads nor writes anything',
+        async (_etiqueta, motivo) => {
+          await expect(
+            llamadas[metodo](motivo as unknown as string),
+          ).rejects.toBeInstanceOf(BadRequestException);
+
+          expect(facturaModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+          expect(facturaModelMock.findOne).not.toHaveBeenCalled();
+          expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
+        },
+      );
+
+      it('stores the trimmed motivo, the authorizing user and the date in the state-change write', async () => {
+        const antes = Date.now();
+        await llamadas[metodo]('  Error de precio  ');
+
+        const set = comoRegistro(
+          comoRegistro(facturaModelMock.findOneAndUpdate.mock.calls[0][1]).$set,
+        );
+        expect(set.motivoAnulacion).toBe('Error de precio');
+        expect(set.anuladaPor).toEqual({
+          userId: USER_ID,
+          nombre: 'Jefa Gerente',
+        });
+        expect(set.fechaAnulacion).toBeInstanceOf(Date);
+        expect((set.fechaAnulacion as Date).getTime()).toBeGreaterThanOrEqual(
+          antes,
+        );
+      });
+
+      it('accepts motivos of exactly 5 and 300 characters', async () => {
+        await expect(llamadas[metodo]('abcde')).resolves.toBeDefined();
+        await expect(llamadas[metodo]('a'.repeat(300))).resolves.toBeDefined();
+      });
+    });
+
+    it('cancelar and anular answer 401 when the authorizing user is missing', async () => {
+      await expect(
+        service.anular('FAC-000001', MOTIVO, undefined as unknown as never),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(facturaModelMock.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('cancelar stores the annulment fields in the same claim as the marker (one write, not two)', async () => {
+      facturaModelMock.findOneAndUpdate
+        .mockReturnValueOnce(
+          crearQueryMock<Factura | null>({
+            id: 'FAC-000001',
+            estado: EstadoFactura.CANCELADA,
+            inventarioEnProceso: true,
+            items: [],
+          } as unknown as Factura),
+        )
+        .mockReturnValue(crearQueryMock<Factura | null>(null));
+
+      await service.cancelar('FAC-000001', MOTIVO, ACTOR);
+
+      const [filtro, cambios] = facturaModelMock.findOneAndUpdate.mock.calls[0];
+      expect(filtro).toEqual({
+        id: 'FAC-000001',
+        estado: { $in: origenesPermitidos(EstadoFactura.CANCELADA) },
+        inventarioEnProceso: { $ne: true },
+      });
+      expect(comoRegistro(comoRegistro(cambios).$set)).toMatchObject({
+        estado: EstadoFactura.CANCELADA,
+        inventarioEnProceso: true,
+        motivoAnulacion: MOTIVO,
+      });
+    });
+  });
+
+  describe('exportar (digital invoice)', () => {
+    it('maps the stored invoice with exportarFactura', async () => {
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>({
+          id: 'FAC-000001',
+          numero: 1,
+          estado: EstadoFactura.CONFIRMADA,
+          fecha: '2026-10-01',
+          cliente: 'Cliente SA',
+          items: [{ ...itemBase, total: 200 }],
+          subtotal: 200,
+          descuentoTotal: 0,
+          recargoTotal: 0,
+          total: 200,
+        } as unknown as Factura),
+      );
+
+      const doc = await service.exportar('FAC-000001');
+
+      expect(facturaModelMock.findOne).toHaveBeenCalledWith({
+        id: 'FAC-000001',
+      });
+      expect(doc.formato).toBe('factura-digital/1');
+      expect(doc.numero).toBe(1);
+      expect(doc.items).toHaveLength(1);
+    });
+
+    it('throws NotFoundException for an unknown invoice', async () => {
+      facturaModelMock.findOne.mockReturnValue(
+        crearQueryMock<Factura | null>(null),
+      );
+      await expect(service.exportar('FAC-999999')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 
@@ -1839,9 +2199,9 @@ describe('FacturaService', () => {
           crearQueryMock<unknown>({ _id: 'vale-1' }),
         );
 
-        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
-          ConflictException,
-        );
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).rejects.toThrow(ConflictException);
 
         expect(devolucionModelMock.exists).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1865,9 +2225,9 @@ describe('FacturaService', () => {
           )
           .mockReturnValueOnce(crearQueryMock<Factura | null>(null));
 
-        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
-          ConflictException,
-        );
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).rejects.toThrow(ConflictException);
 
         expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
@@ -1879,7 +2239,13 @@ describe('FacturaService', () => {
           },
           {
             $set: { estado: EstadoFactura.CONFIRMADA },
-            $unset: { inventarioEnProceso: 1 },
+            // The cancellation did not happen: its audit fields go too.
+            $unset: {
+              inventarioEnProceso: 1,
+              motivoAnulacion: 1,
+              anuladaPor: 1,
+              fechaAnulacion: 1,
+            },
             $inc: { revision: 1 },
           },
           { new: true },
@@ -1901,9 +2267,9 @@ describe('FacturaService', () => {
             ),
           );
 
-        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
-          ConflictException,
-        );
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).rejects.toThrow(ConflictException);
 
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenCalledTimes(3);
       });
@@ -1919,7 +2285,9 @@ describe('FacturaService', () => {
           .mockReturnValueOnce(crearQueryMock<Factura | null>(reclamada))
           .mockReturnValueOnce(crearQueryMock<Factura | null>(marcada));
 
-        await expect(service.cancelar('FAC-000012')).resolves.toBe(marcada);
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).resolves.toBe(marcada);
 
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenNthCalledWith(
           1,
@@ -1932,6 +2300,9 @@ describe('FacturaService', () => {
             $set: {
               estado: EstadoFactura.CANCELADA,
               inventarioEnProceso: true,
+              motivoAnulacion: MOTIVO,
+              anuladaPor: { userId: USER_ID, nombre: 'Jefa Gerente' },
+              fechaAnulacion: expect.any(Date) as unknown,
             },
             $inc: { revision: 1 },
           },
@@ -1960,7 +2331,9 @@ describe('FacturaService', () => {
           .mockReturnValueOnce(crearQueryMock<Factura | null>(cancelando()))
           .mockReturnValueOnce(crearQueryMock<Factura | null>(legado));
 
-        await expect(service.cancelar('FAC-000012')).resolves.toBe(legado);
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).resolves.toBe(legado);
 
         expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
         expect(facturaModelMock.findOneAndUpdate).toHaveBeenLastCalledWith(
@@ -1982,7 +2355,7 @@ describe('FacturaService', () => {
           crearQueryMock<Factura | null>(confirmando()),
         );
 
-        const promesa = service.cancelar('FAC-000012');
+        const promesa = service.cancelar('FAC-000012', MOTIVO, ACTOR);
 
         await expect(promesa).rejects.toBeInstanceOf(ConflictException);
         await expect(promesa).rejects.toThrow(
@@ -2007,9 +2380,9 @@ describe('FacturaService', () => {
           ),
         );
 
-        await expect(service.cancelar('FAC-000012')).rejects.toThrow(
-          'no puede pasar a "cancelada"',
-        );
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).rejects.toThrow('no puede pasar a "cancelada"');
         expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
       });
 
@@ -2020,7 +2393,9 @@ describe('FacturaService', () => {
           .mockReturnValueOnce(crearQueryMock<Factura | null>(null));
         const errorSpy = jest.spyOn(Logger.prototype, 'error');
 
-        await expect(service.cancelar('FAC-000012')).resolves.toBe(reclamada);
+        await expect(
+          service.cancelar('FAC-000012', MOTIVO, ACTOR),
+        ).resolves.toBe(reclamada);
         expect(errorSpy).toHaveBeenCalledWith(
           expect.stringContaining('inventarioEnProceso'),
         );
@@ -2036,7 +2411,11 @@ describe('FacturaService', () => {
           ),
         );
 
-        await service[metodo]('FAC-000012');
+        if (metodo === 'anular') {
+          await service.anular('FAC-000012', MOTIVO, ACTOR);
+        } else {
+          await service[metodo]('FAC-000012');
+        }
 
         expect(inventarioMock.rebajarStock).not.toHaveBeenCalled();
         expect(inventarioMock.restaurarStock).not.toHaveBeenCalled();
@@ -2054,7 +2433,7 @@ describe('FacturaService', () => {
         } as Factura),
       );
 
-      await service.anular('FAC-000001');
+      await service.anular('FAC-000001', MOTIVO, ACTOR);
 
       expect(facturaContadorModelMock.findOneAndUpdate).not.toHaveBeenCalled();
     });
@@ -2066,7 +2445,7 @@ describe('FacturaService', () => {
           estado: EstadoFactura.ANULADA,
         } as Factura),
       );
-      await service.anular('FAC-000005');
+      await service.anular('FAC-000005', MOTIVO, ACTOR);
 
       facturaContadorModelMock.findOneAndUpdate.mockReturnValue(
         crearQueryMock({ _id: FACTURA_CONTADOR_ID, seq: 6 }),
