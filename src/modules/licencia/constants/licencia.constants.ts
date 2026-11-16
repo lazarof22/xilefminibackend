@@ -67,9 +67,15 @@ export const LICENCIA_AUDIT_ACCIONES = [
   'reloj_alterado',
   'hardware_no_coincide',
   'solicitud',
+  'estado_reiniciado',
 ] as const;
 
 export type LicenciaAuditAccion = (typeof LICENCIA_AUDIT_ACCIONES)[number];
 
 /** Version of the unsigned activation request (`.req`) format. */
 export const SOLICITUD_VERSION = 1;
+
+/** `empresa_id` goes into file names, audit rows and logs: no control characters (CR, LF, NUL…). */
+// eslint-disable-next-line no-control-regex
+export const EMPRESA_ID_SIN_CONTROL = /^[^\u0000-\u001F\u007F]+$/;
+export const MENSAJE_EMPRESA_ID = 'empresa_id no puede contener caracteres de control';

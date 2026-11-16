@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Request, UseGuards } from '@nestjs/common';
+import { SinLicencia } from '../licencia/decorators/sin-licencia.decorator';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -10,6 +11,7 @@ import type { RequestWithUser } from './types/jwt-user.type';
 import type { UsuariosDocument } from './schemas/usuarios.schema';
 
 @ApiTags('Auth')
+@SinLicencia()
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}

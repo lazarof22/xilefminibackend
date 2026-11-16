@@ -203,6 +203,9 @@ export class LicenciaService {
     artifact: unknown,
     ctx: ContextoPeticion,
   ): Promise<ImportacionResponse> {
+    // Whatever the outcome, the next request must see the new state (before AND after: an
+    // evaluation already in flight must not write a stale answer into the cache).
+    this.invalidarCacheInstalacion();
     try {
       return await this.importar(artifact, ctx);
     } catch (error) {
@@ -213,7 +216,15 @@ export class LicenciaService {
         ctx,
       );
       throw rechazo(HttpStatus.INTERNAL_SERVER_ERROR, 'error_interno');
+    } finally {
+      this.invalidarCacheInstalacion();
     }
+  }
+
+  private invalidarCacheInstalacion(): void {
+    this.epocaCache++;
+    this.cacheInstalacion = null;
+    this.evaluacionEnCurso = null;
   }
 
   private async importar(
@@ -242,10 +253,18 @@ export class LicenciaService {
 
     // Global floor (every stored license) + the clock state file: a new
     // license_id must not reset the anti-rollback floor.
-    const clock = await this.clockService.observe(
-      Date.now(),
-      await this.pisoGlobal(),
-    );
+    const piso = await this.pisoGlobal();
+    let clock = await this.clockService.observe(Date.now(), piso);
+    if (!clock.ok && clock.codigo === 'estado_alterado') {
+      // A corrupt state file would otherwise block every re-import, so the administrator could
+      // never recover. The artifact is already signature-verified; the stored floor is kept.
+      await this.clockService.restablecer(Date.now(), piso);
+      await this.audit(
+        { ...base, accion: 'estado_reiniciado', exitoso: true },
+        ctx,
+      );
+      clock = await this.clockService.observe(Date.now(), piso);
+    }
     if (!clock.ok) {
       await this.audit(
         {
@@ -262,7 +281,9 @@ export class LicenciaService {
     const codigo = derivarCodigo(payload, {
       ahoraMs: clock.ahoraMs,
       fingerprint,
-      empresaId: ctx.empresaIdUsuario,
+      // The admin JWT carries no empresa: the install is bound to the empresa of its first
+      // license, so a license of another company cannot replace it on this machine.
+      empresaId: ctx.empresaIdUsuario ?? (await this.empresaInstalada()),
     });
     const bloqueo = this.bloqueoImportacion(codigo, payload);
     if (bloqueo) {
@@ -434,6 +455,40 @@ export class LicenciaService {
       return rollback('concurrent update');
     }
     return payload.revocada ? 'revocada' : 'actualizada';
+  }
+
+  private cacheInstalacion: { hasta: number; valida: boolean } | null = null;
+  private epocaCache = 0;
+  private evaluacionEnCurso: Promise<boolean> | null = null;
+  private static readonly CACHE_INSTALACION_MS = 10_000;
+
+  /**
+   * Is the install licensed? Used by the global guard on EVERY request, so the answer is cached
+   * for a few seconds (a check re-verifies the signature and rewrites the clock state file).
+   * An import invalidates it at once, so a revocation takes effect immediately. Fail closed.
+   */
+  async instalacionLicenciada(): Promise<boolean> {
+    const ahora = Date.now();
+    if (this.cacheInstalacion && this.cacheInstalacion.hasta > ahora) {
+      return this.cacheInstalacion.valida;
+    }
+    const epoca = this.epocaCache;
+    const evaluacion = (this.evaluacionEnCurso ??= this.verificarEstado()
+      .then((estado) => estado.valida === true)
+      .catch(() => false)
+      .then((valida) => {
+        if (epoca === this.epocaCache) {
+          this.cacheInstalacion = {
+            hasta: Date.now() + LicenciaService.CACHE_INSTALACION_MS,
+            valida,
+          };
+        }
+        return valida;
+      })
+      .finally(() => {
+        if (epoca === this.epocaCache) this.evaluacionEnCurso = null;
+      }));
+    return evaluacion;
   }
 
   /**
@@ -638,6 +693,17 @@ export class LicenciaService {
   }
 
   /** True only when no license at all is stored on this install. */
+  /** `empresa_id` of the oldest stored license: the company this install belongs to. */
+  private async empresaInstalada(): Promise<string | undefined> {
+    const primera = await this.licenciaModel
+      .findOne()
+      .sort({ createdAt: 1 })
+      .select('empresa_id')
+      .lean<{ empresa_id?: string }>()
+      .exec();
+    return primera?.empresa_id;
+  }
+
   private async sinLicencias(): Promise<boolean> {
     try {
       return (await this.licenciaModel.countDocuments({}).exec()) === 0;

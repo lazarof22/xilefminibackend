@@ -65,8 +65,8 @@ Rejections use `{ statusCode, message: "Licencia rechazada", codigo }`:
 
 | HTTP | `codigo` |
 |------|----------|
-| 400 | `formato_invalido`, `version_no_soportada`, `firma_invalida`, `expirada` (DTO errors are standard Nest 400s: `version_firma` must be exactly `3`, unknown keys rejected, `fecha_vencimiento` `null` iff `tipo: 'perpetua'`) |
-| 403 | `hardware_no_coincide`, `empresa_no_coincide` (payload vs admin JWT empresa), `reloj_alterado`, `estado_alterado` |
+| 400 | `formato_invalido`, `firma_invalida`, `expirada` (DTO errors are standard Nest 400s, **before** the service: `version_firma` must be exactly `3` — so `version_no_soportada` is only reachable by calling the service directly —, unknown keys rejected, `fecha_vencimiento` `null` iff `tipo: 'perpetua'`, `empresa_id` without control characters) |
+| 403 | `hardware_no_coincide`, `empresa_no_coincide` (payload vs the empresa of the admin JWT when it carries one, otherwise vs the empresa of the install's first license: one install belongs to one company), `reloj_alterado`, `estado_alterado` |
 | 409 | `secuencia_obsoleta` (lower secuencia, or same secuencia with a different signature) |
 | 500 | `archivo_no_escrito` (DB updated; re-import is idempotent), `error_interno` |
 
@@ -177,7 +177,9 @@ the caller still receives 403 `cupo_usuarios_excedido`. Check the logs for
 
 ## Known gaps (tighten when guards are wired)
 
-- `LicenciaGuard` exists, fails closed, but is **not applied** to routes nor registered as `APP_GUARD` (product decision).
+- `LicenciaGlobalGuard` is registered as `APP_GUARD`: **every request with credentials needs a valid license for the install**, otherwise `403 { message: 'Licencia no válida', codigo: 'licencia_invalida' }` (fail closed). A request without credentials passes through (the JWT guard answers 401, so login and the public status stay public). `@SinLicencia()` exempts login, the session (`/auth/*`), the whole license module and the root route, so an expired or revoked license can always be renewed. The answer is cached 10 s and invalidated by every import (a revocation closes the system at once); concurrent requests share one verification (a check re-verifies the signature and rewrites the clock state file). `LicenciaGuard` (per route, needs `req.user`) is kept for reuse.
+- A corrupt `license.state` (`estado_alterado`) is rebuilt by a **verified, signed import** (audited as `estado_reiniciado`), keeping the stored floor, so the administrator can recover. A clock rollback (`reloj_alterado`) is never rebuilt.
+- JSON bodies nested deeper than 32 levels are refused with a 400 (`src/common/http/json-body.ts`); the JWT extractor accepts exactly `Authorization: Bearer <jwt>`.
 - With **no license installed at all**, user creation is not blocked (so dev/testing keeps working).
 
 ## Environment

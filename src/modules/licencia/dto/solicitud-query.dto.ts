@@ -3,10 +3,15 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { EMPRESA_ID_MAX_LENGTH } from '../services/payload-builder';
+import {
+  EMPRESA_ID_SIN_CONTROL,
+  MENSAJE_EMPRESA_ID,
+} from '../constants/licencia.constants';
 
 export class SolicitudQueryDto {
   @ApiPropertyOptional({
@@ -17,6 +22,7 @@ export class SolicitudQueryDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(EMPRESA_ID_MAX_LENGTH)
+  @Matches(EMPRESA_ID_SIN_CONTROL, { message: MENSAJE_EMPRESA_ID })
   empresa_id?: string;
 
   @ApiPropertyOptional({

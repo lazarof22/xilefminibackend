@@ -16,6 +16,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { SinLicencia } from './decorators/sin-licencia.decorator';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -66,6 +67,7 @@ function contexto(req: RequestConUsuario): ContextoPeticion {
 
 @ApiTags('Licencias')
 @Controller('licencia')
+@SinLicencia()
 @UseGuards(ThrottlerGuard)
 @UsePipes(
   new ValidationPipe({

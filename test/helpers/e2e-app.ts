@@ -66,16 +66,33 @@ export interface EntornoE2E {
  * fijan ANTES de importar el módulo porque `ConfigModule` y `constants.ts` las
  * leen al cargarse.
  */
-export async function arrancarApp(): Promise<EntornoE2E> {
+export async function arrancarApp(
+  opciones: { clavesDeLicencia?: readonly string[] } = {},
+): Promise<EntornoE2E> {
   const base = uriDeBaseDescartable();
   process.env.MONGODB_URI = base.uri;
   process.env.JWT_SECRET = 'secreto-e2e';
   process.env.NODE_ENV = 'test';
 
   const { AppModule } = await import('../../src/app.module');
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+  const { LicenciaGlobalGuard } =
+    await import('../../src/modules/licencia/guards/licencia-global.guard');
+  // The suites exercise business rules, not licensing (no license is installed in the
+  // throwaway database): the license guard has its own unit and e2e tests.
+  const { LICENCIA_TRUSTED_KEYS } =
+    await import('../../src/modules/licencia/constants/licencia.constants');
+  // `clavesDeLicencia`: the suite checks licensing for real (own signing key, real guard).
+  const constructor = Test.createTestingModule({ imports: [AppModule] });
+  if (opciones.clavesDeLicencia) {
+    constructor
+      .overrideProvider(LICENCIA_TRUSTED_KEYS)
+      .useValue(opciones.clavesDeLicencia);
+  } else {
+    constructor
+      .overrideProvider(LicenciaGlobalGuard)
+      .useValue({ canActivate: () => true });
+  }
+  const moduleRef = await constructor.compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configurarApp(app);
   configurarSwagger(app);

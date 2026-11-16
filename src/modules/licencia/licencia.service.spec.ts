@@ -36,6 +36,7 @@ interface StoredDoc {
 
 interface Chain<T> {
   sort: () => Chain<T>;
+  select: () => Chain<T>;
   lean: () => Chain<T>;
   exec: () => Promise<T>;
 }
@@ -43,6 +44,7 @@ interface Chain<T> {
 function chain<T>(fn: () => T): Chain<T> {
   const c: Chain<T> = {
     sort: () => c,
+    select: () => c,
     lean: () => c,
     exec: () => Promise.resolve().then(fn),
   };
@@ -69,7 +71,7 @@ class FakeLicenciaModel {
     });
   }
 
-  findOne(filter: Record<string, unknown>): Chain<StoredDoc | null> {
+  findOne(filter: Record<string, unknown> = {}): Chain<StoredDoc | null> {
     return chain(() => {
       if (this.failReads) throw new Error('mongo down');
       const d = this.docs.find((x) => matches(x, filter));
@@ -182,6 +184,7 @@ describe('LicenciaService', () => {
   let hw: { getFingerprint: jest.Mock<Promise<string>, []> };
   let clock: {
     observe: jest.Mock<Promise<ClockObservation>, [number?, (number | null)?]>;
+    restablecer: jest.Mock<Promise<void>, [number, (number | null)?]>;
   };
   let audit: { logAccion: jest.Mock; getTodasAuditorias: jest.Mock };
   let offline: { exportarArtefacto: jest.Mock };
@@ -202,6 +205,7 @@ describe('LicenciaService', () => {
       observe: jest
         .fn<Promise<ClockObservation>, [number?, (number | null)?]>()
         .mockResolvedValue(okClock),
+      restablecer: jest.fn().mockResolvedValue(undefined),
     };
     audit = {
       logAccion: jest.fn().mockResolvedValue(undefined),
@@ -287,6 +291,74 @@ describe('LicenciaService', () => {
       expect(r).toEqual({ status: 403, codigo: 'empresa_no_coincide' });
     });
 
+    it('binds the install to the empresa of its first license: another empresa is refused and nothing is stored', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+
+      const r = await codigoOf(() =>
+        service.importarLicencia(
+          artifact(
+            payload({
+              license_id: '11111111-2222-4333-8444-555555555555',
+              empresa_id: 'EMP-002',
+            }),
+          ),
+          {},
+        ),
+      );
+
+      expect(r).toEqual({ status: 403, codigo: 'empresa_no_coincide' });
+      expect(model.docs).toHaveLength(1);
+    });
+
+    it('a corrupt clock state file is rebuilt by a verified import (and audited), keeping the stored floor', async () => {
+      clock.observe
+        .mockResolvedValueOnce({
+          ok: false,
+          codigo: 'estado_alterado',
+          ahoraMs: NOW,
+          ultimoVistoMs: null,
+        })
+        .mockResolvedValue(okClock);
+
+      const r = await service.importarLicencia(artifact(payload()), {});
+
+      expect(r.resultado).toBe('activada');
+      expect(clock.restablecer).toHaveBeenCalledTimes(1);
+      expect(auditActions()).toContain('estado_reiniciado');
+    });
+
+    it('if the state is still refused after the rebuild the import fails closed', async () => {
+      clock.observe.mockResolvedValue({
+        ok: false,
+        codigo: 'estado_alterado',
+        ahoraMs: NOW,
+        ultimoVistoMs: null,
+      });
+
+      const r = await codigoOf(() =>
+        service.importarLicencia(artifact(payload()), {}),
+      );
+
+      expect(r).toEqual({ status: 403, codigo: 'estado_alterado' });
+      expect(model.docs).toHaveLength(0);
+    });
+
+    it('a tampered clock (rollback) is NOT rebuilt: only a corrupt state is', async () => {
+      clock.observe.mockResolvedValue({
+        ok: false,
+        codigo: 'reloj_alterado',
+        ahoraMs: NOW,
+        ultimoVistoMs: NOW + 1000,
+      });
+
+      const r = await codigoOf(() =>
+        service.importarLicencia(artifact(payload()), {}),
+      );
+
+      expect(r).toEqual({ status: 403, codigo: 'reloj_alterado' });
+      expect(clock.restablecer).not.toHaveBeenCalled();
+    });
+
     it('rejects when the clock guard detects tampering', async () => {
       clock.observe.mockResolvedValueOnce({
         ok: false,
@@ -324,7 +396,6 @@ describe('LicenciaService', () => {
       model.docs[0].ultimo_visto_ms = NOW + 7;
       const otro = payload({
         license_id: '11111111-2222-4333-8444-555555555555',
-        empresa_id: 'EMP-002',
       });
       await service.importarLicencia(artifact(otro), {});
       expect(clock.observe).toHaveBeenLastCalledWith(
@@ -849,6 +920,82 @@ describe('LicenciaService', () => {
       const resumen = await service.reevaluarTodas();
       expect(resumen).toEqual({ expirada: 1 });
       expect(auditActions()).toContain('verificacion');
+    });
+  });
+
+  describe('instalacionLicenciada (cache of the global guard)', () => {
+    it('is false without a license and true after a valid import', async () => {
+      expect(await service.instalacionLicenciada()).toBe(false);
+
+      await service.importarLicencia(artifact(payload()), {});
+
+      expect(await service.instalacionLicenciada()).toBe(true);
+    });
+
+    it('answers from the cache inside the window instead of re-verifying every request', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+      await service.instalacionLicenciada();
+      const lecturas = jest.spyOn(model, 'find');
+
+      await service.instalacionLicenciada();
+      await service.instalacionLicenciada();
+
+      expect(lecturas).not.toHaveBeenCalled();
+    });
+
+    it('shares one verification between concurrent requests', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+      const nuevo = () =>
+        new LicenciaService(
+          model as unknown as Model<LicenciaDocument>,
+          new LicenciaCryptoService([vendorRaw]),
+          hw as unknown as HardwareFingerprintService,
+          clock as unknown as LicenciaClockService,
+          audit as unknown as LicenciaAuditService,
+          offline as unknown as LicenciaOfflineService,
+        );
+      const lecturas = jest.spyOn(model, 'find');
+
+      await nuevo().instalacionLicenciada();
+      const deUna = lecturas.mock.calls.length;
+      lecturas.mockClear();
+
+      const compartido = nuevo();
+      await Promise.all([
+        compartido.instalacionLicenciada(),
+        compartido.instalacionLicenciada(),
+        compartido.instalacionLicenciada(),
+      ]);
+
+      expect(lecturas).toHaveBeenCalledTimes(deUna);
+    });
+
+    it('a revocation takes effect at once (the import invalidates the cache)', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+      expect(await service.instalacionLicenciada()).toBe(true);
+
+      await service.importarLicencia(
+        artifact(payload({ secuencia: 2, revocada: true, activa: false })),
+        {},
+      );
+
+      expect(await service.instalacionLicenciada()).toBe(false);
+    });
+
+    it('fails closed when the store is down', async () => {
+      await service.importarLicencia(artifact(payload()), {});
+      model.failReads = true;
+      // a fresh service instance has no cache
+      const nuevo = new LicenciaService(
+        model as unknown as Model<LicenciaDocument>,
+        new LicenciaCryptoService([vendorRaw]),
+        hw as unknown as HardwareFingerprintService,
+        clock as unknown as LicenciaClockService,
+        audit as unknown as LicenciaAuditService,
+        offline as unknown as LicenciaOfflineService,
+      );
+
+      expect(await nuevo.instalacionLicenciada()).toBe(false);
     });
   });
 });

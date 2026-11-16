@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -16,6 +17,7 @@ import { LicenciaAuditService } from './services/licencia-audit.service';
 import { LicenciaCronService } from './services/licencia-cron.service';
 import { LicenciaOfflineService } from './services/licencia-offline.service';
 import { LicenciaGuard } from './guards/licencia.guard';
+import { LicenciaGlobalGuard } from './guards/licencia-global.guard';
 import {
   LICENCIA_TRUSTED_KEYS,
   LICENCIA_TRUSTED_PUBLIC_KEYS,
@@ -40,9 +42,12 @@ import {
     LicenciaAuditService,
     LicenciaCronService,
     LicenciaOfflineService,
-    // Provided (not applied): see LicenciaGuard docs.
+    // Per-route variant (needs req.user); kept for reuse.
     LicenciaGuard,
+    // Applied to EVERY route: see LicenciaGlobalGuard. `useExisting` lets tests override it.
+    LicenciaGlobalGuard,
+    { provide: APP_GUARD, useExisting: LicenciaGlobalGuard },
   ],
-  exports: [LicenciaService, LicenciaGuard],
+  exports: [LicenciaService, LicenciaGuard, LicenciaGlobalGuard],
 })
 export class LicenciaModule {}

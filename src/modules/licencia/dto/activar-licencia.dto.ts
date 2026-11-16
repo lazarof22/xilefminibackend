@@ -18,6 +18,10 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  EMPRESA_ID_SIN_CONTROL,
+  MENSAJE_EMPRESA_ID,
+} from '../constants/licencia.constants';
 import { ApiProperty } from '@nestjs/swagger';
 import {
   EMPRESA_ID_MAX_LENGTH,
@@ -61,6 +65,7 @@ export class LicenciaPayloadDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(EMPRESA_ID_MAX_LENGTH)
+  @Matches(EMPRESA_ID_SIN_CONTROL, { message: MENSAJE_EMPRESA_ID })
   empresa_id: string;
 
   @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })

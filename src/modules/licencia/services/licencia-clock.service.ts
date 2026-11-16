@@ -72,6 +72,22 @@ export class LicenciaClockService {
     return run;
   }
 
+  /**
+   * Rewrites a corrupt state file. ONLY for a verified, signed import: the floor from the
+   * stored licenses (`pisoMs`) is kept, so a restore can never lower the anti-rollback floor.
+   */
+  restablecer(nowMs: number, pisoMs?: number | null): Promise<void> {
+    const run = this.queue.then(async () => {
+      if (!Number.isFinite(nowMs)) throw new Error('Non-finite clock reading');
+      const key = await this.deriveKey();
+      const piso =
+        typeof pisoMs === 'number' && Number.isFinite(pisoMs) ? pisoMs : nowMs;
+      await this.writeState(resolveStatePath(), key, Math.max(nowMs, piso));
+    });
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
   private async observeNow(
     nowMs: number,
     pisoMs: number | null,
