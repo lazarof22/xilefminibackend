@@ -39,7 +39,12 @@ describe('Tasa without tax (§6.7)', () => {
   });
 
   it('upsertByMoneda does not persist iva', async () => {
-    const tasaModel = { create: jest.fn((d: object) => Promise.resolve(d)) };
+    const tasaModel = {
+      create: jest.fn((d: object) => Promise.resolve(d)),
+      findOne: jest.fn(() => ({
+        sort: () => ({ lean: () => ({ exec: () => Promise.resolve(null) }) }),
+      })),
+    };
     const monedaModel = { exists: jest.fn().mockResolvedValue({ _id: 'm' }) };
     const service = new TasaService(tasaModel as never, monedaModel as never);
 

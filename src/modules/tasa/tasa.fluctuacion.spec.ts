@@ -17,12 +17,16 @@ describe('Tasa.fluctuacion', () => {
   });
 
   it('persiste la variación indicada, también negativa', () => {
-    expect(new TasaModel({ ...base, fluctuacion: -2.5 }).fluctuacion).toBe(-2.5);
+    expect(new TasaModel({ ...base, fluctuacion: -2.5 }).fluctuacion).toBe(
+      -2.5,
+    );
   });
 
   it('el DTO de creación y el de actualización la aceptan', async () => {
     expect(
-      await validate(plainToInstance(CreateTasaDto, { ...base, fluctuacion: 3 })),
+      await validate(
+        plainToInstance(CreateTasaDto, { ...base, fluctuacion: 3 }),
+      ),
     ).toHaveLength(0);
     expect(
       await validate(plainToInstance(UpdateTasaDto, { fluctuacion: -1 })),
@@ -37,24 +41,35 @@ describe('Tasa.fluctuacion', () => {
   });
 
   describe('TasaService.upsertByMoneda', () => {
-    const crear = () => {
-      const tasaModel = { create: jest.fn((d: object) => Promise.resolve(d)) };
+    const crear = (anterior: { tasaMercadoInformal: number } | null = null) => {
+      const tasaModel = {
+        create: jest.fn((d: object) => Promise.resolve(d)),
+        findOne: jest.fn(() => ({
+          sort: () => ({
+            lean: () => ({ exec: () => Promise.resolve(anterior) }),
+          }),
+        })),
+      };
       const monedaModel = { exists: jest.fn().mockResolvedValue({ _id: 'm' }) };
       const service = new TasaService(tasaModel as never, monedaModel as never);
       return { service, tasaModel };
     };
 
-    it('persiste la fluctuación enviada', async () => {
-      const { service, tasaModel } = crear();
-      await service.upsertByMoneda('usd', { ...base, fluctuacion: 4.2 });
+    it('calcula la fluctuación contra la tasa anterior e ignora la enviada', async () => {
+      const { service, tasaModel } = crear({ tasaMercadoInformal: 300 });
+      await service.upsertByMoneda('usd', {
+        ...base,
+        tasaMercadoInformal: 315,
+        fluctuacion: 99,
+      });
       expect(tasaModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({ moneda: 'USD', fluctuacion: 4.2 }),
+        expect.objectContaining({ moneda: 'USD', fluctuacion: 5 }),
       );
     });
 
-    it('sin fluctuación guarda 0', async () => {
-      const { service, tasaModel } = crear();
-      await service.upsertByMoneda('usd', base);
+    it('sin tasa anterior guarda 0', async () => {
+      const { service, tasaModel } = crear(null);
+      await service.upsertByMoneda('usd', { ...base, fluctuacion: 7 });
       expect(tasaModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ fluctuacion: 0 }),
       );

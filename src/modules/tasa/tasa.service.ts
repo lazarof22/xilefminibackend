@@ -52,12 +52,34 @@ export class TasaService {
         return codigo;
     }
 
+    // Variación porcentual del mercado informal contra la tasa anterior de la
+    // moneda (doc §6.7). La calcula el servidor; sin tasa anterior es 0.
+    private async calcularFluctuacion(
+        codigo: string,
+        tasaMercadoInformal: number | undefined,
+    ): Promise<number> {
+        if (tasaMercadoInformal === undefined) return 0;
+        const anterior = await this.tasaModel
+            .findOne({ moneda: codigo })
+            .sort({ fechaActualizacion: -1, createdAt: -1, _id: -1 })
+            .lean()
+            .exec();
+        const previa = Number(anterior?.tasaMercadoInformal);
+        if (!Number.isFinite(previa) || previa <= 0) return 0;
+        const variacion = ((tasaMercadoInformal - previa) / previa) * 100;
+        return Math.round((variacion + Number.EPSILON) * 100) / 100;
+    }
+
     // Crear un registro histórico. Se permiten varias tasas por moneda.
     async create(createTasaDto: CreateTasaDto): Promise<Tasa> {
         const moneda = await this.validarMoneda(createTasaDto.moneda);
 
         return this.tasaModel.create({
             ...createTasaDto,
+            fluctuacion: await this.calcularFluctuacion(
+                moneda,
+                createTasaDto.tasaMercadoInformal,
+            ),
             moneda,
             fechaActualizacion: createTasaDto.fechaActualizacion
                 ? new Date(createTasaDto.fechaActualizacion)
@@ -119,7 +141,10 @@ export class TasaService {
         return this.tasaModel.create({
             tasaBancoCentral: dto.tasaBancoCentral,
             tasaMercadoInformal: dto.tasaMercadoInformal,
-            fluctuacion: dto.fluctuacion ?? 0,
+            fluctuacion: await this.calcularFluctuacion(
+                codigo,
+                dto.tasaMercadoInformal,
+            ),
             activa: dto.activa ?? true,
             moneda: codigo,
             fechaActualizacion: dto.fechaActualizacion
