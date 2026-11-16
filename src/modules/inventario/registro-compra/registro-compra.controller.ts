@@ -1,7 +1,6 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RegistroCompraService } from './registro-compra.service';
-import { CreateRegistroCompraDto } from './dto/create-registro-compra.dto';
 import { UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -14,17 +13,6 @@ export class RegistroCompraController {
     constructor(
         private readonly registroCompraService: RegistroCompraService,
     ) {}
-
-    @ApiOperation({
-        summary: 'Registrar una compra de inventario y su movimiento de kardex',
-    })
-    @ApiResponse({ status: 201, description: 'Compra registrada con éxito' })
-    @ApiResponse({ status: 400, description: 'Datos inválidos' })
-    @ApiResponse({ status: 404, description: 'Producto, almacén o contenedor no existe' })
-    @Post()
-    create(@Body() createRegistroCompraDto: CreateRegistroCompraDto) {
-        return this.registroCompraService.create(createRegistroCompraDto);
-    }
 
     @ApiOperation({ summary: 'Listar las compras registradas' })
     @ApiResponse({ status: 200, description: 'Compras obtenidas con éxito' })

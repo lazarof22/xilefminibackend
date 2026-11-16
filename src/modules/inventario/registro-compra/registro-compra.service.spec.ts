@@ -91,9 +91,9 @@ describe('RegistroCompraService', () => {
     service = module.get(RegistroCompraService);
   });
 
-  describe('create', () => {
+  describe('registrarLinea sin contexto', () => {
     it('guarda los datos del formulario y calcula el total en el servidor', async () => {
-      const res = await service.create(dto);
+      const { registro: res } = await service.registrarLinea(dto);
 
       expect(registroModel.create).toHaveBeenCalledWith({
         producto: productoId,
@@ -108,14 +108,14 @@ describe('RegistroCompraService', () => {
     });
 
     it('redondea el total a 2 decimales', async () => {
-      await service.create({ ...dto, cantidad: 3, costo_unitario: 0.1 + 0.2 });
+      await service.registrarLinea({ ...dto, cantidad: 3, costo_unitario: 0.1 + 0.2 });
 
       const [guardado] = registroModel.create.mock.calls[0] as [{ total: number }];
       expect(guardado.total).toBe(0.9);
     });
 
     it('escribe un kardex de tipo COMPRA con motivo "Compra" y el stock actual', async () => {
-      await service.create(dto);
+      await service.registrarLinea(dto);
 
       expect(kardexModel.create).toHaveBeenCalledTimes(1);
       expect(kardexModel.create).toHaveBeenCalledWith({
@@ -133,7 +133,7 @@ describe('RegistroCompraService', () => {
     });
 
     it('no modifica el stock del producto (ya lo fijó POST /producto)', async () => {
-      await service.create(dto);
+      await service.registrarLinea(dto);
 
       expect(productoModel.findById).toHaveBeenCalledTimes(1);
       // Solo se consulta: el modelo de producto no expone ninguna escritura.
@@ -142,14 +142,14 @@ describe('RegistroCompraService', () => {
 
     it('usa la fecha actual si no se envía una', async () => {
       const antes = Date.now();
-      await service.create({ ...dto, fecha: undefined });
+      await service.registrarLinea({ ...dto, fecha: undefined });
 
       const [guardado] = registroModel.create.mock.calls[0] as [{ fecha: Date }];
       expect(guardado.fecha.getTime()).toBeGreaterThanOrEqual(antes);
     });
 
     it('acepta una fecha ISO completa tal cual', async () => {
-      await service.create({ ...dto, fecha: '2026-10-05T03:00:00.000Z' });
+      await service.registrarLinea({ ...dto, fecha: '2026-10-05T03:00:00.000Z' });
 
       const [guardado] = registroModel.create.mock.calls[0] as [{ fecha: Date }];
       expect(guardado.fecha).toEqual(new Date('2026-10-05T03:00:00.000Z'));
@@ -160,7 +160,7 @@ describe('RegistroCompraService', () => {
         consulta({ _id: productoId, stock_inicial: undefined }),
       );
 
-      await service.create(dto);
+      await service.registrarLinea(dto);
 
       expect(kardexModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ stock: 0 }),
@@ -171,7 +171,7 @@ describe('RegistroCompraService', () => {
       const fallo = new Error('kardex caído');
       kardexModel.create.mockRejectedValue(fallo);
 
-      await expect(service.create(dto)).rejects.toBe(fallo);
+      await expect(service.registrarLinea(dto)).rejects.toBe(fallo);
 
       expect(registroModel.deleteOne).toHaveBeenCalledWith({ _id: registroId });
     });
@@ -181,13 +181,13 @@ describe('RegistroCompraService', () => {
       kardexModel.create.mockRejectedValue(fallo);
       registroModel.deleteOne.mockRejectedValue(new Error('no se pudo borrar'));
 
-      await expect(service.create(dto)).rejects.toBe(fallo);
+      await expect(service.registrarLinea(dto)).rejects.toBe(fallo);
     });
 
     it('lanza NotFound si el producto no existe y no guarda nada', async () => {
       productoModel.findById.mockReturnValue(consulta(null));
 
-      await expect(service.create(dto)).rejects.toThrow(NotFoundException);
+      await expect(service.registrarLinea(dto)).rejects.toThrow(NotFoundException);
       expect(registroModel.create).not.toHaveBeenCalled();
       expect(kardexModel.create).not.toHaveBeenCalled();
     });
@@ -195,14 +195,14 @@ describe('RegistroCompraService', () => {
     it('lanza NotFound si el almacén no existe', async () => {
       almacenModel.findById.mockReturnValue(consulta(null));
 
-      await expect(service.create(dto)).rejects.toThrow('El almacén no existe');
+      await expect(service.registrarLinea(dto)).rejects.toThrow('El almacén no existe');
       expect(registroModel.create).not.toHaveBeenCalled();
     });
 
     it('lanza NotFound si el contenedor no existe', async () => {
       contenedorModel.findById.mockReturnValue(consulta(null));
 
-      await expect(service.create(dto)).rejects.toThrow('El contenedor no existe');
+      await expect(service.registrarLinea(dto)).rejects.toThrow('El contenedor no existe');
       expect(registroModel.create).not.toHaveBeenCalled();
     });
 
@@ -211,7 +211,7 @@ describe('RegistroCompraService', () => {
         consulta({ _id: contenedorId, almacen: new Types.ObjectId() }),
       );
 
-      await expect(service.create(dto)).rejects.toThrow(BadRequestException);
+      await expect(service.registrarLinea(dto)).rejects.toThrow(BadRequestException);
       expect(registroModel.create).not.toHaveBeenCalled();
       expect(kardexModel.create).not.toHaveBeenCalled();
     });
@@ -249,7 +249,7 @@ describe('RegistroCompraService', () => {
       expect(res.kardexId).toBe(kardexId.toString());
     });
 
-    it('sin contexto escribe exactamente el mismo kardex que create (compatibilidad, con el Submayor)', async () => {
+    it('sin contexto escribe el kardex COMPRA base (con los datos del Submayor)', async () => {
       await service.registrarLinea(dto);
 
       expect(kardexModel.create).toHaveBeenCalledWith({
@@ -263,10 +263,6 @@ describe('RegistroCompraService', () => {
         costoPromedio: 3.5,
         importeCUP: 42,
       });
-    });
-
-    it('create sigue devolviendo solo el registro de compra', async () => {
-      await expect(service.create(dto)).resolves.toEqual({ _id: registroId });
     });
 
     it('descartarLinea elimina la compra y su kardex por id', async () => {
@@ -298,7 +294,7 @@ describe('RegistroCompraService', () => {
       );
       kardexModel.findOne.mockReturnValue(consulta({ costoPromedio: 5 }));
 
-      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+      await service.registrarLinea({ ...dto, cantidad: 10, costo_unitario: 8 });
 
       expect(escrito()).toMatchObject({
         costoPromedio: 6.5,
@@ -311,7 +307,7 @@ describe('RegistroCompraService', () => {
       const q = consulta({ costoPromedio: 5 });
       kardexModel.findOne.mockReturnValue(q);
 
-      await service.create(dto);
+      await service.registrarLinea(dto);
 
       const [filtro] = kardexModel.findOne.mock.calls[0] as [
         { productoId: { $in: unknown[] }; costoPromedio: unknown },
@@ -326,7 +322,7 @@ describe('RegistroCompraService', () => {
         consulta({ _id: productoId, stock_inicial: 20, precio_compra: 4 }),
       );
 
-      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+      await service.registrarLinea({ ...dto, cantidad: 10, costo_unitario: 8 });
 
       // (10 × 4 + 10 × 8) / 20
       expect(escrito().costoPromedio).toBe(6);
@@ -337,7 +333,7 @@ describe('RegistroCompraService', () => {
         consulta({ _id: productoId, stock_inicial: 20 }),
       );
 
-      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+      await service.registrarLinea({ ...dto, cantidad: 10, costo_unitario: 8 });
 
       expect(escrito().costoPromedio).toBe(8);
     });
@@ -359,7 +355,7 @@ describe('RegistroCompraService', () => {
       );
       kardexModel.findOne.mockReturnValue(consulta({ costoPromedio: 5 }));
 
-      await service.create({ ...dto, cantidad: 10, costo_unitario: 8 });
+      await service.registrarLinea({ ...dto, cantidad: 10, costo_unitario: 8 });
 
       expect(escrito().costoPromedio).toBe(8);
     });
@@ -379,7 +375,7 @@ describe('RegistroCompraService', () => {
         }),
       );
 
-      await service.create(dto);
+      await service.registrarLinea(dto);
 
       expect(escrito().ubicacionFisica).toBe(
         'Central / Estante Norte / sección B · estante 3 · casilla 12',
@@ -401,7 +397,7 @@ describe('RegistroCompraService', () => {
     });
 
     it('no inventa importeDivisa ni referenciaContable', async () => {
-      await service.create(dto);
+      await service.registrarLinea(dto);
 
       expect(escrito()).not.toHaveProperty('importeDivisa');
       expect(escrito()).not.toHaveProperty('referenciaContable');

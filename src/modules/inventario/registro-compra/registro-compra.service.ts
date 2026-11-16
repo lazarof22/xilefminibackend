@@ -65,29 +65,14 @@ export class RegistroCompraService {
     ) {}
 
     /**
-     * Registra una compra y su movimiento de kardex (tipo COMPRA).
+     * Registra una línea de compra y su movimiento de kardex (tipo COMPRA) y
+     * devuelve también el id del kardex escrito para que quien registra varias
+     * líneas (la Recepción SC-2-04) pueda deshacer una a una si alguna posterior
+     * falla.
      *
-     * IMPORTANTE: no modifica el stock. El flujo del formulario primero
-     * crea el producto con `stock_inicial = cantidad` (POST /producto, que
-     * también crea su existencia) y después registra la compra aquí; sumar
-     * de nuevo duplicaría el stock. El kardex guarda el stock actual del
-     * producto en ese momento.
-     *
-     * Son dos escrituras sin transacción (funciona en MongoDB
-     * independiente): si el kardex falla, se elimina la compra para no
-     * dejar un registro sin su movimiento.
-     */
-    async create(
-        dto: CreateRegistroCompraDto,
-        contexto?: ContextoMovimientoCompra,
-    ): Promise<RegistroCompra> {
-        return (await this.registrarLinea(dto, contexto)).registro;
-    }
-
-    /**
-     * Igual que `create`, pero devuelve también el id del kardex escrito para
-     * que quien registra varias líneas (la Recepción) pueda deshacer una a
-     * una si alguna posterior falla.
+     * No modifica el stock: el saldo lo aplica la Recepción con ExistenciaService.
+     * Son dos escrituras sin transacción (MongoDB independiente): si el kardex
+     * falla, se elimina la compra para no dejar un registro sin su movimiento.
      */
     async registrarLinea(
         dto: CreateRegistroCompraDto,
