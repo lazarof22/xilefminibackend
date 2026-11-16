@@ -1,6 +1,11 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { MongooseExceptionFilter } from './common/filters/mongoose-exception.filter';
+import {
+  manejarErrorDeCuerpo,
+  verificarProfundidadJson,
+} from './common/http/json-body';
 
 /**
  * Configuración global de la aplicación (pipes, filtros y CORS). La usan
@@ -8,6 +13,12 @@ import { MongooseExceptionFilter } from './common/filters/mongoose-exception.fil
  * mismas reglas que producción.
  */
 export function configurarApp(app: INestApplication): void {
+  // Replaces the default JSON parser (registered by name, so Nest skips its own) to cap nesting.
+  (app as NestExpressApplication).useBodyParser('json', {
+    verify: verificarProfundidadJson,
+  });
+  app.use(manejarErrorDeCuerpo);
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

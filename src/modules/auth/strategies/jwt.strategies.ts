@@ -2,7 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { PassportStrategy } from '@nestjs/passport';
 import { Model, isValidObjectId } from 'mongoose';
-import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Strategy } from 'passport-jwt';
 import { obtenerJwtSecret } from '../constants/constants';
 import {
   Usuarios,
@@ -10,6 +10,22 @@ import {
   modulosEfectivos,
 } from '../schemas/usuarios.schema';
 import type { JwtUser } from '../types/jwt-user.type';
+
+/**
+ * `Authorization: Bearer <token>` exactly: one space and a token made only of base64url
+ * characters and dots. The library extractor also accepts extra spaces, tabs, a leading
+ * space and a lowercase scheme.
+ */
+export function extraerBearerEstricto(req: {
+  headers?: { authorization?: unknown };
+}): string | null {
+  const cabecera = req?.headers?.authorization;
+  if (typeof cabecera !== 'string') return null;
+  const m = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)$/.exec(
+    cabecera,
+  );
+  return m ? m[1] : null;
+}
 
 interface PayloadJwt {
   sub: string;
@@ -24,7 +40,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly userModel: Model<UsuariosDocument>,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: extraerBearerEstricto,
       ignoreExpiration: false,
       secretOrKey: obtenerJwtSecret(),
     });

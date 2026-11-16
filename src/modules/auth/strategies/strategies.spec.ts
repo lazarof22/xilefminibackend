@@ -1,6 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { LocalStrategy } from './local.strategies';
-import { JwtStrategy } from './jwt.strategies';
+import { JwtStrategy, extraerBearerEstricto } from './jwt.strategies';
 import type { AuthService } from '../auth.service';
 
 describe('LocalStrategy.validate — input that is not text', () => {
@@ -72,5 +72,39 @@ describe('JwtStrategy.validate — sub', () => {
       userId: ID,
       rol: 'cajero',
     });
+  });
+});
+
+describe('extraerBearerEstricto', () => {
+  const T = 'aaa.bbb.ccc';
+  const con = (authorization: unknown) => ({ headers: { authorization } });
+
+  it('accepts exactly "Bearer <jwt>"', () => {
+    expect(extraerBearerEstricto(con(`Bearer ${T}`))).toBe(T);
+  });
+
+  it.each([
+    `bearer ${T}`,
+    `BEARER ${T}`,
+    `Bearer  ${T}`,
+    `Bearer\t${T}`,
+    ` Bearer ${T}`,
+    `Bearer ${T} `,
+    `Bearer ${T} otro`,
+    `Bearer ${T}\n`,
+    `Basic ${T}`,
+    T,
+    'Bearer ',
+    'Bearer x',
+    'Bearer a.b',
+    '',
+  ])('rejects %p', (cabecera) => {
+    expect(extraerBearerEstricto(con(cabecera))).toBeNull();
+  });
+
+  it('rejects a missing or non-string header', () => {
+    expect(extraerBearerEstricto({})).toBeNull();
+    expect(extraerBearerEstricto(con(undefined))).toBeNull();
+    expect(extraerBearerEstricto(con(['Bearer a.b.c']))).toBeNull();
   });
 });
