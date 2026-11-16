@@ -60,7 +60,9 @@ export class IpvService {
    * - inventario inicial: inventario final del último IPV guardado o, si no
    *   hay, el stock actual reconstruido al inicio del día;
    * - entradas / ajustes: movimientos de Kardex del día;
-   * - venta: unidades vendidas en el día (colección Venta).
+   * - venta: salidas de Kardex tipo VENTA del día (punto de venta y facturas
+   *   confirmadas); las anulaciones y devoluciones entran como entradas, así
+   *   el inventario final coincide con el stock real.
    */
   async obtenerDia(fecha?: string): Promise<IpvDia> {
     const fechaDia = normalizarFecha(fecha);
@@ -240,20 +242,7 @@ export class IpvService {
   ): Promise<Map<string, Partial<MovimientosIpv>>> {
     const { inicio, fin } = rangoDelDia(fecha);
 
-    const [ventas, movimientos, anteriores] = await Promise.all([
-      this.ventaModel
-        .aggregate<{ _id: Types.ObjectId; cantidad: number }>([
-          { $match: { createdAt: { $gte: inicio, $lte: fin } } },
-          { $unwind: '$productos' },
-          { $match: { 'productos.productoId': { $in: productoIds } } },
-          {
-            $group: {
-              _id: '$productos.productoId',
-              cantidad: { $sum: '$productos.cantidad' },
-            },
-          },
-        ])
-        .exec(),
+    const [movimientos, anteriores] = await Promise.all([
       this.kardexModel
         .aggregate<{
           _id: { producto: Types.ObjectId; tipo: KardexTipo };
@@ -263,7 +252,9 @@ export class IpvService {
             $match: {
               fecha: { $gte: inicio, $lte: fin },
               productoId: { $in: productoIds },
-              tipo: { $in: [...TIPOS_ENTRADA, ...TIPOS_DISMINUCION] },
+              tipo: {
+                $in: [KardexTipo.VENTA, ...TIPOS_ENTRADA, ...TIPOS_DISMINUCION],
+              },
             },
           },
           {
@@ -295,10 +286,11 @@ export class IpvService {
       return resultado.get(key)!;
     };
 
-    for (const v of ventas) obtener(v._id).venta = v.cantidad;
     for (const m of movimientos) {
       const fila = obtener(m._id.producto);
-      if (TIPOS_ENTRADA.includes(m._id.tipo)) {
+      if (m._id.tipo === KardexTipo.VENTA) {
+        fila.venta = (fila.venta ?? 0) + m.cantidad;
+      } else if (TIPOS_ENTRADA.includes(m._id.tipo)) {
         fila.entradas = (fila.entradas ?? 0) + m.cantidad;
       } else {
         fila.ajusteDisminucion = (fila.ajusteDisminucion ?? 0) + m.cantidad;
