@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { esClaveDuplicada } from '../../../common/utils/insertar-idempotente';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { InjectModel } from '@nestjs/mongoose';
@@ -16,7 +17,14 @@ export class EmpresaService {
         throw new BadRequestException('Ya existe la empresa');
       }
       const nueva = new this.empresaModel(createEmpresaDto);
-      return nueva.save();
+      try {
+        return await nueva.save();
+      } catch (err) {
+        if (esClaveDuplicada(err)) {
+          throw new ConflictException('Ya existe una empresa con esos datos (dirección repetida)');
+        }
+        throw err;
+      }
     }
   
     async findAll(): Promise<Empresa[]> {

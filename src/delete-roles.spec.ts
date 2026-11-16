@@ -19,7 +19,8 @@ describe.each([
 ])('%s.remove', (_nombre, controlador) => {
   // Read only to inspect decorator metadata; never invoked.
   // eslint-disable-next-line @typescript-eslint/unbound-method
-  const remove = (controlador.prototype as { remove: () => unknown }).remove;
+  const remove = (controlador.prototype as unknown as { remove: () => unknown })
+    .remove;
 
   it('carries @Roles(administrador, gerente) and the RolesGuard', () => {
     expect(Reflect.getMetadata(ROLES, remove)).toEqual([

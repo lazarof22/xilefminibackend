@@ -1,3 +1,4 @@
+import { Contenedor, ContenedorSchema } from '../contenedor/schema/contenedor.schema';
 import { Module } from '@nestjs/common';
 import { AlmacenService } from './almacen.service';
 import { AlmacenController } from './almacen.controller';
@@ -11,6 +12,9 @@ import { Almacen, AlmacenSchema } from './schema/almacen.schema';
     imports: [MongooseModule.forFeature([{
         name: Almacen.name,
         schema: AlmacenSchema,
+    }, {
+        name: Contenedor.name,
+        schema: ContenedorSchema,
     },]),],
     exports: [MongooseModule],
 })

@@ -1,5 +1,6 @@
 import {
     IsNumber,
+    IsPositive,
     IsOptional,
     IsBoolean,
     Min,
@@ -15,12 +16,12 @@ export class CreateTasaDto {
 
     @ApiProperty({ example: 300 })
     @IsNumber()
-    @Min(0)
+    @IsPositive()
     tasaBancoCentral!: number;
 
     @ApiProperty({ example: 400 })
     @IsNumber()
-    @Min(0)
+    @IsPositive()
     tasaMercadoInformal!: number;
 
     @ApiProperty({

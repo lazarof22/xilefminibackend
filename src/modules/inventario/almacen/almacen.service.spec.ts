@@ -1,3 +1,4 @@
+import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConflictException } from '@nestjs/common';
@@ -34,7 +35,12 @@ describe('AlmacenService', () => {
   let almacenModelMock: AlmacenModelMock;
   let savedAlmacen: Partial<Almacen> & { save: jest.Mock };
 
+  let contenedorModelMock: { countDocuments: jest.Mock };
+
   beforeEach(async () => {
+    contenedorModelMock = {
+      countDocuments: jest.fn(() => ({ exec: () => Promise.resolve(0) })),
+    };
     savedAlmacen = { save: jest.fn() };
     savedAlmacen.save.mockImplementation(() =>
       Promise.resolve(savedAlmacen as unknown as Almacen),
@@ -63,6 +69,10 @@ describe('AlmacenService', () => {
       providers: [
         AlmacenService,
         { provide: getModelToken(Almacen.name), useValue: almacenModelMock },
+        {
+          provide: getModelToken(Contenedor.name),
+          useValue: contenedorModelMock,
+        },
       ],
     }).compile();
 
@@ -128,6 +138,19 @@ describe('AlmacenService', () => {
       await expect(
         service.update('almacen-1', { codigoAlmacen: 'ALM-002' }),
       ).rejects.toThrow('conexion perdida');
+    });
+  });
+
+  describe('remove — contenedores', () => {
+    it('refuses to delete an almacén that still has contenedores and deletes nothing', async () => {
+      contenedorModelMock.countDocuments.mockReturnValue({
+        exec: () => Promise.resolve(2),
+      });
+
+      await expect(service.remove('64b000000000000000000001')).rejects.toThrow(
+        /tiene 2 contenedor/,
+      );
+      expect(almacenModelMock.findByIdAndDelete).not.toHaveBeenCalled();
     });
   });
 });

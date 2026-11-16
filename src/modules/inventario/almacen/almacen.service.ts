@@ -3,13 +3,17 @@ import { CreateAlmacenDto } from './dto/create-almacen.dto';
 import { UpdateAlmacenDto } from './dto/update-almacen.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Almacen } from './schema/almacen.schema';
+import { Contenedor } from '../contenedor/schema/contenedor.schema';
 import { Model } from 'mongoose';
 import { isDuplicateKeyError } from './almacen-mongo-errors';
 
 @Injectable()
 export class AlmacenService {
 
-    constructor(@InjectModel(Almacen.name) private almacenModel: Model<Almacen>) { }
+    constructor(
+        @InjectModel(Almacen.name) private almacenModel: Model<Almacen>,
+        @InjectModel(Contenedor.name) private contenedorModel: Model<Contenedor>,
+    ) { }
 
 
     // Crear un almacén
@@ -76,6 +80,13 @@ export class AlmacenService {
     // Eliminar un almacén
 
     async remove(id: string): Promise<void> {
+        // Un almacén con contenedores no se borra: quedarían huérfanos (y con ellos su existencia por ubicación).
+        const contenedores = await this.contenedorModel.countDocuments({ almacen: id }).exec();
+        if (contenedores > 0) {
+            throw new ConflictException(
+                `El almacén tiene ${contenedores} contenedor(es): elimínelos o muévalos antes de borrarlo`,
+            );
+        }
         const deletealm = await this.almacenModel.findByIdAndDelete(id);
 
         if (!deletealm) {

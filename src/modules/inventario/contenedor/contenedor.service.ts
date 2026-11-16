@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { esClaveDuplicada } from '../../../common/utils/insertar-idempotente';
 import { CreateContenedorDto } from './dto/create-contenedor.dto';
 import { UpdateContenedorDto } from './dto/update-contenedor.dto';
 import { InjectModel } from '@nestjs/mongoose';
@@ -34,7 +35,15 @@ export class ContenedorService {
         }
 
         const nuevoContenedor = new this.contenedorModel(createContenedorDto);
-        const contenedorGuardado = await nuevoContenedor.save();
+        let contenedorGuardado: Contenedor;
+        try {
+            contenedorGuardado = await nuevoContenedor.save();
+        } catch (err) {
+            if (esClaveDuplicada(err)) {
+                throw new ConflictException('Ya existe un contenedor con ese código');
+            }
+            throw err;
+        }
 
         // Incrementar la cantidad de contenedores en el almacén
         await this.almacenModel.findByIdAndUpdate(
