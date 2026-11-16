@@ -12,6 +12,7 @@ import {
   efectivo,
   Entorno,
   silenciarLogs,
+  TIPO_COMPROBANTE_POS,
 } from './checkout-entorno-spec';
 
 /**
@@ -203,6 +204,8 @@ describe('CheckoutService — checkout transaccional (Fase 2)', () => {
         total: 220,
       });
       expect(venta.createdAt).toBeInstanceOf(Date);
+      // §7.1: el comprobante simplificado queda ligado al nomenclador comprobante-tipo.
+      expect(String(venta.comprobanteTipo)).toBe(String(TIPO_COMPROBANTE_POS));
 
       // Pago de efectivo con el id que se devolvió.
       expect(e.modelos.pagoEfectivo.docs).toHaveLength(1);

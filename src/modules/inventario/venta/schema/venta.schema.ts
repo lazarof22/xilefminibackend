@@ -87,6 +87,10 @@ export class Venta {
     @Prop({ index: true })
     comprobante?: string;
 
+    /** Tipo de comprobante (nomenclador comprobante-tipo): "POS" para el simplificado. */
+    @Prop({ type: Types.ObjectId, ref: 'ComprobanteTipo' })
+    comprobanteTipo?: Types.ObjectId;
+
     @Prop({ type: Types.ObjectId, ref: 'Cliente' })
     clienteId?: Types.ObjectId;
 

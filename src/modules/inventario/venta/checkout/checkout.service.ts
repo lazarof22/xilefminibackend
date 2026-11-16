@@ -14,6 +14,7 @@ import {
   esClaveDuplicada,
   insertarIgnorandoDuplicados,
 } from '../../../../common/utils/insertar-idempotente';
+import { NomencladorHelper } from '../../../configuracion/nomenclador-helper/nomenclador-helper.service';
 import { ConfiguracionTributariaService } from '../../../configuracion/configuracion-tributaria/configuracion-tributaria.service';
 import {
   Cliente,
@@ -158,6 +159,7 @@ export class CheckoutService {
     private readonly pagos: PagoService,
     private readonly reportePlus: ReportePlusService,
     private readonly tributaria: ConfiguracionTributariaService,
+    private readonly nomencladores?: NomencladorHelper,
   ) {}
 
   /**
@@ -732,6 +734,22 @@ export class CheckoutService {
    * repetir cuantas veces haga falta: lo que ya existe no se duplica. Es lo
    * que usa la recuperación para terminar una venta que se cayó a medias.
    */
+  /**
+   * Tipo "POS" del nomenclador comprobante-tipo (idempotente: un reintento
+   * obtiene el mismo id). Si el nomenclador falla no se frena una venta que ya
+   * pasó el punto de no retorno: queda sin tipo y se avisa en el log.
+   */
+  private async tipoComprobantePos(): Promise<Types.ObjectId | undefined> {
+    try {
+      return await this.nomencladores?.findOrCreateComprobanteTipo('POS');
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo resolver el tipo de comprobante POS: ${String(error)}`,
+      );
+      return undefined;
+    }
+  }
+
   async confirmar(
     op: ManejadorOperacion,
     plan: PlanCheckout,
@@ -747,6 +765,7 @@ export class CheckoutService {
     const documentoVenta = {
       _id: plan.ventaId,
       comprobante,
+      comprobanteTipo: await this.tipoComprobantePos(),
       clienteId: plan.clienteId,
       clienteNombre: plan.clienteNombre,
       usuario: plan.usuario.nombre,

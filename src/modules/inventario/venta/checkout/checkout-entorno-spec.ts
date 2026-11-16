@@ -90,6 +90,8 @@ export const TASAS_BASE: TasaSemilla[] = [
 ];
 
 /** CI válida (11 dígitos) del cliente de las pruebas. */
+/** Id del tipo de comprobante POS que devuelve el nomenclador simulado. */
+export const TIPO_COMPROBANTE_POS = new Types.ObjectId();
 export const CI_CLIENTE_BASE = '90010112345';
 
 /** Fecha de las tasas registradas por defecto. */
@@ -312,6 +314,10 @@ export function crearEntorno(opciones: OpcionesEntorno = {}) {
       pagos,
       reporte,
       trib,
+      {
+        findOrCreateComprobanteTipo: () =>
+          Promise.resolve(TIPO_COMPROBANTE_POS),
+      } as never,
     );
     acelerar(idem, checkout);
     const recuperacion = new CheckoutRecuperacionService(idem, checkout);

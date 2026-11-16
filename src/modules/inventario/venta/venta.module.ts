@@ -22,6 +22,7 @@ import {
   VentaContador,
   VentaContadorSchema,
 } from './schema/venta-contador.schema';
+import { NomencladorHelperModule } from '../../configuracion/nomenclador-helper/nomenclador-helper.module';
 import { CheckoutService } from './checkout/checkout.service';
 import { CheckoutRecuperacionService } from './checkout/checkout-recuperacion.service';
 
@@ -40,6 +41,7 @@ import { CheckoutRecuperacionService } from './checkout/checkout-recuperacion.se
     PagoModule,
     ConfiguracionTributariaModule,
     OperacionIdempotenteModule,
+    NomencladorHelperModule,
   ],
   controllers: [VentaController],
   providers: [VentaService, CheckoutService, CheckoutRecuperacionService],
